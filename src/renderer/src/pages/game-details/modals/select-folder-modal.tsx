@@ -1,12 +1,13 @@
-import { Button, Link, Modal, TextField } from "@renderer/components";
-import type { GameRepack } from "@types";
 import { useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
 import { DiskSpace } from "check-disk-space";
 import * as styles from "./select-folder-modal.css";
+import { Button, Link, Modal, TextField } from "@renderer/components";
 import { DownloadIcon } from "@primer/octicons-react";
 import { formatBytes } from "@shared";
+
+import type { GameRepack } from "@types";
 
 export interface SelectFolderModalProps {
   visible: boolean;
