@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import type { RecipeVariants } from "@vanilla-extract/recipes";
-import * as styles from "./select.css";
+import * as styles from "./select-field.css";
 
 export interface SelectProps
   extends React.DetailedHTMLProps<
@@ -12,7 +12,7 @@ export interface SelectProps
   options?: { key: string; value: string; label: string }[];
 }
 
-export function Select({
+export function SelectField({
   value,
   label,
   options = [{ key: "-", value: value?.toString() || "-", label: "-" }],
