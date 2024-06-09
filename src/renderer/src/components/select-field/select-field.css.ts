@@ -49,9 +49,6 @@ export const option = style({
   fontSize: vars.size.body,
   textOverflow: "ellipsis",
   padding: `${SPACING_UNIT}px`,
-  ":focus": {
-    cursor: "text",
-  },
 });
 
 export const label = style({
