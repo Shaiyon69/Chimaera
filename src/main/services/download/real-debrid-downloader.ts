@@ -13,22 +13,36 @@ export class RealDebridDownloader {
 
   private static async getRealDebridDownloadUrl() {
     if (this.realDebridTorrentId) {
-      const torrentInfo = await RealDebridClient.getTorrentInfo(
+      let torrentInfo = await RealDebridClient.getTorrentInfo(
         this.realDebridTorrentId
       );
 
-      const { status, links } = torrentInfo;
-
-      if (status === "waiting_files_selection") {
+      if (torrentInfo.status === "waiting_files_selection") {
         await RealDebridClient.selectAllFiles(this.realDebridTorrentId);
-        return null;
+
+        torrentInfo = await RealDebridClient.getTorrentInfo(
+          this.realDebridTorrentId
+        );
       }
+
+      const { links, status } = torrentInfo;
 
       if (status === "downloaded") {
         const [link] = links;
+
         const { download } = await RealDebridClient.unrestrictLink(link);
         return decodeURIComponent(download);
       }
+
+      return null;
+    }
+
+    if (this.downloadingGame?.uri) {
+      const { download } = await RealDebridClient.unrestrictLink(
+        this.downloadingGame?.uri
+      );
+
+      return decodeURIComponent(download);
     }
 
     return null;
@@ -37,7 +51,7 @@ export class RealDebridDownloader {
   public static async getStatus() {
     if (this.downloadingGame) {
       const gid = this.downloads.get(this.downloadingGame.id)!;
-      const status = await HttpDownload.getStatus(gid);
+      const status = HttpDownload.getStatus(gid);
 
       if (status) {
         const progress =
@@ -50,6 +64,7 @@ export class RealDebridDownloader {
             fileSize: Number(status.totalLength),
             progress,
             status: "active",
+            folderName: status.folderName,
           }
         );
 
@@ -78,40 +93,15 @@ export class RealDebridDownloader {
       }
     }
 
-    if (this.realDebridTorrentId && this.downloadingGame) {
-      const torrentInfo = await RealDebridClient.getTorrentInfo(
-        this.realDebridTorrentId
-      );
-
-      const { status } = torrentInfo;
-
-      if (status === "downloaded") {
-        this.startDownload(this.downloadingGame);
-      }
-
-      const progress = torrentInfo.progress / 100;
-      const totalDownloaded = progress * torrentInfo.bytes;
-
-      return {
-        numPeers: 0,
-        numSeeds: torrentInfo.seeders,
-        downloadSpeed: torrentInfo.speed,
-        timeRemaining: calculateETA(
-          torrentInfo.bytes,
-          totalDownloaded,
-          torrentInfo.speed
-        ),
-        isDownloadingMetadata: status === "magnet_conversion",
-      } as DownloadProgress;
-    }
-
     return null;
   }
 
   static async pauseDownload() {
-    const gid = this.downloads.get(this.downloadingGame!.id!);
-    if (gid) {
-      await HttpDownload.pauseDownload(gid);
+    if (this.downloadingGame) {
+      const gid = this.downloads.get(this.downloadingGame.id);
+      if (gid) {
+        await HttpDownload.pauseDownload(gid);
+      }
     }
 
     this.realDebridTorrentId = null;
@@ -119,15 +109,19 @@ export class RealDebridDownloader {
   }
 
   static async startDownload(game: Game) {
-    this.downloadingGame = game;
-
     if (this.downloads.has(game.id)) {
       await this.resumeDownload(game.id!);
-
+      this.downloadingGame = game;
       return;
     }
 
-    this.realDebridTorrentId = await RealDebridClient.getTorrentId(game!.uri!);
+    if (game.uri?.startsWith("magnet:")) {
+      this.realDebridTorrentId = await RealDebridClient.getTorrentId(
+        game!.uri!
+      );
+    }
+
+    this.downloadingGame = game;
 
     const downloadUrl = await this.getRealDebridDownloadUrl();
 
@@ -150,6 +144,9 @@ export class RealDebridDownloader {
       await HttpDownload.cancelDownload(gid);
       this.downloads.delete(gameId);
     }
+
+    this.realDebridTorrentId = null;
+    this.downloadingGame = null;
   }
 
   static async resumeDownload(gameId: number) {
