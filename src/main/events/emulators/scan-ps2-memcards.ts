@@ -3,8 +3,12 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { registerEvent } from "../register-event";
+import { buildLocalLaunchboxAssetIndex } from "./memcard-local-assets";
 import { WindowManager, emulators, logger } from "@main/services";
-import type { Ps2Save } from "@main/services/emulators";
+import type {
+  LaunchboxShopDetailsAssetsResponse,
+  Ps2Save,
+} from "@main/services/emulators";
 import { levelKeys, ps2MemoryCardSavesSublevel } from "@main/level";
 import type {
   Ps2MemcardScanInput,
@@ -15,6 +19,15 @@ import type {
 const MEMCARD_FILE_RE = /\.(ps2|mcd|mc2)$/i;
 
 const inflight = new Map<string, { cancelled: boolean }>();
+
+const fileExists = async (filePath: string): Promise<boolean> => {
+  try {
+    await fs.stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 // A manual selection may be a `.ps2` file or a folder of cards.
 const expandManualPath = async (target: string): Promise<string[]> => {
@@ -102,6 +115,7 @@ const runScan = async (
     )
   );
   const lookup = await emulators.fetchShopDetailsForSkus(skus);
+  const localIndex = await buildLocalLaunchboxAssetIndex();
 
   let matched = 0;
   let unmatched = 0;
@@ -115,11 +129,16 @@ const runScan = async (
       });
       return;
     }
-    const entry = save.sku
-      ? (lookup.get(emulators.normalizeSku(save.sku)) ?? null)
-      : null;
-    const assets = entry ? emulators.mapEntryToAssets(entry) : null;
-    if (entry) matched += 1;
+    // Remote shop-details first; fall back to the local library when it misses.
+    let assets: LaunchboxShopDetailsAssetsResponse | null = null;
+    if (save.sku) {
+      const norm = emulators.normalizeSku(save.sku);
+      const entry = lookup.get(norm);
+      assets = entry
+        ? emulators.mapEntryToAssets(entry)
+        : (localIndex.get(norm) ?? null);
+    }
+    if (assets) matched += 1;
     else unmatched += 1;
 
     const record: Ps2MemoryCardSaveRecord = {
@@ -127,8 +146,8 @@ const runScan = async (
       cardLabel,
       folderName: save.folderName,
       sku: save.sku ?? null,
-      objectId: entry?.objectId ?? null,
-      shop: entry ? "launchbox" : null,
+      objectId: assets?.objectId ?? null,
+      shop: assets ? "launchbox" : null,
       title: assets?.title || null,
       iconUrl: assets?.iconUrl ?? null,
       libraryImageUrl: assets?.libraryImageUrl ?? null,
@@ -151,10 +170,30 @@ const runScan = async (
       processed: index,
       total: detected.length,
       currentSave: save.folderName,
-      status: entry ? "matched" : "unmatched",
+      status: assets ? "matched" : "unmatched",
       matched,
       unmatched,
     });
+  }
+
+  // Prune stale records so removed/renamed cards and deleted save folders drop
+  // off the list automatically: a save folder that vanished from a card we just
+  // scanned, or any record whose card file no longer exists on disk.
+  const detectedKeys = new Set(
+    detected.map((d) =>
+      levelKeys.ps2MemoryCardSave(d.cardFilePath, d.save.folderName)
+    )
+  );
+  const staleKeys: string[] = [];
+  for (const [key, rec] of await ps2MemoryCardSavesSublevel.iterator().all()) {
+    if (cardFiles.has(rec.cardFilePath)) {
+      if (!detectedKeys.has(key)) staleKeys.push(key);
+    } else if (!(await fileExists(rec.cardFilePath))) {
+      staleKeys.push(key);
+    }
+  }
+  for (const key of staleKeys) {
+    await ps2MemoryCardSavesSublevel.del(key);
   }
 
   emit({
