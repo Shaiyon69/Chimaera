@@ -13,7 +13,6 @@
     color: #dadbe1;
     cursor: pointer;
     font-size: globals.$body-font-size;
-    transition: border-color ease 0.2s;
     max-width: 220px;
 
     &:hover {
@@ -53,6 +52,11 @@
     animation: collections-filter-fade-in 0.15s ease-out;
   }
 
+  &__list {
+    max-height: calc(34px * 8);
+    overflow-y: auto;
+  }
+
   &__item {
     position: relative;
     width: 100%;
@@ -60,6 +64,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    height: 34px;
     border-radius: 4px;
     padding: 6px 12px;
     cursor: pointer;
@@ -72,8 +77,7 @@
     white-space: nowrap;
 
     &:hover,
-    &:focus,
-    &:focus-visible {
+    &[data-highlighted] {
       background-color: globals.$background-color;
       outline: none;
     }
