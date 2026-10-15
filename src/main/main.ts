@@ -28,6 +28,7 @@ import {
 import { migrateDownloadSources } from "./helpers/migrate-download-sources";
 import { seedDefaultDownloadSource } from "./helpers/seed-default-download-source";
 import { getDirSize } from "./services/download/helpers";
+import { isDebridPendingError } from "./services/download/debrid-files";
 import { GofileApi } from "./services/hosters";
 import { clearLegacyAchievementPersistence } from "./level/clear-legacy-achievements";
 import { migrateGamesToSqlite } from "./level/sqlite/migrate-games-to-sqlite";
@@ -196,9 +197,11 @@ export const loadState = async () => {
   if (downloadToResume && !isTorrent) {
     // Initialize torrent seeding, then resume the HTTP download with JS.
     await DownloadManager.initializeTorrentService(undefined, downloadsToSeed);
-    await DownloadManager.startDownload(downloadToResume).catch((err) => {
-      // If resume fails, just log it - user can manually retry
+    await DownloadManager.startDownload(downloadToResume).catch(async (err) => {
       logger.error("Failed to auto-resume download:", err);
+      if (isDebridPendingError(err, downloadToResume.downloader)) {
+        await DownloadOrchestrator.saveAwaitingDebridDownload(downloadToResume);
+      }
     });
   } else {
     await DownloadManager.initializeTorrentService(

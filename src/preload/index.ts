@@ -53,6 +53,7 @@ import type {
   SteamConnectErrorCode,
   ExtractionFailure,
 } from "@types";
+import type { Downloader } from "@shared";
 
 const fileExplorerApi = {
   readDirectory: (path: string) => ipcRenderer.invoke("readDirectory", path),
@@ -144,8 +145,10 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("addGameToQueue", payload),
   cancelGameDownload: (shop: GameShop, objectId: string) =>
     ipcRenderer.invoke("cancelGameDownload", shop, objectId),
-  pauseGameDownload: (shop: GameShop, objectId: string) =>
-    ipcRenderer.invoke("pauseGameDownload", shop, objectId),
+  pauseGameDownload: (shop: GameShop, objectId: string, confirmed?: boolean) =>
+    ipcRenderer.invoke("pauseGameDownload", shop, objectId, confirmed),
+  getDownloadPauseWarning: (shop: GameShop, objectId: string) =>
+    ipcRenderer.invoke("getDownloadPauseWarning", shop, objectId),
   resumeGameDownload: (
     shop: GameShop,
     objectId: string,
@@ -187,14 +190,16 @@ contextBridge.exposeInMainWorld("electron", {
     shop: GameShop,
     objectId: string,
     targetArea: "hero" | "queue" | "paused",
-    targetIndex?: number
+    targetIndex?: number,
+    confirmed?: boolean
   ) =>
     ipcRenderer.invoke(
       "moveDownloadPlacement",
       shop,
       objectId,
       targetArea,
-      targetIndex
+      targetIndex,
+      confirmed
     ),
   getDownloadLayoutState: () =>
     ipcRenderer.invoke(
@@ -223,6 +228,10 @@ contextBridge.exposeInMainWorld("electron", {
   },
   getTorrentFiles: (magnet: string) =>
     ipcRenderer.invoke("getTorrentFiles", magnet) as Promise<
+      { ok: true; data: TorrentFilesResponse } | { ok: false; error: string }
+    >,
+  getDebridFiles: (magnet: string, provider: Downloader) =>
+    ipcRenderer.invoke("getDebridFiles", magnet, provider) as Promise<
       { ok: true; data: TorrentFilesResponse } | { ok: false; error: string }
     >,
 

@@ -1,3 +1,4 @@
+import type { Downloader } from "@shared";
 import type {
   SystemPowerAction,
   AppUpdaterEvent,
@@ -181,12 +182,20 @@ declare global {
       payload: StartGameDownloadPayload
     ) => Promise<{ ok: boolean; error?: string }>;
     cancelGameDownload: (shop: GameShop, objectId: string) => Promise<void>;
-    pauseGameDownload: (shop: GameShop, objectId: string) => Promise<void>;
+    pauseGameDownload: (
+      shop: GameShop,
+      objectId: string,
+      confirmed?: boolean
+    ) => Promise<boolean>;
+    getDownloadPauseWarning: (
+      shop: GameShop,
+      objectId: string
+    ) => Promise<boolean>;
     resumeGameDownload: (
       shop: GameShop,
       objectId: string,
       strategy?: "interruptActive" | "queueIfActive"
-    ) => Promise<void>;
+    ) => Promise<boolean>;
     pauseGameSeed: (shop: GameShop, objectId: string) => Promise<void>;
     resumeGameSeed: (shop: GameShop, objectId: string) => Promise<void>;
     saveGlobalTrackers: (
@@ -214,7 +223,8 @@ declare global {
       shop: GameShop,
       objectId: string,
       targetArea: "hero" | "queue" | "paused",
-      targetIndex?: number
+      targetIndex?: number,
+      confirmed?: boolean
     ) => Promise<boolean>;
     getDownloadLayoutState: () => Promise<DownloadLayoutState>;
     onDownloadProgress: (
@@ -226,6 +236,12 @@ declare global {
     onHardDelete: (cb: () => void) => () => Electron.IpcRenderer;
     getTorrentFiles: (
       magnet: string
+    ) => Promise<
+      { ok: true; data: TorrentFilesResponse } | { ok: false; error: string }
+    >;
+    getDebridFiles: (
+      magnet: string,
+      provider: Downloader
     ) => Promise<
       { ok: true; data: TorrentFilesResponse } | { ok: false; error: string }
     >;
