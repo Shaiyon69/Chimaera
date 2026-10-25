@@ -1,5 +1,6 @@
 import { is } from "@electron-toolkit/utils";
 import { isStaging } from "@main/constants";
+import { isSafeExternalUrl } from "@main/helpers/ipc-guards-core";
 import { db, gamesSublevel, levelKeys } from "@main/level";
 import icon from "@resources/icon.png?asset";
 import trayIconDark from "@resources/tray-icon-dark.png?asset";
@@ -439,7 +440,11 @@ export class WindowManager {
     });
 
     mainWindow.webContents.setWindowOpenHandler((handler) => {
-      shell.openExternal(handler.url);
+      if (isSafeExternalUrl(handler.url)) {
+        shell.openExternal(handler.url);
+      } else {
+        logger.warn("Blocked window.open to unsafe URL", handler.url);
+      }
       return { action: "deny" };
     });
   }
