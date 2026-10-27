@@ -1,6 +1,6 @@
 import { registerEvent } from "../register-event";
 import { db } from "@main/level";
-import { getSublevelByName } from "./helpers";
+import { assertRendererAccess, getSublevelByName } from "./helpers";
 import { logger } from "@main/services";
 
 const leveldbPut = async (
@@ -11,6 +11,7 @@ const leveldbPut = async (
   valueEncoding: "json" | "utf8" = "json"
 ) => {
   try {
+    assertRendererAccess(true, sublevelName, key);
     if (sublevelName) {
       // Note: sublevels always use "json" encoding, valueEncoding parameter is ignored
       const sublevel = getSublevelByName(sublevelName);

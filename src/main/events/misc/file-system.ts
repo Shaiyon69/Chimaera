@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { access, readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { platform } from "node:os";
 import { registerEvent } from "../register-event";
 
@@ -77,6 +77,15 @@ function assertTrustedSender(event: Electron.IpcMainInvokeEvent): void {
   }
 }
 
+// The picker must browse every drive for game executables, so only the app's
+// own data (LevelDB, session, auth) is off limits.
+function assertNotAppData(target: string): void {
+  const rel = relative(app.getPath("userData"), resolve(target));
+  if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
+    throw new Error("Path not allowed");
+  }
+}
+
 async function mapWithConcurrency<TItem, TResult>(
   items: TItem[],
   limit: number,
@@ -105,6 +114,7 @@ const readDirectory = async (
   dirPath: string
 ): Promise<DirectoryEntry[]> => {
   assertTrustedSender(event);
+  assertNotAppData(dirPath);
 
   const entries = await readdir(dirPath, { withFileTypes: true });
 
@@ -186,6 +196,7 @@ const getPathInfo = async (
   filePath: string
 ): Promise<PathInfo> => {
   assertTrustedSender(event);
+  assertNotAppData(filePath);
 
   try {
     const stats = await stat(filePath);

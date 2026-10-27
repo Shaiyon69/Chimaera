@@ -1,5 +1,5 @@
 import { registerEvent } from "../register-event";
-import { getSublevelByName } from "./helpers";
+import { assertRendererAccess, getSublevelByName } from "./helpers";
 import { logger } from "@main/services";
 
 const leveldbValues = async (
@@ -7,6 +7,7 @@ const leveldbValues = async (
   sublevelName: string
 ) => {
   try {
+    assertRendererAccess(false, sublevelName);
     const sublevel = getSublevelByName(sublevelName);
     return sublevel.values().all();
   } catch (error) {
