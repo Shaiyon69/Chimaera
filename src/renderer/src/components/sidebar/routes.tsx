@@ -1,7 +1,6 @@
 import {
   AppsIcon,
   DownloadIcon,
-  GearIcon,
   BookIcon,
   HomeIcon,
   PeopleIcon,
@@ -32,12 +31,6 @@ export const routes = [
     path: "/friends",
     nameKey: "friends",
     render: () => <PeopleIcon />,
-    requiresAuth: false,
-  },
-  {
-    path: "/settings",
-    nameKey: "settings",
-    render: () => <GearIcon />,
     requiresAuth: false,
   },
 ];

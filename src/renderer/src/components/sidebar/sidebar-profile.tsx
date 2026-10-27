@@ -1,5 +1,10 @@
 import { useNavigate } from "react-router-dom";
-import { BellIcon, ChevronDownIcon, PersonIcon } from "@primer/octicons-react";
+import {
+  BellIcon,
+  ChevronDownIcon,
+  GearIcon,
+  PersonIcon,
+} from "@primer/octicons-react";
 import { useAppSelector, useUserDetails } from "@renderer/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -225,9 +230,6 @@ export function SidebarProfile() {
   };
 
   const handleProfileClick = () => {
-    if (userDetails === null) {
-      return;
-    }
     if (dropdownOpen) {
       closeDropdown();
     } else {
@@ -244,6 +246,11 @@ export function SidebarProfile() {
   const handleNotificationsClick = () => {
     closeDropdown();
     navigate("/notifications");
+  };
+
+  const handleSettingsClick = () => {
+    closeDropdown();
+    navigate("/settings");
   };
 
   const gameRunningDetails = () => {
@@ -300,27 +307,27 @@ export function SidebarProfile() {
 
           {gameRunningDetails()}
 
-          {userDetails && (
-            <ChevronDownIcon
-              size={12}
-              className={`sidebar-profile__chevron${dropdownOpen ? " sidebar-profile__chevron--open" : ""}`}
-            />
-          )}
+          <ChevronDownIcon
+            size={12}
+            className={`sidebar-profile__chevron${dropdownOpen ? " sidebar-profile__chevron--open" : ""}`}
+          />
         </div>
       </button>
 
-      {dropdownOpen && userDetails && (
+      {dropdownOpen && (
         <div
           className={`sidebar-profile__dropdown${isDropdownClosing ? " sidebar-profile__dropdown--closing" : ""}`}
         >
-          <button
-            type="button"
-            className="sidebar-profile__dropdown-item"
-            onClick={handleViewProfile}
-          >
-            <PersonIcon size={16} />
-            <span>{t("user_profile:see_profile")}</span>
-          </button>
+          {userDetails && (
+            <button
+              type="button"
+              className="sidebar-profile__dropdown-item"
+              onClick={handleViewProfile}
+            >
+              <PersonIcon size={16} />
+              <span>{t("user_profile:see_profile")}</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -334,6 +341,15 @@ export function SidebarProfile() {
                 {notificationCount > 99 ? "99+" : notificationCount}
               </small>
             )}
+          </button>
+
+          <button
+            type="button"
+            className="sidebar-profile__dropdown-item"
+            onClick={handleSettingsClick}
+          >
+            <GearIcon size={16} />
+            <span>{t("settings")}</span>
           </button>
         </div>
       )}
