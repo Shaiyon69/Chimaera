@@ -25,7 +25,6 @@ import {
   useToast,
   useUserDetails,
 } from "@renderer/hooks";
-import { useSubscription } from "@renderer/hooks/use-subscription";
 import {
   DownloadError,
   Downloader,
@@ -314,7 +313,6 @@ export function DownloadSettingsModal({
 
   const { isFeatureEnabled, Feature } = useFeature();
   const { hasActiveSubscription } = useUserDetails();
-  const { showHydraCloudModal } = useSubscription();
 
   const selectedUri = useMemo(() => {
     if (!repack || selectedDownloader === null) return null;
@@ -1301,8 +1299,11 @@ export function DownloadSettingsModal({
 
                 const Indicator = option.isAvailable ? motion.span : "span";
 
+                // VikingFile is configured through Hydra Cloud, which Chimaera has no way to buy.
                 const isDisabled =
-                  !option.isAvailable && !option.isAvailableButNotConfigured;
+                  !option.isAvailable &&
+                  (!option.isAvailableButNotConfigured ||
+                    option.downloader === Downloader.VikingFile);
 
                 const getAvailabilityIndicator = () => {
                   if (option.isAvailable) {
@@ -1419,11 +1420,6 @@ export function DownloadSettingsModal({
                           option.isAvailableButNotConfigured
                         ) {
                           setShowRealDebridModal(true);
-                        } else if (
-                          option.downloader === Downloader.VikingFile &&
-                          option.isAvailableButNotConfigured
-                        ) {
-                          showHydraCloudModal("vikingfile");
                         } else {
                           setSelectedDownloader(option.downloader);
                         }

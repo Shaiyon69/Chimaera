@@ -13,13 +13,6 @@ import type { GameContentWarning } from "./souvenir.types";
 export type FriendRequestAction = "ACCEPTED" | "REFUSED" | "CANCEL";
 export * from "./download-contract";
 
-export type HydraCloudFeature =
-  | "achievements"
-  | "backup"
-  | "achievements-points"
-  | "customization"
-  | "vikingfile";
-
 export interface DiskUsage {
   free: number;
   total: number;
@@ -357,11 +350,6 @@ export interface UpdateProfileRequest {
   bio?: string;
   language?: string;
   allowCloudGifts?: boolean;
-}
-
-export interface OpenCheckoutOptions {
-  path?: "/" | "/gift" | `/gifts/${string}`;
-  recipientId?: string;
 }
 
 export interface DownloadSourceDownload {

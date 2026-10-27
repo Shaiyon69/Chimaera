@@ -18,7 +18,6 @@ import {
   useUserDetails,
 } from "@renderer/hooks";
 import {
-  AlertIcon,
   DownloadIcon,
   LockIcon,
   PeopleIcon,
@@ -28,7 +27,6 @@ import { HowLongToBeatSection } from "./how-long-to-beat-section";
 import { LaunchboxDetailsSection } from "./launchbox-details-section";
 import { SidebarSection } from "../sidebar-section/sidebar-section";
 import { buildGameAchievementPath } from "@renderer/helpers";
-import { useSubscription } from "@renderer/hooks/use-subscription";
 import { RetroAchievementsConnectBanner } from "@renderer/components/retro-achievements-connect-banner/retro-achievements-connect-banner";
 import "./sidebar.scss";
 import { GameLanguageSection } from "./game-language-section";
@@ -119,7 +117,7 @@ export function Sidebar() {
     data: ProtonDBData | null;
   }>({ isLoading: shouldShowProtonFeatures, data: null });
 
-  const { userDetails, hasActiveSubscription } = useUserDetails();
+  const { userDetails } = useUserDetails();
   const [activeRequirement, setActiveRequirement] =
     useState<keyof SteamAppDetails["pc_requirements"]>("minimum");
 
@@ -129,7 +127,6 @@ export function Sidebar() {
     (state) => state.userPreferences.value
   );
 
-  const { showHydraCloudModal } = useSubscription();
   const { t } = useTranslation("game_details");
   const { formatDateTime } = useDate();
   const { numberFormatter } = useFormat();
@@ -239,19 +236,6 @@ export function Sidebar() {
         >
           <ul className="list">
             <RetroAchievementsConnectBanner />
-
-            {!hasActiveSubscription &&
-              !isBloodborne &&
-              achievementsCount > 0 && (
-                <button
-                  type="button"
-                  className="subscription-required-button"
-                  onClick={() => showHydraCloudModal("achievements")}
-                >
-                  <AlertIcon size={14} />
-                  <span>{t("achievements_not_sync")}</span>
-                </button>
-              )}
 
             {(achievements ?? []).slice(0, 4).map((achievement) => (
               <li key={achievement.displayName}>

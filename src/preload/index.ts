@@ -47,7 +47,6 @@ import type {
   CloudSaveSyncProgressPayload,
   SyncGameCloudSaveResult,
   CloudSaveModalSyncResult,
-  OpenCheckoutOptions,
   AchievementSouvenirSyncStatus,
   SteamSyncState,
   SteamSyncFinishedPayload,
@@ -1172,11 +1171,6 @@ contextBridge.exposeInMainWorld("electron", {
   isStaging: () => ipcRenderer.invoke("isStaging"),
   isPortableVersion: Boolean(process.env.PORTABLE_EXECUTABLE_FILE),
   openExternal: (src: string) => ipcRenderer.invoke("openExternal", src),
-  openCheckout: (options?: OpenCheckoutOptions) =>
-    ipcRenderer.invoke("openCheckout", options),
-  notifyCloudGiftResolved: (giftId: string) =>
-    ipcRenderer.invoke("notifyCloudGiftResolved", giftId),
-  getCloudIframeUrl: () => ipcRenderer.invoke("getCloudIframeUrl"),
   showOpenDialog: (options: Electron.OpenDialogOptions) =>
     ipcRenderer.invoke("showOpenDialog", options),
   ...fileExplorerApi,

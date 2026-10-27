@@ -6,7 +6,6 @@ import {
   ClockIcon,
   EyeClosedIcon,
   GameControllerIcon,
-  GiftIcon,
   HeartIcon,
   ImageIcon,
   ProhibitIcon,
@@ -571,25 +570,8 @@ function getExternalProfileActions(
 ): ProfileHeroAction[] {
   if (!profile) return [];
 
-  const giftActions: ProfileHeroAction[] = profile.canReceiveCloudGift
-    ? [
-        {
-          label: "Gift Cloud",
-          variant: "secondary",
-          icon: <GiftIcon size={20} />,
-          onClick: () => {
-            void globalThis.window.electron.openCheckout({
-              path: "/gift",
-              recipientId: profile.id,
-            });
-          },
-        },
-      ]
-    : [];
-
   if (profile.relation === null) {
     return [
-      ...giftActions,
       {
         label: "Add Friend",
         variant: "secondary",
@@ -604,7 +586,6 @@ function getExternalProfileActions(
 
   if (relation.status === "ACCEPTED") {
     return [
-      ...giftActions,
       {
         label: "Remove Friend",
         variant: "secondary",
@@ -617,7 +598,6 @@ function getExternalProfileActions(
 
   if (relation.BId === profile.id) {
     return [
-      ...giftActions,
       {
         label: "Cancel Request",
         variant: "secondary",
@@ -628,7 +608,6 @@ function getExternalProfileActions(
   }
 
   return [
-    ...giftActions,
     {
       label: "Accept Request",
       variant: "secondary",

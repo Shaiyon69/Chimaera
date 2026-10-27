@@ -14,7 +14,6 @@ import type {
   AllDebridUser,
   UserProfile,
   UpdateProfileRequest,
-  OpenCheckoutOptions,
   GameStats,
   UserDetails,
   NotificationSync,
@@ -1014,8 +1013,6 @@ declare global {
 
     /* Misc */
     openExternal: (src: string) => Promise<void>;
-    openCheckout: (options?: OpenCheckoutOptions) => Promise<void>;
-    getCloudIframeUrl: () => Promise<string>;
     getVersion: () => Promise<string>;
     getAppSessionId: () => Promise<string>;
     isStaging: () => Promise<boolean>;
@@ -1217,7 +1214,6 @@ declare global {
     onSyncNotificationCount: (
       cb: (notification: NotificationSync) => void
     ) => () => Electron.IpcRenderer;
-    notifyCloudGiftResolved: (giftId: string) => Promise<void>;
 
     /* Notifications */
     publishNewRepacksNotification: (newRepacksCount: number) => Promise<void>;
