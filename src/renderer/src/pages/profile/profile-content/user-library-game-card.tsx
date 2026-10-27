@@ -95,7 +95,7 @@ export function UserLibraryGameCard({
       <li className="user-library-game__wrapper">
         <VerticalCoverCard
           gameTitle={game.title}
-          coverImageUrls={[coverImageUrl]}
+          coverImageUrls={[coverImageUrl, game.libraryImageUrl]}
           useClassicsLayout={
             game.shop === "launchbox" && !game.customLibraryImageUrl
           }
