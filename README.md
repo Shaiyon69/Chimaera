@@ -13,8 +13,8 @@
 ## Features
 
 - Add games that you own to your library
-- Have a nice profile that shows what you are playing to your friends
-- Save your game progress in the cloud
+- Chat with friends in the Friends tab (shared with Messapp) and see what they are playing
+- Back up your game saves locally or to your own Google Drive
 - Unlock achievements
 - Navigate through a rich catalogue with a powerful suggestion algorithm
 - Discover new games that you haven't played before
