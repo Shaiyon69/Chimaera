@@ -51,7 +51,6 @@ import type {
   AchievementSouvenirSyncStatus,
   SteamSyncState,
   SteamSyncFinishedPayload,
-  SteamSyncRunStatus,
   SteamConnectErrorCode,
   ExtractionFailure,
 } from "@types";
@@ -1414,7 +1413,9 @@ contextBridge.exposeInMainWorld("electron", {
     return () =>
       ipcRenderer.removeListener("on-retroachievements-connected", listener);
   },
-  startSteamOAuth: (lng: string) => ipcRenderer.invoke("startSteamOAuth", lng),
+  startSteamOAuth: () => ipcRenderer.invoke("startSteamOAuth"),
+  getSteamIntegrationStatus: () =>
+    ipcRenderer.invoke("getSteamIntegrationStatus"),
   disconnectSteam: (deleteImportedData: boolean) =>
     ipcRenderer.invoke("disconnectSteam", deleteImportedData),
   startSteamSync: () => ipcRenderer.invoke("startSteamSync"),
@@ -1422,8 +1423,6 @@ contextBridge.exposeInMainWorld("electron", {
   getSteamSyncState: () => ipcRenderer.invoke("getSteamSyncState"),
   syncSteamGameOnGamePage: (steamAppId: string) =>
     ipcRenderer.invoke("syncSteamGameOnGamePage", steamAppId),
-  reconcileSteamSyncRun: (latestSyncRunStatus: SteamSyncRunStatus | null) =>
-    ipcRenderer.invoke("reconcileSteamSyncRun", latestSyncRunStatus),
   onSteamSyncProgress: (cb: (state: SteamSyncState) => void) => {
     const listener = (
       _event: Electron.IpcRendererEvent,

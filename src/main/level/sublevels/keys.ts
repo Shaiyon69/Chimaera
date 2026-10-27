@@ -38,5 +38,5 @@ export const levelKeys = {
   ps1MemoryCardSave: (cardFilePath: string, identifier: string) =>
     `${cardFilePath}::${identifier}`,
   gameVisibilityRenameMigration: "game-visibility-rename-migration",
-  steamSyncRun: "steamSyncRun",
+  steamAccount: "steamAccount",
 };

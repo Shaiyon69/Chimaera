@@ -2,7 +2,6 @@ import { WindowManager } from "./window-manager";
 import { updateGameExecutablePath } from "@main/helpers/update-executable-path";
 import { createGame, trackGamePlaytime } from "./library-sync";
 import type { Game, UserPreferences } from "@types";
-import axios from "axios";
 import { db, gamesSublevel, levelKeys } from "@main/level";
 import { logger, networkLogger } from "./logger";
 import { PowerSaveBlockerManager } from "./power-save-blocker";
@@ -28,12 +27,8 @@ import {
   type LinuxProcessInfo,
 } from "./linux-process-match";
 import { isWindowsBatchFile } from "@main/helpers/windows-batch-command";
-import { HydraApi } from "./hydra-api";
 import { isSteamAppExecutable } from "./steam-integration/steam-library-executable";
-import {
-  resolveActiveSteamImport,
-  resolveSteamSessionPlaytimePolicy,
-} from "./steam-integration/steam-playtime";
+import { resolveSteamSessionPlaytimePolicy } from "./steam-integration/steam-playtime";
 import {
   cancelSteamGameExitSync,
   scheduleSteamGameExitSync,
@@ -344,29 +339,6 @@ async function onOpenGame(game: Game, matchedPath: string) {
 
   if (game.shop === "steam") {
     isSteamLibraryPath = await isSteamAppExecutable(game.objectId, matchedPath);
-
-    const hasActiveSteamImport = await resolveActiveSteamImport(
-      game.hasActiveSteamImport,
-      async (signal) => {
-        try {
-          return await HydraApi.get<{ hasActiveSteamImport?: boolean }>(
-            `/profile/games/steam/${encodeURIComponent(game.objectId)}`,
-            undefined,
-            { signal }
-          );
-        } catch (error) {
-          if (axios.isAxiosError(error) && error.response?.status === 404) {
-            return { hasActiveSteamImport: false };
-          }
-          throw error;
-        }
-      }
-    );
-
-    game = (await updateGameRecord(gameKey, { hasActiveSteamImport })) ?? game;
-  }
-
-  if (game.shop === "steam") {
     ({ countHydraPlaytime, syncSteamOnExit } =
       resolveSteamSessionPlaytimePolicy({
         hasActiveSteamImport: game.hasActiveSteamImport === true,

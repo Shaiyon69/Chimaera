@@ -2,48 +2,30 @@ import { levelKeys } from "@main/level";
 import type { Game, SteamGameSyncPayload } from "@types";
 
 import { updateGameRecord } from "../game-record-updater";
-import { HydraApi } from "../hydra-api";
-import {
-  mergeImportedProfileGame,
-  type ImportedProfileGame,
-} from "../library-sync/merge-imported-profile-game";
+import { mergeImportedProfileGame } from "../library-sync/merge-imported-profile-game";
 import { steamSyncLogger } from "../logger";
 import { WindowManager } from "../window-manager";
 import { createSteamGameExitSyncScheduler } from "./steam-game-exit-sync-scheduler";
 import { createSteamGamePageSync } from "./steam-game-page-sync-core";
 import { steamSyncOrchestrator } from "./steam-sync-orchestrator";
-import { chunkSteamGameSyncPayload } from "./steam-sync-snapshot";
-
-const GAME_ENDPOINT = "/profile/integrations/steam/games";
 
 const publishGame = async (
   steamAppId: string,
   payload: SteamGameSyncPayload,
   signal: AbortSignal
 ) => {
-  for (const chunk of chunkSteamGameSyncPayload(payload)) {
-    await HydraApi.put(
-      `${GAME_ENDPOINT}/${encodeURIComponent(steamAppId)}`,
-      chunk,
-      { signal }
-    );
-  }
-
-  const remoteGame = await HydraApi.get<ImportedProfileGame>(
-    `/profile/games/steam/${encodeURIComponent(steamAppId)}`,
-    undefined,
-    { signal }
-  );
-  if (signal.aborted) return;
-  if (remoteGame.shop !== "steam" || remoteGame.objectId !== steamAppId) {
-    return;
-  }
-
-  const gameKey = levelKeys.game("steam", steamAppId);
   if (signal.aborted) return;
 
-  const updatedGame = await updateGameRecord(gameKey, (localGame) =>
-    mergeImportedProfileGame(localGame, remoteGame)
+  const updatedGame = await updateGameRecord(
+    levelKeys.game("steam", steamAppId),
+    (localGame) =>
+      mergeImportedProfileGame(localGame, {
+        objectId: steamAppId,
+        shop: "steam",
+        lastTimePlayed: payload.lastPlayedAt,
+        runtimeByPlatform: { steam: payload.playTimeInSeconds },
+        hasActiveSteamImport: true,
+      })
   );
   if (!updatedGame || signal.aborted) return;
 

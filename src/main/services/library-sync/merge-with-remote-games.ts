@@ -5,7 +5,7 @@ import type {
   SelectedArtwork,
   ShopAssets,
 } from "@types";
-import { chunk } from "lodash-es";
+import { chunk, isUndefined, omitBy } from "lodash-es";
 import { HydraApi } from "../hydra-api";
 import { saveSteamGridDbArtwork } from "../game-artwork-cloud";
 import {
@@ -35,8 +35,8 @@ import { mergePersistedAchievementTotals } from "../achievements/achievement-mem
 import { trackAchievementBatchGame } from "../achievements/achievement-batch-games";
 import { fetchRemoteProfileGames as fetchProfileGames } from "./fetch-remote-profile-games";
 
-type ProfileGame = {
-  id: string;
+export type ProfileGame = {
+  id?: string;
   createdAt?: string | null;
   collectionIds?: string[];
   collectionId?: string | null;
@@ -58,7 +58,8 @@ type ProfileGame = {
   customLibraryHeroImageUrl?: string | null;
   customLogoImageUrl?: string | null;
   customIconUrl?: string | null;
-} & ShopAssets;
+} & Pick<ShopAssets, "shop" | "objectId" | "title"> &
+  Partial<ShopAssets>;
 
 const reconcileCustomAsset = (
   localValue: string | null | undefined,
@@ -198,7 +199,7 @@ const mergeExistingGame = (
   canReconcileCustomArtwork: boolean
 ): Game => ({
   ...localGame,
-  remoteId: remoteGame.id,
+  remoteId: remoteGame.id ?? localGame.remoteId,
   addedToLibraryAt: localGame.addedToLibraryAt ?? remoteAddedToLibraryAt,
   lastTimePlayed: getLatestLastTimePlayed(localGame, remoteGame),
   ...mergeLocalAndRemotePlayTime(localGame, remoteGame),
@@ -251,11 +252,11 @@ const createLocalGame = (
 ): Game => ({
   objectId: remoteGame.objectId,
   title: remoteGame.title,
-  remoteId: remoteGame.id,
+  remoteId: remoteGame.id ?? null,
   shop: remoteGame.shop,
-  iconUrl: remoteGame.iconUrl,
-  libraryHeroImageUrl: remoteGame.libraryHeroImageUrl,
-  logoImageUrl: remoteGame.logoImageUrl,
+  iconUrl: remoteGame.iconUrl ?? null,
+  libraryHeroImageUrl: remoteGame.libraryHeroImageUrl ?? null,
+  logoImageUrl: remoteGame.logoImageUrl ?? null,
   addedToLibraryAt,
   lastTimePlayed: remoteGame.lastTimePlayed,
   ...mergeLocalAndRemotePlayTime({ playTimeInMilliseconds: 0 }, remoteGame),
@@ -291,13 +292,19 @@ const buildRemoteGameShopAssets = (
   shop: remoteGame.shop,
   objectId: remoteGame.objectId,
   title: localGame?.title || remoteGame.title,
-  coverImageUrl: getRemoteCoverImageUrl(remoteGame),
-  libraryHeroImageUrl: remoteGame.libraryHeroImageUrl,
-  libraryImageUrl: remoteGame.libraryImageUrl,
-  logoImageUrl: remoteGame.logoImageUrl,
-  iconUrl: remoteGame.iconUrl,
-  logoPosition: remoteGame.logoPosition,
-  downloadSources: remoteGame.downloadSources,
+  // A field the source doesn't carry must not wipe what the local record has.
+  ...omitBy(
+    {
+      coverImageUrl: getRemoteCoverImageUrl(remoteGame),
+      libraryHeroImageUrl: remoteGame.libraryHeroImageUrl,
+      libraryImageUrl: remoteGame.libraryImageUrl,
+      logoImageUrl: remoteGame.logoImageUrl,
+      iconUrl: remoteGame.iconUrl,
+      logoPosition: remoteGame.logoPosition,
+      downloadSources: remoteGame.downloadSources,
+    },
+    isUndefined
+  ),
 });
 
 const buildMergedGame = (
@@ -375,7 +382,9 @@ const mergeRemoteGamesChunk = async (
   }
 };
 
-const hideGamesRemovedFromSteamImport = async (remoteKeys: Set<string>) => {
+export const hideGamesRemovedFromSteamImport = async (
+  remoteKeys: Set<string>
+) => {
   const updates = (await gamesSublevel.iterator().all()).flatMap(
     ([key, game]) => {
       const missingImportResolution = resolveMissingSteamImport(

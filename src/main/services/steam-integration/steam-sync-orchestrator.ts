@@ -1,21 +1,23 @@
+import { randomUUID } from "node:crypto";
 import { db, gamesSublevel, levelKeys } from "@main/level";
 import type { SteamAchievement, UserPreferences } from "@types";
 import { publishAchievementUnlockNotifications } from "../achievements/merge-achievements";
 import { isSteamReconnectRequired } from "@shared";
 import { updateGameRecord } from "../game-record-updater";
-import { HydraApi } from "../hydra-api";
-import { mergeWithRemoteGames } from "../library-sync";
+import {
+  hideGamesRemovedFromSteamImport,
+  mergeProfileGamesIntoLibrary,
+} from "../library-sync";
 import { steamSyncLogger } from "../logger";
 import { WindowManager } from "../window-manager";
 import type {
-  SteamIntegrationStatus,
   SteamGameSyncPayload,
   SteamSourceAchievement,
   SteamSourceLibraryGame,
   SteamSnapshotPayload,
   SteamSyncFinishedPayload,
-  SteamSyncRunStatus,
   SteamSyncOrigin,
+  SteamSyncPhase,
   SteamSyncState,
   UnlockedAchievement,
 } from "@types";
@@ -30,7 +32,6 @@ import {
   isSteamSourceAchievementSkippable,
   isSteamSourceLibraryFatal,
   isSteamSourceRateLimited,
-  isSteamSyncConflict,
   withSteamSourceRetry,
 } from "./steam-source-retry";
 import {
@@ -39,8 +40,6 @@ import {
   SteamRateLimitedError,
   SteamSessionRequiredError,
   SteamSyncAbortedError,
-  SteamSyncInProgressError,
-  SteamSyncRunNotPendingError,
   SteamWebApiHttpError,
   isSteamSyncAbortError,
 } from "./steam-sync-errors";
@@ -82,22 +81,21 @@ import {
   type SteamFamilyPlaytime,
   type SteamFamilySharedApp,
 } from "./steam-family-library";
+import { buildSteamSnapshot } from "./steam-sync-snapshot";
 import {
-  buildLegacySteamSnapshotFallback,
-  buildSteamSnapshot,
-  chunkSteamSnapshot,
-  uploadSteamSnapshotChunks,
-} from "./steam-sync-snapshot";
+  steamLibraryGameToProfileGame,
+  toSteamIntegrationStatus,
+} from "./steam-account-core";
+import { getSteamAccount, saveSteamAccount } from "./steam-account";
 import { linkImportedSteamGameExecutables } from "./link-imported-steam-executables";
 import { watchSteamLibraries } from "./steam-install-watcher";
 import { AchievementWatcherManager } from "../achievements/achievement-watcher-manager";
 
-const INTEGRATION_ENDPOINT = "/profile/integrations/steam";
 const ACHIEVEMENT_FETCH_CONCURRENCY = 8;
 
 const idleState = (): SteamSyncState => ({ status: "idle" });
 
-const getHydraApiErrorMessage = (error: unknown): string | null => {
+const getApiErrorMessage = (error: unknown): string | null => {
   if (typeof error === "object" && error !== null) {
     const response = (error as { response?: { data?: { message?: unknown } } })
       .response;
@@ -130,7 +128,7 @@ const steamWebApiErrorBody = (error: unknown): string | null => {
 };
 
 const formatAchievementHttpDetail = (error: unknown, status: number | null) => {
-  const message = getHydraApiErrorMessage(error);
+  const message = getApiErrorMessage(error);
   const body = steamWebApiErrorBody(error);
   const extras = [message, body].filter(Boolean);
 
@@ -161,7 +159,6 @@ const getSteamSyncFailureMessage = (error: unknown): string => {
   if (
     error instanceof SteamPrivateProfileError ||
     error instanceof SteamRateLimitedError ||
-    error instanceof SteamSyncRunNotPendingError ||
     error instanceof SteamSessionRequiredError ||
     error instanceof SteamAccountMismatchError
   ) {
@@ -172,30 +169,12 @@ const getSteamSyncFailureMessage = (error: unknown): string => {
     return "profile/steam-rate-limited";
   }
 
-  return getHydraApiErrorMessage(error) ?? "steam-sync-failed";
+  return getApiErrorMessage(error) ?? "steam-sync-failed";
 };
 
 const throwIfAborted = (signal: AbortSignal) => {
   if (signal.aborted) {
     throw new SteamSyncAbortedError();
-  }
-};
-
-const persistSyncRunId = async (syncRunId: string) => {
-  await db.put(
-    levelKeys.steamSyncRun,
-    { syncRunId },
-    { valueEncoding: "json" }
-  );
-};
-
-const clearPersistedSyncRunId = async () => {
-  try {
-    await db.del(levelKeys.steamSyncRun);
-  } catch (error) {
-    if (!(error instanceof Error) || error.name !== "NotFoundError") {
-      steamSyncLogger.error("Failed to clear persisted Steam sync run", error);
-    }
   }
 };
 
@@ -256,14 +235,6 @@ class SteamSyncOrchestrator {
     if (this.state.status === "idle" && this.state.requiresReconnect) {
       this.setState(idleState());
     }
-  }
-
-  async reconcilePersistedRun(latestSyncRunStatus?: SteamSyncRunStatus | null) {
-    if (latestSyncRunStatus === "PENDING") {
-      return;
-    }
-
-    await clearPersistedSyncRunId();
   }
 
   async start(origin: SteamSyncOrigin = "manual") {
@@ -439,83 +410,19 @@ class SteamSyncOrchestrator {
     WindowManager.sendToAppWindows("on-steam-sync-finished", payload);
   }
 
-  private async createOrResumeRun(signal: AbortSignal) {
-    steamSyncLogger.log("POST", `${INTEGRATION_ENDPOINT}/sync`);
-
-    try {
-      const { syncRunId } = await HydraApi.post<{ syncRunId: string }>(
-        `${INTEGRATION_ENDPOINT}/sync`,
-        undefined,
-        { signal }
-      );
-
-      steamSyncLogger.log("Created sync run", syncRunId);
-      return syncRunId;
-    } catch (error) {
-      if (!isSteamSyncConflict(error)) {
-        throw error;
-      }
-
-      steamSyncLogger.log("POST /sync returned 409, reading latestSyncRun");
-
-      const status = await HydraApi.get<SteamIntegrationStatus>(
-        INTEGRATION_ENDPOINT,
-        undefined,
-        { signal }
-      );
-
-      if (
-        status.connected &&
-        status.latestSyncRun?.status === "PENDING" &&
-        status.latestSyncRun.id
-      ) {
-        steamSyncLogger.log("Resuming PENDING run", status.latestSyncRun.id);
-        return status.latestSyncRun.id;
-      }
-
-      if (status.connected && status.latestSyncRun?.status === "RUNNING") {
-        steamSyncLogger.log(
-          "Another Steam sync is RUNNING",
-          status.latestSyncRun.id
-        );
-        throw new SteamSyncInProgressError();
-      }
-
-      steamSyncLogger.error("409 without a resumable PENDING run", status);
-      throw error;
-    }
-  }
-
-  private async cancelPendingRun(syncRunId: string) {
-    if (!syncRunId) return;
-
-    steamSyncLogger.log("DELETE pending run", syncRunId);
-
-    try {
-      await HydraApi.delete(`${INTEGRATION_ENDPOINT}/sync/${syncRunId}`);
-      steamSyncLogger.log("Pending run cancelled", syncRunId);
-    } catch (error) {
-      steamSyncLogger.error("Failed to cancel pending run", syncRunId, error);
-    }
-  }
-
   private async resolveSteamSession(signal: AbortSignal) {
-    const status = await HydraApi.get<SteamIntegrationStatus>(
-      INTEGRATION_ENDPOINT,
-      undefined,
-      { signal }
-    );
+    const account = await getSteamAccount();
 
-    if (!status.connected) {
+    if (!account) {
       throw new SteamSessionRequiredError();
     }
 
     const token = await getSteamWebApiToken(signal);
-    if (token.steamId64 !== status.steamId64) {
+    if (token.steamId64 !== account.steamId64) {
       steamSyncLogger.error(
         "Steam store session does not match linked SteamID64",
         token.steamId64,
-        status.steamId64
+        account.steamId64
       );
       throw new SteamAccountMismatchError();
     }
@@ -731,7 +638,6 @@ class SteamSyncOrchestrator {
     >();
     let gamesProcessed = 0;
     let rateLimited = false;
-    let runGone = false;
 
     await mapPool(
       games,
@@ -741,9 +647,9 @@ class SteamSyncOrchestrator {
         throwIfAborted(signal);
 
         try {
-          if (rateLimited || runGone) {
+          if (rateLimited) {
             steamSyncLogger.log(
-              `Skipping achievements for ${game.steamAppId} ${game.name} (HTTP ${runGone ? "409" : "429"})`
+              `Skipping achievements for ${game.steamAppId} ${game.name} (HTTP 429)`
             );
             achievementsByAppId.set(game.steamAppId, undefined);
             return;
@@ -896,10 +802,6 @@ class SteamSyncOrchestrator {
                 });
               }
             }
-
-            if (status === 409) {
-              runGone = true;
-            }
           } else {
             steamSyncLogger.error(
               `Failed achievements for ${game.steamAppId} ${game.name} (${detail})`
@@ -921,10 +823,6 @@ class SteamSyncOrchestrator {
       }
     );
 
-    if (runGone) {
-      throw new SteamSyncRunNotPendingError();
-    }
-
     if (rateLimited) {
       throw new SteamRateLimitedError();
     }
@@ -932,110 +830,28 @@ class SteamSyncOrchestrator {
     return achievementsByAppId;
   }
 
-  private async publishSnapshot(
+  private setProgress(
     syncRunId: string,
-    snapshot: SteamSnapshotPayload,
-    signal: AbortSignal
+    phase: SteamSyncPhase,
+    gamesFound = 0,
+    gamesProcessed = 0
   ) {
-    throwIfAborted(signal);
-
-    const chunks = chunkSteamSnapshot(snapshot);
-    const setPublishProgress = (uploadedChunks: number) =>
-      this.setState({
-        status: "running",
-        syncRunId,
-        phase: "publishing",
-        gamesFound: chunks.length + 1,
-        gamesProcessed: uploadedChunks,
-      });
-
-    setPublishProgress(0);
-    const unlockedCount = snapshot.games.reduce(
-      (total, game) => total + (game.achievements?.length ?? 0),
-      0
-    );
-
-    steamSyncLogger.log(
-      "PUT snapshot chunks",
-      chunks.length,
-      "chunks,",
-      snapshot.games.length,
-      "games,",
-      unlockedCount,
-      "unlocked achievements"
-    );
-
-    try {
-      await uploadSteamSnapshotChunks(
-        chunks,
-        async (chunk, chunkIndex) => {
-          throwIfAborted(signal);
-          await HydraApi.put(
-            `${INTEGRATION_ENDPOINT}/sync/${syncRunId}/snapshot/chunks/${chunkIndex}`,
-            chunk,
-            { signal }
-          );
-          setPublishProgress(chunkIndex + 1);
-        },
-        async () => {
-          throwIfAborted(signal);
-          await HydraApi.post(
-            `${INTEGRATION_ENDPOINT}/sync/${syncRunId}/snapshot/commit`,
-            undefined,
-            { signal }
-          );
-          setPublishProgress(chunks.length + 1);
-        }
-      );
-    } catch (error) {
-      if (getSteamSourceHttpStatus(error) !== 404) throw error;
-
-      const legacyFallback = buildLegacySteamSnapshotFallback(snapshot);
-
-      steamSyncLogger.log(
-        "Chunked snapshot endpoint unavailable; using legacy snapshot endpoint",
-        { deferredAchievementGames: legacyFallback.gameUploads.length }
-      );
-      throwIfAborted(signal);
-      await HydraApi.put(
-        `${INTEGRATION_ENDPOINT}/sync/${syncRunId}/snapshot`,
-        legacyFallback.snapshot,
-        { signal }
-      );
-
-      for (const gameUpload of legacyFallback.gameUploads) {
-        for (const chunk of gameUpload.chunks) {
-          throwIfAborted(signal);
-          await HydraApi.put(
-            `${INTEGRATION_ENDPOINT}/games/${encodeURIComponent(gameUpload.steamAppId)}`,
-            chunk,
-            { signal }
-          );
-        }
-      }
-    }
-
-    steamSyncLogger.log("Snapshot published");
+    this.setState({
+      status: "running",
+      syncRunId,
+      phase,
+      gamesFound,
+      gamesProcessed,
+    });
   }
 
   private async run(signal: AbortSignal) {
-    let syncRunId = "";
-    let snapshotPublished = false;
+    const syncRunId = randomUUID();
 
     steamSyncLogger.log("Steam sync started");
 
     try {
-      syncRunId = await this.createOrResumeRun(signal);
-      throwIfAborted(signal);
-
-      await persistSyncRunId(syncRunId);
-      this.setState({
-        status: "running",
-        syncRunId,
-        phase: "library",
-        gamesFound: 0,
-        gamesProcessed: 0,
-      });
+      this.setProgress(syncRunId, "library");
 
       const token = await this.resolveSteamSession(signal);
       throwIfAborted(signal);
@@ -1048,127 +864,67 @@ class SteamSyncOrchestrator {
       const games = await this.fetchLibrary(token, signal);
       throwIfAborted(signal);
 
-      this.setState({
-        status: "running",
-        syncRunId,
-        phase: "achievements",
-        gamesFound: games.length,
-        gamesProcessed: 0,
-      });
+      // Merged before achievements so their counts land on records that exist.
+      this.setProgress(syncRunId, "merging");
+      await AchievementWatcherManager.runBatch(async () => {
+        await mergeProfileGamesIntoLibrary(
+          games.map(steamLibraryGameToProfileGame),
+          false,
+          (processed, total) => {
+            if (signal.aborted) return;
+            this.setProgress(syncRunId, "merging", total, processed);
+          }
+        );
 
-      const achievementsByAppId = await this.fetchAchievements(
-        token,
-        communitySession,
-        games,
-        signal
-      );
+        // An empty library is far likelier a bad response than a cleared account.
+        if (games.length > 0) {
+          await hideGamesRemovedFromSteamImport(
+            new Set(
+              games.map((game) => levelKeys.game("steam", game.steamAppId))
+            )
+          );
+        }
+      });
+      WindowManager.sendToAppWindows("on-library-batch-complete");
+
+      this.setProgress(syncRunId, "achievements", games.length);
+      await this.fetchAchievements(token, communitySession, games, signal);
       throwIfAborted(signal);
 
-      const snapshot = buildSteamSnapshot(games, achievementsByAppId);
-
-      await this.publishSnapshot(syncRunId, snapshot, signal);
-      snapshotPublished = true;
-
-      steamSyncLogger.log("Merging remote games into local library");
-      this.setState({
-        status: "running",
-        syncRunId,
-        phase: "merging",
-        gamesFound: 0,
-        gamesProcessed: 0,
-      });
+      this.setProgress(syncRunId, "executables");
       const linkedExecutableCount = await AchievementWatcherManager.runBatch(
-        async () => {
-          await mergeWithRemoteGames((processed, total) => {
+        () =>
+          linkImportedSteamGameExecutables((processed, total) => {
             if (signal.aborted) return;
-
-            this.setState({
-              status: "running",
-              syncRunId,
-              phase: "merging",
-              gamesFound: total,
-              gamesProcessed: processed,
-            });
-          });
-          steamSyncLogger.log("Remote games merged");
-          WindowManager.sendToAppWindows("on-library-batch-complete");
-
-          this.setState({
-            status: "running",
-            syncRunId,
-            phase: "executables",
-            gamesFound: 0,
-            gamesProcessed: 0,
-          });
-
-          return linkImportedSteamGameExecutables((processed, total) => {
-            if (signal.aborted) return;
-
-            this.setState({
-              status: "running",
-              syncRunId,
-              phase: "executables",
-              gamesFound: total,
-              gamesProcessed: processed,
-            });
-          });
-        }
+            this.setProgress(syncRunId, "executables", total, processed);
+          })
       );
-      steamSyncLogger.log("Library merge finished", {
-        linkedExecutableCount,
-      });
+      steamSyncLogger.log("Library merge finished", { linkedExecutableCount });
       void watchSteamLibraries();
       WindowManager.sendToAppWindows("on-library-batch-complete");
 
-      this.setState({
-        status: "running",
-        syncRunId,
-        phase: "finishing",
-        gamesFound: 0,
-        gamesProcessed: 0,
-      });
+      this.setProgress(syncRunId, "finishing");
+      const account = await getSteamAccount();
+      const synced = account && {
+        ...account,
+        lastSyncedAt: new Date().toISOString(),
+      };
+      if (synced) await saveSteamAccount(synced);
 
-      const status =
-        await HydraApi.get<SteamIntegrationStatus>(INTEGRATION_ENDPOINT);
-
-      steamSyncLogger.log("Steam sync succeeded", {
-        lastSyncedAt:
-          status.connected || status.snapshotPreserved
-            ? status.lastSyncedAt
-            : null,
-        latestSyncRun:
-          status.connected || status.snapshotPreserved
-            ? status.latestSyncRun
-            : null,
-      });
-
-      await clearPersistedSyncRunId();
+      steamSyncLogger.log("Steam sync succeeded", synced?.lastSyncedAt);
       this.setState(idleState());
-      this.emitFinished({ ok: true, status, origin: this.origin });
+      this.emitFinished({
+        ok: true,
+        status: toSteamIntegrationStatus(synced),
+        origin: this.origin,
+      });
     } catch (error) {
-      const aborted = isSteamSyncAbortError(error);
-
-      if (aborted) {
-        steamSyncLogger.log("Steam sync aborted", syncRunId || "(no run id)");
-        if (!snapshotPublished) {
-          await this.cancelPendingRun(syncRunId);
-        }
-        await clearPersistedSyncRunId();
+      if (isSteamSyncAbortError(error)) {
+        steamSyncLogger.log("Steam sync aborted", syncRunId);
         this.setState(idleState());
         this.emitFinished({
           ok: false,
           message: "steam-sync-aborted",
-          origin: this.origin,
-        });
-        return;
-      }
-
-      if (error instanceof SteamSyncInProgressError) {
-        steamSyncLogger.error("Steam sync already running on the server");
-        this.setState(idleState());
-        this.emitFinished({
-          ok: false,
-          message: error.message,
           origin: this.origin,
         });
         return;
@@ -1183,13 +939,6 @@ class SteamSyncOrchestrator {
           : idleState()
       );
       this.emitFinished({ ok: false, message, origin: this.origin });
-      if (
-        !snapshotPublished &&
-        !(error instanceof SteamSyncRunNotPendingError)
-      ) {
-        await this.cancelPendingRun(syncRunId);
-      }
-      await clearPersistedSyncRunId();
     }
   }
 }

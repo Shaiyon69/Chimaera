@@ -38,16 +38,6 @@ import {
   handleCachedImageRequest,
   pruneImageCache,
 } from "./services/image-cache";
-import {
-  closeSteamOpenIdWindow,
-  notifySteamConnectError,
-  notifySteamConnected,
-} from "./services/steam-integration/steam-store-session";
-import {
-  completeSteamOpenIdConnection,
-  parseSteamOpenIdReturn,
-} from "./services/steam-integration/steam-openid-return";
-import { steamSyncOrchestrator } from "./services/steam-integration/steam-sync-orchestrator";
 
 crashReporter.start({
   uploadToServer: false,
@@ -396,20 +386,6 @@ const handleDeepLinkPath = (uri?: string) => {
       }
 
       return;
-    }
-
-    if (url.host === "steam-connected") {
-      closeSteamOpenIdWindow();
-      const result = parseSteamOpenIdReturn(uri);
-      if (result?.kind === "error") {
-        notifySteamConnectError(result.code);
-        return;
-      }
-      completeSteamOpenIdConnection({
-        clearReconnectRequired: () =>
-          steamSyncOrchestrator.clearReconnectRequired(),
-        notifyConnected: notifySteamConnected,
-      });
     }
   } catch (error) {
     logger.error("Error handling deep link", uri, error);

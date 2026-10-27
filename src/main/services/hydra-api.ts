@@ -107,11 +107,6 @@ export class HydraApi {
     );
     groupedSouvenirWorker.stop();
 
-    const { resetSteamStartupSync } = await import(
-      "./steam-integration/steam-startup-sync"
-    );
-    resetSteamStartupSync();
-
     this.sendSignOutEvent();
     this.post("/auth/logout", {}, { needsAuth: false }).catch(() => {});
   }

@@ -3,7 +3,7 @@ import { mergeLocalAndRemotePlayTime } from "../../../shared/playtime.js";
 import { resolveLibraryIsDeleted } from "./resolve-library-source.js";
 
 export interface ImportedProfileGame {
-  id: string;
+  id?: string;
   objectId: string;
   shop: GameShop;
   createdAt?: Date | string | null;
@@ -40,7 +40,7 @@ export const mergeImportedProfileGame = (
   remoteGame: ImportedProfileGame
 ): Game => ({
   ...localGame,
-  remoteId: remoteGame.id,
+  remoteId: remoteGame.id ?? localGame.remoteId,
   addedToLibraryAt:
     localGame.addedToLibraryAt ?? parseDate(remoteGame.createdAt),
   lastTimePlayed: latestDate(

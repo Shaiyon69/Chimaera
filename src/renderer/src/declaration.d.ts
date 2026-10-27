@@ -75,9 +75,9 @@ import type {
   CloudSaveSyncProgressPayload,
   SyncGameCloudSaveResult,
   CloudSaveModalSyncResult,
+  SteamIntegrationStatus,
   SteamSyncState,
   SteamSyncFinishedPayload,
-  SteamSyncRunStatus,
   SteamConnectErrorCode,
   ExtractionFailure,
 } from "@types";
@@ -1144,15 +1144,13 @@ declare global {
     onRetroAchievementsConnected: (
       cb: () => void
     ) => () => Electron.IpcRenderer;
-    startSteamOAuth: (lng: string) => Promise<void>;
+    startSteamOAuth: () => Promise<void>;
+    getSteamIntegrationStatus: () => Promise<SteamIntegrationStatus>;
     disconnectSteam: (deleteImportedData: boolean) => Promise<void>;
     startSteamSync: () => Promise<SteamSyncState>;
     cancelSteamSync: () => Promise<void>;
     getSteamSyncState: () => Promise<SteamSyncState>;
     syncSteamGameOnGamePage: (steamAppId: string) => Promise<boolean>;
-    reconcileSteamSyncRun: (
-      latestSyncRunStatus: SteamSyncRunStatus | null
-    ) => Promise<void>;
     onSteamSyncProgress: (
       cb: (state: SteamSyncState) => void
     ) => () => Electron.IpcRenderer;

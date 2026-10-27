@@ -34,6 +34,7 @@ import { migrateGamesToSqlite } from "./level/sqlite/migrate-games-to-sqlite";
 import { importHydraBackupOnce } from "./services/hydra-backup/hydra-backup-import";
 import { loadPersistedUnlockedAchievements } from "./services/achievements/unlocked-achievement-persistence";
 import { watchSteamLibraries } from "./services/steam-integration/steam-install-watcher";
+import { startSteamSyncOnStartup } from "./services/steam-integration/steam-startup-sync";
 import { migrateGameVisibilityFields } from "./services/library-sync/game-visibility-migration";
 import { UmuUpdater } from "./services/umu-updater";
 import { autoUpdateOptiscaler } from "./services/optiscaler/game-install";
@@ -209,6 +210,7 @@ export const loadState = async () => {
   WindowManager.sendDownloadsUpdated();
 
   startMainLoop();
+  void startSteamSyncOnStartup();
 
   if (process.platform === "win32") {
     CommonRedistManager.downloadCommonRedist();

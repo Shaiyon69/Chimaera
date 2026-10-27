@@ -5,25 +5,21 @@ import { BrowserWindow, session } from "electron";
 import { steamSyncLogger } from "../logger";
 import { WindowManager } from "../window-manager";
 import type { SteamConnectErrorCode } from "@types";
-import {
-  completeSteamOpenIdConnection,
-  parseSteamOpenIdErrorBody,
-  parseSteamOpenIdReturn,
-} from "./steam-openid-return";
+import { isSteamStoreLoggedInUrl } from "./steam-account-core";
 import {
   parseSteamStoreSessionConfig,
   type SteamWebApiToken,
 } from "./steam-store-session-config";
 import { parseSteamTimezoneOffsetSeconds } from "./steam-community-achievements";
 
-export { isSteamOpenIdSuccessUrl } from "./steam-openid-return";
-export { STEAM_CONNECTED_DEEP_LINK } from "./steam-openid-return";
 export { parseSteamStoreSessionConfig } from "./steam-store-session-config";
 export type { SteamWebApiToken } from "./steam-store-session-config";
 
 export const STEAM_SESSION_PARTITION = "persist:steam";
 export const STEAM_STORE_EXPLORE_URL =
   "https://store.steampowered.com/explore/";
+export const STEAM_STORE_LOGIN_URL =
+  "https://store.steampowered.com/login/?redir=explore%2F";
 export const STEAM_STORE_MAX_REDIRECTS = 5;
 
 const STEAM_CHROME_USER_AGENT =
@@ -134,9 +130,20 @@ const parentWindow = () =>
     ? WindowManager.mainWindow
     : null;
 
-export const openSteamOpenIdWindow = (
-  authorizationUrl: string,
-  clearReconnectRequired: () => void
+const hasSteamLoginCookie = async () => {
+  const cookies = await session
+    .fromPartition(STEAM_SESSION_PARTITION)
+    .cookies.get({ url: "https://store.steampowered.com/" });
+
+  return cookies.some(
+    (cookie) => cookie.name === "steamLoginSecure" && cookie.value.length > 0
+  );
+};
+
+/** Opens the Steam store login; `onConnected` runs once the user has signed in. */
+export const openSteamLoginWindow = (
+  onConnected: () => Promise<void> | void,
+  onFailed: (error: unknown) => void
 ) => {
   applySteamSessionUserAgent();
   closeSteamOpenIdWindow();
@@ -162,85 +169,26 @@ export const openSteamOpenIdWindow = (
 
   let finished = false;
 
-  const finishConnected = (url: string) => {
-    if (finished) return;
+  const checkSignedIn = async (url: string) => {
+    if (finished || !isSteamStoreLoggedInUrl(url)) return;
+    if (!(await hasSteamLoginCookie())) return;
+
     finished = true;
-    steamSyncLogger.log("Steam OpenID returned to Hydra", url);
-    completeSteamOpenIdConnection({
-      clearReconnectRequired,
-      notifyConnected: notifySteamConnected,
-    });
-    if (!window.isDestroyed()) {
-      window.close();
+    steamSyncLogger.log("Steam login completed");
+    if (!window.isDestroyed()) window.close();
+
+    try {
+      await onConnected();
+    } catch (error) {
+      onFailed(error);
     }
   };
 
-  const finishError = (code: SteamConnectErrorCode, url: string) => {
-    if (finished) return;
-    finished = true;
-    steamSyncLogger.error("Steam OpenID failed", code, url);
-    notifySteamConnectError(code);
-    if (!window.isDestroyed()) {
-      window.close();
-    }
+  const onNavigate = (_event: unknown, url: string) => {
+    void checkSignedIn(url);
   };
-
-  const interceptSteamReturn = (url: string) => {
-    const result = parseSteamOpenIdReturn(url);
-    if (!result) return false;
-
-    if (result.kind === "success") {
-      finishConnected(url);
-      return true;
-    }
-
-    finishError(result.code, url);
-    return true;
-  };
-
-  window.webContents.on("will-navigate", (event, url) => {
-    if (interceptSteamReturn(url)) {
-      event.preventDefault();
-    }
-  });
-
-  window.webContents.on("will-redirect", (event, url) => {
-    if (interceptSteamReturn(url)) {
-      event.preventDefault();
-    }
-  });
-
-  window.webContents.on("did-navigate", (_event, url) => {
-    interceptSteamReturn(url);
-  });
-
-  window.webContents.on("did-finish-load", () => {
-    if (finished || window.isDestroyed()) return;
-
-    void window.webContents
-      .executeJavaScript('document.body?.innerText ?? ""')
-      .then((text: unknown) => {
-        if (finished || window.isDestroyed()) return;
-
-        const result = parseSteamOpenIdErrorBody(
-          typeof text === "string" ? text : ""
-        );
-        if (result?.kind === "error") {
-          finishError(result.code, window.webContents.getURL());
-        }
-      })
-      .catch((error) => {
-        steamSyncLogger.error("Steam OpenID body parse failed", error);
-      });
-  });
-
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (interceptSteamReturn(url)) {
-      return { action: "deny" };
-    }
-
-    return { action: "allow" };
-  });
+  window.webContents.on("did-navigate", onNavigate);
+  window.webContents.on("did-navigate-in-page", onNavigate);
 
   window.once("closed", () => {
     if (steamOpenIdWindow === window) {
@@ -248,7 +196,7 @@ export const openSteamOpenIdWindow = (
     }
   });
 
-  void window.loadURL(authorizationUrl);
+  void window.loadURL(STEAM_STORE_LOGIN_URL);
   window.once("ready-to-show", () => {
     if (!window.isDestroyed()) {
       window.show();

@@ -1,22 +1,20 @@
 import { registerEvent } from "../register-event";
-import { HydraApi, WindowManager } from "@main/services";
+import { WindowManager } from "@main/services";
 import { steamSyncLogger } from "@main/services/logger";
-import {
-  mergeWithRemoteGames,
-  fetchRemoteProfileGames,
-} from "@main/services/library-sync";
 import {
   collectSteamOnlyObjectIds,
   getSteamImportedDataCleanupPlan,
   hasImportedSteamData,
 } from "@main/services/steam-integration/steam-imported-games";
+import { clearSteamAccount } from "@main/services/steam-integration/steam-account";
+import { STEAM_SESSION_PARTITION } from "@main/services/steam-integration/steam-store-session";
 import { clearImportedSteamGames } from "@main/services/steam-integration/clear-imported-steam-games";
 import { AchievementMemoryStore } from "@main/services/achievements/achievement-memory-store";
 import { gamesSublevel, batchWithGames } from "@main/level";
 import type { Game } from "@types";
+import { session } from "electron";
 import { chunk } from "lodash-es";
 
-const OAUTH_ENDPOINT = "/profile/oauth/steam";
 const DISCONNECT_WRITE_CHUNK_SIZE = 250;
 
 const writeGames = async (updates: [string, Game][]) => {
@@ -47,55 +45,30 @@ const restoreLastTimePlayed = async (
   );
 };
 
-const getErrorMessage = (error: unknown): string | null => {
-  if (typeof error === "object" && error !== null) {
-    const response = (error as { response?: { data?: { message?: unknown } } })
-      .response;
-    const responseMessage = response?.data?.message;
-
-    if (typeof responseMessage === "string") {
-      return responseMessage;
-    }
-  }
-
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return null;
-};
+// The cleanup keeps this flag until the end so nothing else treats the game as non-Steam mid-way.
+const clearActiveSteamImport = async () =>
+  writeGames(
+    (await gamesSublevel.iterator().all()).flatMap(([key, game]) =>
+      game.hasActiveSteamImport
+        ? [[key, { ...game, hasActiveSteamImport: false }] as [string, Game]]
+        : []
+    )
+  );
 
 const disconnectSteam = async (
   _event: Electron.IpcMainInvokeEvent,
   deleteImportedData: boolean
 ) => {
-  let steamOnlyObjectIds: string[] = [];
-
-  if (deleteImportedData) {
-    const remoteGames = await fetchRemoteProfileGames();
-    steamOnlyObjectIds = collectSteamOnlyObjectIds(remoteGames);
-    steamSyncLogger.log(
-      "Disconnect collecting steam-only games",
-      steamOnlyObjectIds.length
-    );
-  }
-
-  const steamOnlyObjectIdSet = new Set(steamOnlyObjectIds);
+  const allGames = await gamesSublevel.iterator().all();
+  const steamOnlyObjectIdSet = new Set(
+    deleteImportedData
+      ? collectSteamOnlyObjectIds(allGames.map(([, game]) => game))
+      : []
+  );
   const lastTimePlayedByGameKey = new Map<string, Date | null>();
-
-  try {
-    await HydraApi.delete(
-      `${OAUTH_ENDPOINT}?deleteImportedData=${deleteImportedData}`
-    );
-  } catch (error) {
-    const message = getErrorMessage(error);
-    steamSyncLogger.error("Failed to disconnect Steam", error);
-    throw new Error(message ?? "steam-disconnect-failed");
-  }
-
   const localUpdates: [string, Game][] = [];
 
-  for (const [key, game] of await gamesSublevel.iterator().all()) {
+  for (const [key, game] of allGames) {
     if (!deleteImportedData && game.hasActiveSteamImport) {
       localUpdates.push([key, { ...game, hasActiveSteamImport: false }]);
       continue;
@@ -114,24 +87,17 @@ const disconnectSteam = async (
 
   await writeGames(localUpdates);
 
-  if (!deleteImportedData) {
-    steamSyncLogger.log("Steam disconnected, imported snapshot preserved");
-    return;
-  }
-
-  await clearImportedSteamGames(steamOnlyObjectIds);
-  WindowManager.sendToAppWindows("on-library-batch-complete");
-  const didMerge = await mergeWithRemoteGames();
-
-  if (!didMerge) {
+  if (deleteImportedData) {
+    await clearImportedSteamGames([...steamOnlyObjectIdSet]);
     await restoreLastTimePlayed(lastTimePlayedByGameKey);
-    steamSyncLogger.warn(
-      "Steam disconnect remote merge failed; restored local last-played values"
-    );
+    await clearActiveSteamImport();
   }
 
+  await clearSteamAccount();
+  await session.fromPartition(STEAM_SESSION_PARTITION).clearStorageData();
+
   WindowManager.sendToAppWindows("on-library-batch-complete");
-  steamSyncLogger.log("Steam disconnected and imported games cleared");
+  steamSyncLogger.log("Steam disconnected", { deleteImportedData });
 };
 
 registerEvent("disconnectSteam", disconnectSteam);
