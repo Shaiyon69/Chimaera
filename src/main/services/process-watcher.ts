@@ -48,6 +48,7 @@ import {
 } from "./linux-game-capture-session";
 import { updateGameRecord } from "./game-record-updater";
 import { GameExecutables } from "./game-executables";
+import { autoBackupToDrive } from "./google-drive/drive";
 
 export { gamesPlaytime };
 export { isGameRunning } from "./game-running-state";
@@ -562,6 +563,12 @@ const onCloseGame = (game: Game) => {
   };
 
   void persistGamePlaytime(gameKey, updatedGame);
+
+  if (game.automaticCloudSync) {
+    autoBackupToDrive(game.shop, game.objectId).catch((error) =>
+      logger.error("Failed to auto-backup saves to Drive", error)
+    );
+  }
 
   if (game.shop === "custom") return;
 

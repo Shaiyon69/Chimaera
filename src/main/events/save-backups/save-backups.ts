@@ -17,6 +17,17 @@ import {
   setSaveBackupsDir,
 } from "@main/services/local-save-backups";
 import { restoreLudusaviBackup } from "@main/services/ludusavi-bundle";
+import {
+  deleteDriveSaveBackup,
+  downloadSaveBackupFromDrive,
+  listDriveSaveBackups,
+  uploadSaveBackupToDrive,
+} from "@main/services/google-drive/drive";
+import {
+  connectGoogleDrive,
+  disconnectGoogleDrive,
+  getGoogleDriveStatus,
+} from "@main/services/google-drive/google-oauth";
 import { registerEvent } from "../register-event";
 
 type Event = Electron.IpcMainInvokeEvent;
@@ -50,6 +61,35 @@ registerEvent("selectSaveBackupsDir", async () => {
   await setSaveBackupsDir(dir);
   return dir;
 });
+
+registerEvent("connectGoogleDrive", () => connectGoogleDrive());
+registerEvent("disconnectGoogleDrive", () => disconnectGoogleDrive());
+registerEvent("getGoogleDriveStatus", () => getGoogleDriveStatus());
+registerEvent("listDriveSaveBackups", (_e: Event, shop: GameShop, id: string) =>
+  listDriveSaveBackups(shop, id)
+);
+registerEvent(
+  "uploadSaveBackupToDrive",
+  (_e: Event, shop: GameShop, id: string, file: string) =>
+    uploadSaveBackupToDrive(shop, id, file)
+);
+registerEvent(
+  "downloadDriveSaveBackup",
+  (_e: Event, shop: GameShop, id: string, driveFileId: string) =>
+    downloadSaveBackupFromDrive(shop, id, driveFileId)
+);
+registerEvent("deleteDriveSaveBackup", (_e: Event, driveFileId: string) =>
+  deleteDriveSaveBackup(driveFileId)
+);
+registerEvent(
+  "setAutomaticCloudSync",
+  async (_e: Event, shop: GameShop, id: string, enabled: boolean) => {
+    const key = levelKeys.game(shop, id);
+    const game = await gamesSublevel.get(key);
+    if (game)
+      await gamesSublevel.put(key, { ...game, automaticCloudSync: enabled });
+  }
+);
 
 /** Puts a local snapshot's files back where the game reads them. */
 registerEvent(

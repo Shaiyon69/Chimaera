@@ -1061,6 +1061,23 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("openLocalSaveBackupsFolder", shop, objectId),
   getSaveBackupsDir: () => ipcRenderer.invoke("getSaveBackupsDir"),
   selectSaveBackupsDir: () => ipcRenderer.invoke("selectSaveBackupsDir"),
+  connectGoogleDrive: () => ipcRenderer.invoke("connectGoogleDrive"),
+  disconnectGoogleDrive: () => ipcRenderer.invoke("disconnectGoogleDrive"),
+  getGoogleDriveStatus: () => ipcRenderer.invoke("getGoogleDriveStatus"),
+  listDriveSaveBackups: (shop: GameShop, objectId: string) =>
+    ipcRenderer.invoke("listDriveSaveBackups", shop, objectId),
+  uploadSaveBackupToDrive: (shop: GameShop, objectId: string, file: string) =>
+    ipcRenderer.invoke("uploadSaveBackupToDrive", shop, objectId, file),
+  downloadDriveSaveBackup: (
+    shop: GameShop,
+    objectId: string,
+    driveFileId: string
+  ) =>
+    ipcRenderer.invoke("downloadDriveSaveBackup", shop, objectId, driveFileId),
+  deleteDriveSaveBackup: (driveFileId: string) =>
+    ipcRenderer.invoke("deleteDriveSaveBackup", driveFileId),
+  setAutomaticCloudSync: (shop: GameShop, objectId: string, enabled: boolean) =>
+    ipcRenderer.invoke("setAutomaticCloudSync", shop, objectId, enabled),
   onBloodborneSetupRequired: (cb: () => void) => {
     const listener = () => cb();
     ipcRenderer.on("on-bloodborne-setup-required", listener);

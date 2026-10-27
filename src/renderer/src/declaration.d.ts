@@ -100,6 +100,15 @@ declare global {
     hostname: string;
   }
 
+  interface DriveSaveBackup extends LocalSaveBackup {
+    driveFileId: string;
+  }
+
+  interface GoogleDriveStatus {
+    connected: boolean;
+    email: string | null;
+  }
+
   interface HydraBackupSection {
     ok: boolean;
     count: number;
@@ -940,6 +949,29 @@ declare global {
     ) => Promise<void>;
     getSaveBackupsDir: () => Promise<string>;
     selectSaveBackupsDir: () => Promise<string | null>;
+    connectGoogleDrive: () => Promise<GoogleDriveStatus>;
+    disconnectGoogleDrive: () => Promise<void>;
+    getGoogleDriveStatus: () => Promise<GoogleDriveStatus>;
+    listDriveSaveBackups: (
+      shop: GameShop,
+      objectId: string
+    ) => Promise<DriveSaveBackup[]>;
+    uploadSaveBackupToDrive: (
+      shop: GameShop,
+      objectId: string,
+      file: string
+    ) => Promise<void>;
+    downloadDriveSaveBackup: (
+      shop: GameShop,
+      objectId: string,
+      driveFileId: string
+    ) => Promise<void>;
+    deleteDriveSaveBackup: (driveFileId: string) => Promise<void>;
+    setAutomaticCloudSync: (
+      shop: GameShop,
+      objectId: string,
+      enabled: boolean
+    ) => Promise<void>;
     onBloodborneSetupRequired: (cb: () => void) => () => Electron.IpcRenderer;
     onBloodborneLaunchError: (
       cb: (problems: string[]) => void
