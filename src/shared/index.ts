@@ -41,6 +41,8 @@ export * from "./cloud-save-access";
 export * from "./cloud-save-emulator-provider";
 export * from "./controller-support";
 export * from "./artwork-resolver";
+export * from "./finished-download-step";
+export * from "./format-bit-rate";
 export * from "./download-directories";
 export * from "./html-sanitizer";
 export * from "./language-flags";

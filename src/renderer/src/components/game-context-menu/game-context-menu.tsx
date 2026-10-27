@@ -514,10 +514,11 @@ export function GameContextMenu({
       <DeleteGameModal
         visible={showConfirmRemoveFiles}
         onClose={() => setShowConfirmRemoveFiles(false)}
-        deleteGame={() => {
+        target={game}
+        deleteGame={(deleteSourceArchive) => {
           setShowConfirmRemoveFiles(false);
           onClose();
-          void handleRemoveFiles();
+          void handleRemoveFiles(deleteSourceArchive);
         }}
       />
 

@@ -1,8 +1,9 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { LibraryGame } from "@types";
 import { Button, VerticalFocusGroup } from "../../../common";
 import { ConfirmationModal } from "../../../modals";
+import { useSourceArchive } from "@renderer/hooks/use-source-archive";
 import { SettingsSection } from "../../../../pages/settings/settings-section";
 import { useBigPictureToast } from "../../../../hooks/use-big-picture-toast.hook";
 
@@ -67,6 +68,15 @@ export function GameDangerZoneSettingsTab({
   const { showSuccessToast, showErrorToast } = useBigPictureToast();
   const [pendingAction, setPendingAction] = useState<DangerAction | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [deleteSourceArchive, setDeleteSourceArchive] = useState(false);
+  const hasSourceArchive = useSourceArchive(
+    pendingAction === "remove-files" ? game : null,
+    pendingAction === "remove-files"
+  );
+
+  useEffect(() => {
+    setDeleteSourceArchive(false);
+  }, [pendingAction]);
 
   const handleRemoveFromLibrary = useCallback(async () => {
     setActionLoading(true);
@@ -107,7 +117,8 @@ export function GameDangerZoneSettingsTab({
     try {
       await globalThis.window.electron.deleteGameFolder(
         game.shop,
-        game.objectId
+        game.objectId,
+        { deleteSourceArchive: hasSourceArchive && deleteSourceArchive }
       );
       showSuccessToast("Game files removed");
       setPendingAction(null);
@@ -117,7 +128,13 @@ export function GameDangerZoneSettingsTab({
     } finally {
       setActionLoading(false);
     }
-  }, [game, showSuccessToast, showErrorToast]);
+  }, [
+    game,
+    showSuccessToast,
+    showErrorToast,
+    hasSourceArchive,
+    deleteSourceArchive,
+  ]);
 
   const confirmationConfig = pendingAction
     ? getConfirmationConfig(
@@ -200,6 +217,14 @@ export function GameDangerZoneSettingsTab({
           loading={actionLoading}
           onClose={() => setPendingAction(null)}
           onConfirm={confirmationConfig.onConfirm}
+          sourceArchiveOption={
+            pendingAction === "remove-files" && hasSourceArchive
+              ? {
+                  checked: deleteSourceArchive,
+                  onChange: setDeleteSourceArchive,
+                }
+              : null
+          }
         />
       )}
     </VerticalFocusGroup>

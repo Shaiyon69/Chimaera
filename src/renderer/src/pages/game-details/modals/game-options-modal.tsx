@@ -496,8 +496,10 @@ export function GameOptionsModal({
 
   const handleOpenDownloadFolder = () =>
     globalThis.window.electron.openGameInstallerPath(game.shop, game.objectId);
-  const handleDeleteGame = async () => {
-    await removeGameInstaller(game.shop, game.objectId);
+  const handleDeleteGame = async (deleteSourceArchive: boolean) => {
+    await removeGameInstaller(game.shop, game.objectId, {
+      deleteSourceArchive,
+    });
     updateGame();
   };
   const handleOpenGameExecutablePath = () =>
@@ -1019,6 +1021,7 @@ export function GameOptionsModal({
       <DeleteGameModal
         visible={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}
+        target={game}
         deleteGame={handleDeleteGame}
       />
       <RemoveGameFromLibraryModal

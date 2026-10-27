@@ -5,13 +5,18 @@ import { getDownloadsPath } from "../helpers/get-downloads-path";
 import { DownloadOrchestrator, logger, retroarch } from "@main/services";
 import { registerEvent } from "../register-event";
 import { isWithin } from "../emulators/rom-path-utils";
+import {
+  findSourceArchiveFile,
+  listArchiveVolumes,
+} from "@main/helpers/find-game-installer";
 import { GameShop } from "@types";
 import { downloadsSublevel, gamesSublevel, levelKeys } from "@main/level";
 
 const deleteGameFolder = async (
   _event: Electron.IpcMainInvokeEvent,
   shop: GameShop,
-  objectId: string
+  objectId: string,
+  options: { deleteSourceArchive?: boolean } = {}
 ): Promise<void> => {
   const gameKey = levelKeys.game(shop, objectId);
   const download = await downloadsSublevel.get(gameKey);
@@ -55,6 +60,24 @@ const deleteGameFolder = async (
     await deleteFile(metaPath);
   }
 
+  const sourceArchivePath = options.deleteSourceArchive
+    ? await findSourceArchiveFile(download)
+    : null;
+  const sourceArchivePaths = sourceArchivePath
+    ? await listArchiveVolumes(sourceArchivePath)
+    : [];
+
+  await Promise.all(
+    sourceArchivePaths.map((archivePath) =>
+      deleteFile(archivePath).catch((error) => {
+        logger.error(
+          `[deleteGameFolder] Failed to delete source archive ${archivePath}`,
+          error
+        );
+      })
+    )
+  );
+
   await downloadsSublevel.del(gameKey);
   await DownloadOrchestrator.syncAfterDownloadRemoved({ shop, objectId });
 
@@ -69,12 +92,19 @@ const deleteGameFolder = async (
       (disc) => disc.path === game.selectedDiscPath
     );
 
+    const executableRemoved =
+      !game.executablePath ||
+      !folderPath ||
+      isWithin(game.executablePath, folderPath);
+
     await gamesSublevel.put(gameKey, {
       ...game,
       installerSizeInBytes: null,
-      executablePath: null,
-      installedSizeInBytes: null,
-      automaticCloudSync: false,
+      ...(executableRemoved && {
+        executablePath: null,
+        installedSizeInBytes: null,
+        automaticCloudSync: false,
+      }),
       ...(hasUnlinkedDiscs && {
         discs: remainingDiscs,
         selectedDiscPath: isSelectedDiscRemaining

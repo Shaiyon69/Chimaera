@@ -150,6 +150,7 @@ export default function Home() {
     requestRemoveFromLibrary: handleRequestRemoveFromLibraryFromMenu,
     closePendingAction,
     confirmPendingAction,
+    sourceArchiveOption,
   } = useLibraryPendingAction({
     getRestoreFocusId: useCallback(
       () => menuState.restoreFocusId,
@@ -649,6 +650,7 @@ export default function Home() {
             loading={isSubmittingAction}
             onClose={closePendingAction}
             onConfirm={confirmPendingAction}
+            sourceArchiveOption={sourceArchiveOption}
           />
         ) : null}
 

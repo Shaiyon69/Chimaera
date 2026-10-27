@@ -7,6 +7,7 @@ import {
   type SkuRegion,
 } from "@renderer/helpers";
 import type { GameShop, ShopAssets } from "@types";
+import { useFinishedDownloadStep } from "@renderer/hooks/use-finished-download-step";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
@@ -34,6 +35,8 @@ import {
   ConfirmationModal,
   DiscSelectionModal,
   DownloadGameModal,
+  ExecutablePickerModal,
+  type ExecutablePickerTarget,
 } from "../../components/modals";
 import {
   AchievementsBox,
@@ -850,6 +853,53 @@ export default function Game() {
     setIsDownloadModalOpen(true);
   }, []);
 
+  const installStep = useFinishedDownloadStep(game);
+  const [executablePickerTarget, setExecutablePickerTarget] =
+    useState<ExecutablePickerTarget | null>(null);
+
+  const handleInstall = useCallback(async () => {
+    if (!game) return;
+
+    const opened = await globalThis.window.electron.openGameInstaller(
+      game.shop,
+      game.objectId
+    );
+
+    if (!opened) {
+      showErrorToast(t("installer_launch_failed", { ns: "downloads" }));
+    }
+
+    await refreshGameDetails();
+  }, [game, refreshGameDetails, showErrorToast, t]);
+
+  const handleExtract = useCallback(async () => {
+    if (!game) return;
+
+    await globalThis.window.electron.extractGameDownload(
+      game.shop,
+      game.objectId
+    );
+    globalThis.window.dispatchEvent(new Event("library-update"));
+    await refreshGameDetails();
+  }, [game, refreshGameDetails]);
+
+  const handleSelectExecutable = useCallback(() => {
+    if (!game) return;
+
+    setExecutablePickerTarget({
+      shop: game.shop,
+      objectId: game.objectId,
+    });
+  }, [game]);
+
+  const handleCloseExecutablePicker = useCallback(() => {
+    setExecutablePickerTarget(null);
+  }, []);
+
+  const handleExecutableSaved = useCallback(() => {
+    void refreshGameDetails();
+  }, [refreshGameDetails]);
+
   const handleCloseDownloadModal = useCallback(() => {
     setIsDownloadModalOpen(false);
   }, []);
@@ -1450,6 +1500,10 @@ export default function Game() {
           toggleFavorite={toggleFavorite}
           onPlay={handlePlayGame}
           onDownload={handleOpenDownloadModal}
+          installStep={installStep}
+          onInstall={() => void handleInstall()}
+          onExtract={() => void handleExtract()}
+          onSelectExecutable={handleSelectExecutable}
           onAddToLibrary={handleAddToLibrary}
           onOpenDownloadOptions={handleOpenDownloadModal}
           onOpenSettings={() => setIsGameSettingsModalOpen(true)}
@@ -1815,6 +1869,12 @@ export default function Game() {
             coverImageUrl:
               preferredAssets.coverSrc || preferredAssets.iconSrc || null,
           }}
+        />
+
+        <ExecutablePickerModal
+          target={executablePickerTarget}
+          onClose={handleCloseExecutablePicker}
+          onSaved={handleExecutableSaved}
         />
 
         {game?.shop === "launchbox" ? (

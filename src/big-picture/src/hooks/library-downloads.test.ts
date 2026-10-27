@@ -171,7 +171,7 @@ describe("Big Picture operational download library", () => {
         "@shared": {
           Downloader: {},
           formatBytes: String,
-          formatBytesToMbps: String,
+          formatBitRate: String,
         },
         "../../../../types": { getBigPictureDownloadView },
         "react-i18next": {

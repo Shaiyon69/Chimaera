@@ -1015,6 +1015,7 @@
     "delete": "Удалить файлы",
     "delete_modal_title": "Вы уверены?",
     "delete_modal_description": "Это удалит с вашего компьютера все файлы этой игры, загруженные через Chimaera",
+    "delete_source_archive": "Также удалить исходный архив",
     "install": "Установить",
     "download_in_progress": "В процессе",
     "queued_downloads": "Загрузки в очереди",
@@ -1045,7 +1046,15 @@
     "peak": "ПИК",
     "files": "ФАЙЛЫ",
     "move_up": "Переместить вверх",
-    "move_down": "Переместить вниз"
+    "move_down": "Переместить вниз",
+    "select_executable": "Выбрать исполняемый файл",
+    "run_installer": "Запустить установщик",
+    "game_installed_title": "Игра установлена",
+    "game_installed_description": "Hydra нашла исполняемый файл игры. Можно играть.",
+    "installed_game_not_found_title": "Не удалось найти установленную игру",
+    "installed_game_not_found_description": "Выберите исполняемый файл игры, чтобы завершить настройку.",
+    "installer_launch_failed": "Не удалось запустить установщик",
+    "installing": "Установка…"
   },
   "settings": {
     "integration_connect": "Подключить",

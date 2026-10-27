@@ -1,4 +1,5 @@
 import { downloadsSublevel } from "./level/sublevels/downloads";
+import { recoverInterruptedInstallers } from "./helpers/recover-interrupted-installers";
 import { orderBy } from "lodash-es";
 import { Downloader } from "@shared";
 import { levelKeys, db } from "./level";
@@ -136,6 +137,13 @@ export const loadState = async () => {
     (async () => {
       await DownloadSourcesChecker.checkForChanges();
     })();
+  });
+
+  void recoverInterruptedInstallers().catch((error) => {
+    logger.error(
+      "[GameInstaller] Failed to recover interrupted installs",
+      error
+    );
   });
 
   const downloadToResume =

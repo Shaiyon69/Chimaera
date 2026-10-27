@@ -1,4 +1,4 @@
-import type { GameShop, LibraryGame, SeedingStatus } from "@types";
+import type { Download, GameShop, LibraryGame, SeedingStatus } from "@types";
 
 import {
   Badge,
@@ -9,9 +9,16 @@ import {
 import {
   formatDownloadProgress,
   buildGameDetailsPath,
+  handleClassicsLaunchError,
 } from "@renderer/helpers";
 
-import { Downloader, formatBytes, formatBytesToMbps } from "@shared";
+import {
+  Downloader,
+  type FinishedDownloadStep,
+  formatBytes,
+  formatBytesToMbps,
+  getFinishedDownloadStep,
+} from "@shared";
 import { addMilliseconds } from "date-fns";
 import {
   DOWNLOADER_NAME,
@@ -20,9 +27,13 @@ import {
 import {
   useAppSelector,
   useDownload,
+  useGameExecutablePicker,
+  useInstallerAvailability,
   useLibrary,
   useDate,
+  useToast,
 } from "@renderer/hooks";
+import { logger } from "@renderer/logger";
 
 import "./download-group.scss";
 import { useTranslation } from "react-i18next";
@@ -46,7 +57,7 @@ import {
   ClockIcon,
   ColumnsIcon,
   DownloadIcon,
-  FileDirectoryIcon,
+  FileIcon,
   LinkIcon,
   PlayIcon,
   TrashIcon,
@@ -54,7 +65,7 @@ import {
   XCircleIcon,
   GraphIcon,
 } from "@primer/octicons-react";
-import { MoreVertical, Folder } from "lucide-react";
+import { MoreVertical, FileArchive, FolderOpen } from "lucide-react";
 import { average } from "color.js";
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -567,12 +578,20 @@ function HeroDownloadView({
   );
 }
 
+type CompletedDownloadStep = FinishedDownloadStep | "checking" | "open-folder";
+
+const isDownloadFinished = (
+  game: LibraryGame
+): game is LibraryGame & { download: Download } =>
+  game.download?.progress === 1;
+
 export interface DownloadGroupProps {
   library: LibraryGame[];
   title: string;
   openDeleteGameModal: (shop: GameShop, objectId: string) => void;
   openGameInstaller: (shop: GameShop, objectId: string) => void;
   seedingStatus: SeedingStatus[];
+  runningGameIds: ReadonlySet<string> | null;
   queuedGameIds?: string[];
 }
 
@@ -582,6 +601,7 @@ export function DownloadGroup({
   openDeleteGameModal,
   openGameInstaller,
   seedingStatus,
+  runningGameIds,
   queuedGameIds = [],
 }: Readonly<DownloadGroupProps>) {
   const { t } = useTranslation("downloads");
@@ -595,6 +615,8 @@ export function DownloadGroup({
   const extraction = useAppSelector((state) => state.download.extraction);
 
   const { updateLibrary } = useLibrary();
+  const { showErrorToast, showSuccessToast } = useToast();
+  const pickGameExecutable = useGameExecutablePicker();
 
   const {
     lastPacket,
@@ -683,9 +705,7 @@ export function DownloadGroup({
   const [gameToCancelObjectId, setGameToCancelObjectId] = useState<
     string | null
   >(null);
-  const [gameActionTypes, setGameActionTypes] = useState<
-    Record<string, "install" | "open-folder">
-  >({});
+  const installerAvailability = useInstallerAvailability(library);
 
   const extractDominantColor = useCallback(
     async (imageUrl: string, gameId: string) => {
@@ -866,12 +886,49 @@ export function DownloadGroup({
 
     const deleting = isGameDeleting(game.id);
 
-    if (game.download?.progress === 1) {
+    if (isDownloadFinished(game)) {
+      const step = getCompletedDownloadStep(game);
+      const hasInstaller = installerAvailability[game.id] === true;
+
       const actions = [
+        {
+          label: t("run_installer"),
+          show:
+            hasInstaller &&
+            step !== "install" &&
+            step !== "installing" &&
+            step !== "checking",
+          disabled: deleting,
+          icon: <DownloadIcon />,
+          onClick: () => {
+            openGameInstaller(game.shop, game.objectId);
+          },
+        },
+        {
+          label: t("select_executable"),
+          show: step === "install",
+          disabled: deleting,
+          icon: <FileIcon size={16} />,
+          onClick: () => {
+            pickGameExecutable(game.shop, game.objectId);
+          },
+        },
+        {
+          label: tGameDetails("open_folder"),
+          show: true,
+          disabled: deleting,
+          icon: <FolderOpen size={16} />,
+          onClick: () => {
+            void window.electron.openGameInstallerPath(
+              game.shop,
+              game.objectId
+            );
+          },
+        },
         {
           label: t("extract"),
           disabled: game.download.extracting,
-          icon: <FileDirectoryIcon />,
+          icon: <FileArchive size={16} />,
           onClick: () => {
             extractGameDownload(game.shop, game.objectId);
           },
@@ -1006,36 +1063,190 @@ export function DownloadGroup({
     ]
   );
 
-  // Fetch action types for completed games
-  useEffect(() => {
-    const fetchActionTypes = async () => {
-      const completedGames = library.filter(
-        (game) => game.download?.progress === 1
+  const getCompletedDownloadStep = (
+    game: LibraryGame
+  ): CompletedDownloadStep => {
+    const step = getFinishedDownloadStep(
+      game,
+      installerAvailability[game.id] === true
+    );
+
+    if (step === "extracting") return "checking";
+    if (!step && game.shop === "launchbox") return "open-folder";
+    if (step === "select-executable" && !(game.id in installerAvailability)) {
+      return "checking";
+    }
+
+    return step ?? "checking";
+  };
+
+  const closeGame = (game: LibraryGame) => {
+    window.electron
+      .closeGame(game.shop, game.objectId)
+      .catch((error) => logger.error("Failed to close game", error));
+  };
+
+  const playClassicsGame = async (game: LibraryGame) => {
+    const detailsPath = buildGameDetailsPath(game);
+    const needsDiscSelection =
+      (game.discs?.length ?? 0) > 1 &&
+      !(game.dontAskDiscSelection && game.selectedDiscPath);
+
+    if (needsDiscSelection) {
+      navigate(detailsPath, { state: { openDiscSelection: true } });
+      return;
+    }
+
+    try {
+      await window.electron.openClassicsGame(
+        game.shop,
+        game.objectId,
+        game.selectedDiscPath ?? undefined
       );
-
-      const actionTypesPromises = completedGames.map(async (game) => {
-        try {
-          const actionType = await window.electron.getGameInstallerActionType(
-            game.shop,
-            game.objectId
-          );
-          return { gameId: game.id, actionType };
-        } catch {
-          return { gameId: game.id, actionType: "open-folder" as const };
-        }
+    } catch (error) {
+      const shouldLog = handleClassicsLaunchError(error, {
+        t: tGameDetails,
+        showErrorToast,
+        showSuccessToast,
+        navigate,
+        onEmulatorAlreadyRunning: () =>
+          showErrorToast(tGameDetails("rpcs3_already_running_title")),
       });
+      if (shouldLog) logger.error("Failed to start classics game", error);
+    }
+  };
 
-      const results = await Promise.all(actionTypesPromises);
-      const newActionTypes: Record<string, "install" | "open-folder"> = {};
-      results.forEach(({ gameId, actionType }) => {
-        newActionTypes[gameId] = actionType;
-      });
+  const playGame = (game: LibraryGame) => {
+    if (game.shop === "launchbox") {
+      void playClassicsGame(game);
+      return;
+    }
 
-      setGameActionTypes((prev) => ({ ...prev, ...newActionTypes }));
-    };
+    window.electron
+      .openGame(
+        game.shop,
+        game.objectId,
+        game.executablePath!,
+        game.launchOptions
+      )
+      .catch((error) => logger.error("Failed to start game", error));
+  };
 
-    fetchActionTypes();
-  }, [library]);
+  const renderCompletedAction = (game: LibraryGame) => {
+    const step = getCompletedDownloadStep(game);
+    const disabled = isGameDeleting(game.id);
+
+    if (step === "checking") return null;
+
+    if (step === "open-folder") {
+      return (
+        <Button
+          theme="primary"
+          onClick={() =>
+            window.electron.openGameInstallerPath(game.shop, game.objectId)
+          }
+          disabled={disabled}
+          className="download-group__simple-action-btn"
+        >
+          <FolderOpen size={16} />
+          {tGameDetails("open_folder")}
+        </Button>
+      );
+    }
+
+    if (step === "play" && runningGameIds?.has(game.id)) {
+      return (
+        <Button
+          theme="outline"
+          onClick={() => closeGame(game)}
+          disabled={disabled}
+          className="download-group__simple-action-btn"
+        >
+          <XCircleIcon size={16} />
+          {tGameDetails("close")}
+        </Button>
+      );
+    }
+
+    if (step === "play") {
+      return (
+        <Button
+          theme="primary"
+          onClick={() => playGame(game)}
+          disabled={disabled || runningGameIds === null}
+          className="download-group__simple-action-btn"
+        >
+          <PlayIcon size={16} />
+          {tGameDetails("play")}
+        </Button>
+      );
+    }
+
+    if (step === "extract") {
+      return (
+        <Button
+          theme="primary"
+          onClick={() => extractGameDownload(game.shop, game.objectId)}
+          disabled={disabled}
+          className="download-group__simple-action-btn"
+        >
+          <FileArchive size={16} />
+          {t("extract")}
+        </Button>
+      );
+    }
+
+    if (step === "installing") {
+      return (
+        <Button
+          theme="primary"
+          disabled
+          className="download-group__simple-action-btn"
+        >
+          {t("installing")}
+        </Button>
+      );
+    }
+
+    if (step === "install") {
+      return (
+        <Button
+          theme="primary"
+          onClick={() => openGameInstaller(game.shop, game.objectId)}
+          disabled={disabled}
+          className="download-group__simple-action-btn"
+        >
+          <DownloadIcon size={16} />
+          {t("install")}
+        </Button>
+      );
+    }
+
+    return (
+      <>
+        <Button
+          theme="outline"
+          onClick={() =>
+            window.electron.openGameInstallerPath(game.shop, game.objectId)
+          }
+          disabled={disabled}
+          className="download-group__simple-action-btn"
+        >
+          <FolderOpen size={16} />
+          {tGameDetails("open_folder")}
+        </Button>
+        <Button
+          theme="primary"
+          onClick={() => pickGameExecutable(game.shop, game.objectId)}
+          disabled={disabled}
+          className="download-group__simple-action-btn"
+        >
+          <FileIcon size={16} />
+          {t("select_executable")}
+        </Button>
+      </>
+    );
+  };
 
   const handleConfirmPause = async () => {
     const target = pauseWarningTarget;
@@ -1221,35 +1432,7 @@ export function DownloadGroup({
                 )}
 
                 <div className="download-group__simple-actions">
-                  {game.download?.progress === 1 &&
-                    (() => {
-                      const actionType =
-                        gameActionTypes[game.id] || "open-folder";
-                      const isInstall = actionType === "install";
-
-                      return (
-                        <Button
-                          theme="primary"
-                          onClick={() =>
-                            openGameInstaller(game.shop, game.objectId)
-                          }
-                          disabled={isGameDeleting(game.id)}
-                          className="download-group__simple-action-btn"
-                        >
-                          {isInstall ? (
-                            <>
-                              <DownloadIcon size={16} />
-                              {t("install")}
-                            </>
-                          ) : (
-                            <>
-                              <Folder size={16} />
-                              {tGameDetails("open_folder")}
-                            </>
-                          )}
-                        </Button>
-                      );
-                    })()}
+                  {isDownloadFinished(game) && renderCompletedAction(game)}
                   {isQueuedGroup && game.download?.progress !== 1 && (
                     <Button
                       theme="primary"

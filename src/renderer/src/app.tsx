@@ -138,7 +138,7 @@ export function App() {
 
   const toast = useAppSelector((state) => state.toast);
 
-  const { showErrorToast } = useToast();
+  const { showSuccessToast, showErrorToast, showWarningToast } = useToast();
 
   const [showArchiveDeletionModal, setShowArchiveDeletionModal] =
     useState(false);
@@ -586,12 +586,37 @@ export function App() {
         setArchivePaths(paths);
         setShowArchiveDeletionModal(true);
       }),
+      window.electron.onGameInstallerClosed(
+        (_shop, _objectId, executableFound) => {
+          updateLibrary();
+
+          if (executableFound) {
+            showSuccessToast(
+              t("game_installed_title", { ns: "downloads" }),
+              t("game_installed_description", { ns: "downloads" })
+            );
+            return;
+          }
+
+          showWarningToast(
+            t("installed_game_not_found_title", { ns: "downloads" }),
+            t("installed_game_not_found_description", { ns: "downloads" })
+          );
+        }
+      ),
     ];
 
     return () => {
       listeners.forEach((unsubscribe) => unsubscribe());
     };
-  }, [updateLibrary, dispatch, showErrorToast, t]);
+  }, [
+    updateLibrary,
+    dispatch,
+    showErrorToast,
+    showSuccessToast,
+    showWarningToast,
+    t,
+  ]);
 
   useEffect(() => {
     const asyncScrollAndNotify = async () => {

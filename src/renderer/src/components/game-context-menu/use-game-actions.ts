@@ -347,9 +347,11 @@ export function useGameActions(game: GameContextMenuGame) {
     }
   };
 
-  const handleRemoveFiles = async () => {
+  const handleRemoveFiles = async (deleteSourceArchive = false) => {
     try {
-      await removeGameInstaller(game.shop, game.objectId);
+      await removeGameInstaller(game.shop, game.objectId, {
+        deleteSourceArchive,
+      });
       updateLibrary();
       showSuccessToast(t("files_removed_success"));
       try {
