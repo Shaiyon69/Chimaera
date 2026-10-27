@@ -60,6 +60,8 @@ import {
   removeCustomCss,
 } from "./helpers";
 import { levelDBService } from "./services/leveldb.service";
+import { useMessappUserId } from "./pages/friends/messapp/use-messapp";
+import { usePresenceBroadcast } from "./pages/friends/messapp/presence";
 
 export interface AppProps {
   children: React.ReactNode;
@@ -105,13 +107,10 @@ export function App() {
   const workwondersRef = useRef<WorkWonders | null>(null);
   const workwondersInitializingRef = useRef(false);
 
-  const {
-    userDetails: currentUser,
-    fetchUserDetails,
-    updateUserDetails,
-  } = useUserDetails();
+  const { fetchUserDetails, updateUserDetails } = useUserDetails();
 
   const dispatch = useAppDispatch();
+  usePresenceBroadcast(useMessappUserId());
 
   const clearDownload = useCallback(
     () => dispatch(clearDownloadAction()),
@@ -126,10 +125,7 @@ export function App() {
   const location = useLocation();
 
   const activeKeptPage =
-    location.pathname in KEPT_ALIVE_PAGES &&
-    (location.pathname !== "/friends" || currentUser)
-      ? location.pathname
-      : null;
+    location.pathname in KEPT_ALIVE_PAGES ? location.pathname : null;
 
   if (activeKeptPage && !visitedPages.includes(activeKeptPage)) {
     setVisitedPages([...visitedPages, activeKeptPage]);
@@ -735,18 +731,16 @@ export function App() {
             id="scrollableDiv"
             className="container__content"
           >
-            {visitedPages
-              .filter((path) => path !== "/friends" || currentUser)
-              .map((path) => (
-                <div
-                  key={path}
-                  style={{
-                    display: path === activeKeptPage ? "contents" : "none",
-                  }}
-                >
-                  {KEPT_ALIVE_PAGES[path]()}
-                </div>
-              ))}
+            {visitedPages.map((path) => (
+              <div
+                key={path}
+                style={{
+                  display: path === activeKeptPage ? "contents" : "none",
+                }}
+              >
+                {KEPT_ALIVE_PAGES[path]()}
+              </div>
+            ))}
             {!activeKeptPage && <Outlet />}
           </section>
         </article>

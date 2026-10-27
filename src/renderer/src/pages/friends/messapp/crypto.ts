@@ -81,6 +81,37 @@ export const decryptText = async (
   }
 };
 
+// Same AES-GCM as encryptText, but over raw bytes (MESSAPP's encryptBinaryAesGcm).
+export const encryptBytes = async (
+  key: CryptoKey,
+  bytes: ArrayBuffer
+): Promise<AesEnvelope> => {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    bytes
+  );
+
+  return { iv: toBase64(iv), ciphertext: toBase64(encrypted) };
+};
+
+/** Null when the key is wrong. */
+export const decryptBytes = async (
+  key: CryptoKey,
+  { iv, ciphertext }: AesEnvelope
+): Promise<ArrayBuffer | null> => {
+  try {
+    return await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: fromBase64(iv) },
+      key,
+      fromBase64(ciphertext)
+    );
+  } catch {
+    return null;
+  }
+};
+
 /** Unwraps the private-key backup MESSAPP stores in profiles.encrypted_private_key. */
 export const unwrapPrivateKey = async (
   pin: string,

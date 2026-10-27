@@ -5,6 +5,8 @@ import { Tooltip } from "react-tooltip";
 import cn from "classnames";
 
 import { useUserDetails } from "@renderer/hooks";
+import { useDmInbox } from "@renderer/pages/friends/messapp/use-dm-inbox";
+import { useUnreadPeers } from "@renderer/pages/friends/messapp/unread";
 import { routes } from "../sidebar/routes";
 import { SidebarProfile } from "../sidebar/sidebar-profile";
 import "./nav-dock.scss";
@@ -14,7 +16,11 @@ export function NavDock() {
   const location = useLocation();
   const navigate = useNavigate();
   const tooltipId = useId();
+  const { t: tMessapp } = useTranslation("messapp");
   const { userDetails } = useUserDetails();
+  const hasUnread = useUnreadPeers().size > 0;
+
+  useDmInbox();
 
   return (
     <nav className="nav-dock">
@@ -36,6 +42,13 @@ export function NavDock() {
             }}
           >
             {render()}
+            {path === "/friends" && hasUnread && (
+              <span
+                className="nav-dock__badge"
+                role="img"
+                aria-label={tMessapp("unread")}
+              />
+            )}
           </button>
         ))}
       <Tooltip id={tooltipId} place="right" />

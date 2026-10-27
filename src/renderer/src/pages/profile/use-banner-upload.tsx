@@ -3,6 +3,8 @@ import { useContext, useState } from "react";
 import { userProfileContext } from "@renderer/context";
 import { useToast, useUserDetails } from "@renderer/hooks";
 import { useTranslation } from "react-i18next";
+import { logger } from "@renderer/logger";
+import { syncLocalProfileToFriends } from "../friends/messapp/sync-profile";
 import { getProfileImageMetadata } from "./profile-image-metadata";
 import { ProfileImageCropModal } from "./profile-image-crop-modal/profile-image-crop-modal";
 
@@ -23,6 +25,12 @@ export function useBannerUpload() {
 
   const hasBanner = !!userProfile?.backgroundImageUrl;
 
+  // Fire and forget: the local banner is already saved, and Friends catches up on the next sync.
+  const syncBannerToFriends = () =>
+    syncLocalProfileToFriends().catch((err) =>
+      logger.error("Failed to sync banner to Friends", err)
+    );
+
   const uploadBanner = async (path: string) => {
     try {
       setSelectedBackgroundImage(path);
@@ -33,6 +41,7 @@ export function useBannerUpload() {
       showSuccessToast(t("background_image_updated"));
       await fetchUserDetails();
       await getUserProfile();
+      syncBannerToFriends();
     } catch {
       showErrorToast(t("try_again"));
     } finally {
@@ -72,6 +81,7 @@ export function useBannerUpload() {
       showSuccessToast(t("background_image_updated"));
       await fetchUserDetails();
       await getUserProfile();
+      syncBannerToFriends();
     } finally {
       setIsUploading(false);
     }

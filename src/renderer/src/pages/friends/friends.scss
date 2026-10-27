@@ -49,12 +49,53 @@
   }
 
   &__list {
+    @include globals.panel;
     display: flex;
     flex-direction: column;
     gap: globals.$spacing-unit;
     min-height: 0;
+    overflow: hidden;
+  }
+
+  &__scroll {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: globals.$spacing-unit;
+    min-height: 0;
     overflow-y: auto;
-    padding-right: globals.$spacing-unit;
+  }
+
+  &__skeleton {
+    @include globals.surface;
+    min-height: 0;
+    opacity: 0.6;
+  }
+
+  &__link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-text);
+    cursor: pointer;
+    font: inherit;
+
+    &:hover:not(:disabled) {
+      text-decoration: underline;
+    }
+  }
+
+  &__notice {
+    margin: 0;
+    color: var(--good);
+    font-size: globals.$hint-font-size;
+  }
+
+  &__retry {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: globals.$spacing-unit;
   }
 
   // More air above a group label than below it, so it binds to its own list.
@@ -80,6 +121,150 @@
     gap: globals.$spacing-unit;
   }
 
+  &__avatar {
+    position: relative;
+    display: flex;
+  }
+
+  &__online {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--bg-2);
+    border-radius: 50%;
+    background: var(--good);
+  }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: calc(globals.$spacing-unit * 1.5);
+    min-width: 0;
+    padding-bottom: calc(globals.$spacing-unit * 1.5);
+    border-bottom: 0.5px solid var(--line);
+  }
+
+  &__header-main {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  &__header .friends__title {
+    overflow: hidden;
+    font-size: 17px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__placeholder {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: globals.$spacing-unit;
+    color: var(--faint);
+    text-align: center;
+
+    svg {
+      opacity: 0.6;
+    }
+
+    .friends__empty {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .friends__hint {
+      max-width: 36ch;
+    }
+  }
+
+  &__playing {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--faint);
+    cursor: pointer;
+    font-size: globals.$small-font-size;
+    text-align: left;
+
+    span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    img {
+      flex-shrink: 0;
+      border-radius: 3px;
+    }
+
+    &:hover {
+      color: var(--accent-text);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+  }
+
+  &__menu {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: background-color 0.18s var(--ease);
+
+    &:hover {
+      background-color: var(--fill);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+  }
+
+  &__person {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  &__status {
+    overflow: hidden;
+    color: var(--faint);
+    font-size: globals.$small-font-size;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__status--unread {
+    color: var(--muted);
+  }
+
+  &__tag {
+    color: var(--faint);
+    font-size: globals.$small-font-size;
+  }
+
   &__select {
     display: flex;
     align-items: center;
@@ -97,7 +282,12 @@
     transition: background-color 0.18s var(--ease);
 
     &:hover {
-      background-color: var(--fill);
+      background-color: var(--fill-hover);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
     }
 
     &--active {
@@ -107,19 +297,84 @@
   }
 
   &__name {
-    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  &__name--unread {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  &__unread {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
   &__sign-out {
+    display: flex;
+    flex-wrap: wrap;
+    gap: globals.$spacing-unit;
     margin-top: auto;
     padding-top: calc(globals.$spacing-unit * 2);
   }
 
+  &__profile {
+    display: flex;
+    flex-direction: column;
+    gap: calc(globals.$spacing-unit * 2);
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  &__profile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: globals.$spacing-unit;
+  }
+
+  &__banner {
+    overflow: hidden;
+    height: 96px;
+    border-radius: var(--radius);
+    background-color: var(--fill);
+    box-shadow: var(--rim);
+    flex-shrink: 0;
+
+    img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  }
+
+  &__profile-images {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: globals.$spacing-unit;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: globals.$spacing-unit;
+  }
+
+  &__bio {
+    max-height: none;
+    resize: vertical;
+  }
+
   &__chat {
+    @include globals.panel;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -127,6 +382,7 @@
   }
 
   &__thread {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: calc(globals.$spacing-unit * 2);
@@ -134,18 +390,182 @@
     min-height: 0;
   }
 
+  &__sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  &__older {
+    align-self: center;
+    flex-shrink: 0;
+  }
+
+  // Chat images stay blurred until the reader asks; the blur is scaled up so its soft edge is clipped.
+  &__spoiler {
+    position: relative;
+    overflow: hidden;
+    width: min(70%, 320px);
+    min-height: 120px;
+    border-radius: var(--radius);
+    background-color: var(--fill);
+    box-shadow: var(--rim);
+
+    &--loading {
+      height: 180px;
+    }
+  }
+
+  &__spoiler-image {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 360px;
+    object-fit: cover;
+    transition: filter 0.2s var(--ease);
+    user-select: none;
+
+    &--hidden {
+      filter: blur(28px);
+      pointer-events: none;
+      transform: scale(1.15);
+    }
+  }
+
+  // One button for both states: a full-tile scrim to reveal, a corner chip to hide.
+  &__spoiler-toggle {
+    position: absolute;
+    inset: 0;
+    border: 0;
+    background-color: rgb(var(--shade) / 0.5);
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+    transition: background-color 0.18s var(--ease);
+
+    &:hover {
+      background-color: rgb(var(--shade) / 0.65);
+    }
+
+    &--hide {
+      inset: globals.$spacing-unit globals.$spacing-unit auto auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      background-color: rgb(var(--shade) / 0.55);
+
+      &:hover {
+        background-color: rgb(var(--shade) / 0.75);
+      }
+    }
+  }
+
+  &__pending {
+    display: flex;
+    align-items: center;
+    gap: globals.$spacing-unit;
+  }
+
+  &__pending-image {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    object-fit: cover;
+    filter: blur(8px);
+    user-select: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &__spoiler-image,
+    &__spoiler-toggle {
+      transition: none;
+    }
+  }
+
   &__messages {
     display: flex;
     flex: 1;
     flex-direction: column;
-    gap: globals.$spacing-unit;
+    // Tight inside a sender's run; --starts adds the air between runs.
+    gap: 2px;
     min-height: 0;
     overflow-y: auto;
     user-select: text;
   }
 
+  &__message {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+
+    &--mine {
+      align-items: flex-end;
+    }
+
+    &--starts {
+      margin-top: globals.$spacing-unit;
+    }
+  }
+
+  &__time {
+    color: var(--faint);
+    font-size: globals.$small-font-size;
+  }
+
+  // More air above a day label than below it, so it binds to its own messages.
+  &__day {
+    align-self: center;
+    margin: calc(globals.$spacing-unit * 2) 0 globals.$spacing-unit;
+    color: globals.$body-color;
+    font-size: globals.$small-font-size;
+    font-weight: 600;
+  }
+
+  &__send-state {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: globals.$spacing-unit;
+    font-size: globals.$small-font-size;
+  }
+
+  &__send-failed {
+    color: globals.$danger-color;
+  }
+
+  // Reserved height: the line appearing and clearing must not move the composer.
+  &__typing {
+    min-height: 1.4em;
+    margin: 0;
+    color: globals.$body-color;
+    font-size: globals.$hint-font-size;
+  }
+
+  // pointer-events off so the overlay never steals the drag from the thread beneath it.
+  &__drop {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius);
+    background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+    color: var(--text);
+    font-weight: 600;
+    pointer-events: none;
+  }
+
   &__bubble {
-    align-self: flex-start;
+    position: relative;
     max-width: min(70%, 60ch);
     padding: globals.$spacing-unit calc(globals.$spacing-unit * 1.5);
     border-radius: var(--radius);
@@ -155,9 +575,18 @@
     white-space: pre-wrap;
 
     &--mine {
-      align-self: flex-end;
       background-color: color-mix(in srgb, var(--accent) 22%, transparent);
       color: var(--text);
+    }
+
+    // A tighter corner on the sender's side marks where a run ends.
+    &--end {
+      border-bottom-left-radius: 4px;
+    }
+
+    &--mine.friends__bubble--end {
+      border-bottom-left-radius: var(--radius);
+      border-bottom-right-radius: 4px;
     }
   }
 
@@ -168,10 +597,34 @@
 
   &__composer {
     display: flex;
+    align-items: flex-end;
     gap: globals.$spacing-unit;
+  }
 
-    > :first-child {
-      flex: 1;
+  &__input {
+    flex: 1;
+    min-width: 0;
+    max-height: 120px;
+    padding: 10px globals.$spacing-unit;
+    border: 0;
+    border-radius: 10px;
+    background-color: var(--bg-2);
+    box-shadow: inset 0 0 0 0.5px var(--line-strong);
+    color: var(--text);
+    font: inherit;
+    line-height: 1.4;
+    outline: none;
+    resize: none;
+    transition: box-shadow 0.2s var(--ease);
+
+    &:hover {
+      box-shadow: inset 0 0 0 0.5px var(--faint);
+    }
+
+    &:focus {
+      box-shadow:
+        inset 0 0 0 1px var(--accent),
+        0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
     }
   }
 

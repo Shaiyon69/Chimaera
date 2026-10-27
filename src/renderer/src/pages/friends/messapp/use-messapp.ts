@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 
+import { logger } from "@renderer/logger";
+
 import { messapp } from "./client";
 import { fetchFriends, signOut, unlockKeyring, type FriendRow } from "./api";
 import { createKeyring, type DmKeyring } from "./dm-crypto";
@@ -21,11 +23,46 @@ const readFriendsCache = (userId: string): FriendRow[] => {
 const currentAccessToken = async () =>
   (await messapp.auth.getSession()).data.session?.access_token ?? null;
 
+export type FriendsStatus = "loading" | "ready" | "error";
+
+/** Clears the saved DM key and cached friends, then ends the session. */
+export const logoutMessapp = async (userId: string | null) => {
+  try {
+    const token = await currentAccessToken();
+    if (token) await window.electron.clearMessappKey(token);
+  } catch (err) {
+    logger.error("Failed to clear saved key", err);
+  }
+
+  if (userId) localStorage.removeItem(friendsCacheKey(userId));
+  await signOut();
+};
+
+/** The signed-in Friends user id, for UI outside the Friends page. */
+export function useMessappUserId() {
+  const [userId, setUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    messapp.auth
+      .getSession()
+      .then(({ data }) => setUserId(data.session?.user.id ?? null));
+
+    const { data } = messapp.auth.onAuthStateChange((_event, next) =>
+      setUserId(next?.user.id ?? null)
+    );
+
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  return userId;
+}
+
 export function useMessapp() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [keyring, setKeyring] = useState<DmKeyring | null>(null);
   const [friends, setFriends] = useState<FriendRow[]>([]);
+  const [friendsStatus, setFriendsStatus] = useState<FriendsStatus>("loading");
 
   const userId = session?.user.id ?? null;
 
@@ -48,8 +85,19 @@ export function useMessapp() {
 
     const rows = await fetchFriends(userId);
     setFriends(rows);
+    setFriendsStatus("ready");
     localStorage.setItem(friendsCacheKey(userId), JSON.stringify(rows));
   }, [userId]);
+
+  const retryFriends = useCallback(async () => {
+    setFriendsStatus("loading");
+    try {
+      await refreshFriends();
+    } catch (err) {
+      logger.error("Failed to load friends", err);
+      setFriendsStatus("error");
+    }
+  }, [refreshFriends]);
 
   useEffect(() => {
     if (!userId) {
@@ -58,8 +106,11 @@ export function useMessapp() {
       return;
     }
 
-    setFriends(readFriendsCache(userId));
-    refreshFriends().catch(() => {});
+    const cached = readFriendsCache(userId);
+    setFriends(cached);
+    // A cached list is shown straight away; only an empty one needs the loading state.
+    setFriendsStatus(cached.length ? "ready" : "loading");
+    retryFriends();
 
     // Saved by a previous unlock; encrypted at rest by the OS in the main process,
     // and keyed there by a session the main process verifies for itself.
@@ -69,8 +120,8 @@ export function useMessapp() {
 
       const saved = await window.electron.loadMessappKey(token);
       if (saved) setKeyring(await createKeyring(JSON.parse(saved)));
-    })().catch(() => {});
-  }, [userId, refreshFriends]);
+    })().catch((err) => logger.error("Failed to load saved key", err));
+  }, [userId, retryFriends]);
 
   const unlock = useCallback(async (pin: string) => {
     const token = await currentAccessToken();
@@ -81,12 +132,14 @@ export function useMessapp() {
     setKeyring(unlocked);
   }, []);
 
-  const logout = useCallback(async () => {
-    const token = await currentAccessToken();
-    if (token) await window.electron.clearMessappKey(token);
-    setKeyring(null);
-    await signOut();
-  }, []);
-
-  return { ready, userId, keyring, friends, refreshFriends, unlock, logout };
+  return {
+    ready,
+    userId,
+    keyring,
+    friends,
+    friendsStatus,
+    refreshFriends,
+    retryFriends,
+    unlock,
+  };
 }
