@@ -67,12 +67,14 @@ async function downloadImage(url: string | null, signal?: AbortSignal) {
 
   const fileName = buildDownloadFileName(url);
   const outputPath = path.join(await getNotificationIconDirectory(), fileName);
-  const writer = fs.createWriteStream(outputPath);
 
-  const response = await axios.get(url, {
-    responseType: "stream",
-    signal,
-  });
+  // A dead icon URL must not lose the notification, so fall back to the default icon.
+  const response = await axios
+    .get(url, { responseType: "stream", signal })
+    .catch(() => null);
+  if (!response) return undefined;
+
+  const writer = fs.createWriteStream(outputPath);
 
   return new Promise<string | undefined>((resolve) => {
     let settled = false;

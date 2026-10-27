@@ -12,7 +12,6 @@ import type {
   UserPreferences,
 } from "@types";
 import { achievementsLogger } from "../logger";
-import { HydraApi } from "../hydra-api";
 import {
   hasTouchedAchievementBatchGames,
   setAchievementBatchActive,
@@ -312,28 +311,22 @@ export class AchievementWatcherManager {
       }
     }
 
+    const inBatch = this.batchDepth > 0;
     let newAchievements: number;
     try {
+      // Outside a batch the single-game toast is the right one, so let the merge publish it.
       newAchievements = await mergeAchievements(
         game,
         unlockedAchievements,
-        false
+        this.hasFinishedPreSearch && !inBatch
       );
     } catch (error) {
       this.alreadySyncedGames.delete(gameKey);
       throw error;
     }
 
-    if (!game.remoteId) {
-      this.alreadySyncedGames.delete(gameKey);
-    }
-
-    if (newAchievements > 0 && this.hasFinishedPreSearch) {
-      if (this.batchDepth > 0) {
-        this.addToBatchNotification(gameKey, newAchievements);
-      } else {
-        this.notifyCombinedAchievementsUnlocked(1, newAchievements);
-      }
+    if (inBatch && newAchievements > 0 && this.hasFinishedPreSearch) {
+      this.addToBatchNotification(gameKey, newAchievements);
     }
   }
 
@@ -426,7 +419,7 @@ export class AchievementWatcherManager {
 
   private static async syncUnseenAchievementFiles() {
     const touchedGameKeys = takeTouchedAchievementBatchGames();
-    if (touchedGameKeys.size === 0 || !HydraApi.isLoggedIn()) return;
+    if (touchedGameKeys.size === 0) return;
 
     const pendingGames = (
       await this.getGameAchievementFiles(touchedGameKeys)
@@ -605,8 +598,9 @@ export class AchievementWatcherManager {
       }
     );
 
+    if (userPreferences.achievementNotificationsEnabled === false) return;
+
     const shouldUseCustomNotification =
-      userPreferences.achievementNotificationsEnabled !== false &&
       userPreferences.achievementCustomNotificationsEnabled !== false &&
       process.platform === "win32";
 

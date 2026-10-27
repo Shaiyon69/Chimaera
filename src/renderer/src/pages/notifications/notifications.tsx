@@ -3,7 +3,7 @@ import { BellIcon } from "@primer/octicons-react";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@renderer/components";
-import { useAppDispatch, useToast, useUserDetails } from "@renderer/hooks";
+import { useAppDispatch, useToast } from "@renderer/hooks";
 import { setHeaderTitle } from "@renderer/features";
 import { logger } from "@renderer/logger";
 import { ensureArray } from "@renderer/helpers";
@@ -13,7 +13,6 @@ import { LocalNotificationItem } from "./local-notification-item";
 import type {
   Notification,
   LocalNotification,
-  NotificationsResponse,
   MergedNotification,
   Badge,
   NotificationsChangedDetail,
@@ -28,7 +27,6 @@ const EXIT_DURATION_MS = 250;
 export default function Notifications() {
   const { t, i18n } = useTranslation("notifications_page");
   const { showSuccessToast, showErrorToast } = useToast();
-  const { userDetails } = useUserDetails();
   const dispatch = useAppDispatch();
 
   useEffect(() => {
@@ -43,11 +41,6 @@ export default function Notifications() {
   const [isLoading, setIsLoading] = useState(true);
   const [isClearing, setIsClearing] = useState(false);
   const [filter, setFilter] = useState<NotificationFilter>("all");
-  const [pagination, setPagination] = useState({
-    total: 0,
-    hasMore: false,
-    skip: 0,
-  });
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const clearingTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
 
@@ -74,65 +67,15 @@ export default function Notifications() {
     }
   }, [i18n.language]);
 
-  const fetchApiNotifications = useCallback(
-    async (
-      skip = 0,
-      append = false,
-      filterParam: NotificationFilter = "all"
-    ) => {
-      if (!userDetails) return;
-
-      try {
-        setIsLoading(true);
-        const response =
-          await window.electron.hydraApi.get<NotificationsResponse>(
-            "/profile/notifications",
-            {
-              params: { filter: filterParam, take: 20, skip },
-              needsAuth: true,
-            }
-          );
-
-        logger.log("Notifications API response:", response);
-
-        if (append) {
-          setApiNotifications((prev) => [...prev, ...response.notifications]);
-        } else {
-          setApiNotifications(response.notifications);
-        }
-
-        setPagination({
-          total: response.pagination.total,
-          hasMore: response.pagination.hasMore,
-          skip: response.pagination.skip + response.pagination.take,
-        });
-      } catch (error) {
-        logger.error("Failed to fetch API notifications", error);
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [userDetails]
-  );
-
-  const fetchAllNotifications = useCallback(
-    async (filterParam: NotificationFilter = "all") => {
-      setIsLoading(true);
-      await Promise.all([
-        fetchLocalNotifications(),
-        fetchBadges(),
-        userDetails
-          ? fetchApiNotifications(0, false, filterParam)
-          : Promise.resolve(),
-      ]);
-      setIsLoading(false);
-      setIsInitialLoad(false);
-    },
-    [fetchLocalNotifications, fetchBadges, fetchApiNotifications, userDetails]
-  );
+  const fetchAllNotifications = useCallback(async () => {
+    setIsLoading(true);
+    await Promise.all([fetchLocalNotifications(), fetchBadges()]);
+    setIsLoading(false);
+    setIsInitialLoad(false);
+  }, [fetchLocalNotifications, fetchBadges]);
 
   useEffect(() => {
-    fetchAllNotifications(filter);
+    fetchAllNotifications();
   }, [fetchAllNotifications, filter]);
 
   useEffect(() => {
@@ -230,17 +173,6 @@ export default function Notifications() {
 
   const handleMarkAllAsRead = useCallback(async () => {
     try {
-      // Mark all API notifications as read
-      if (userDetails) {
-        await window.electron.hydraApi.patch(
-          `/profile/notifications/all/read`,
-          { needsAuth: true }
-        );
-        setApiNotifications((prev) =>
-          prev.map((n) => ({ ...n, isRead: true }))
-        );
-      }
-
       // Mark all local notifications as read
       await window.electron.markAllLocalNotificationsRead();
       setLocalNotifications((prev) =>
@@ -253,7 +185,7 @@ export default function Notifications() {
       logger.error("Failed to mark all as read", error);
       showErrorToast(t("failed_to_mark_as_read"));
     }
-  }, [userDetails, showSuccessToast, showErrorToast, t, notifyCountChange]);
+  }, [showSuccessToast, showErrorToast, t, notifyCountChange]);
 
   const handleDismiss = useCallback(
     async (id: string, source: "api" | "local") => {
@@ -267,7 +199,6 @@ export default function Notifications() {
             { needsAuth: true }
           );
           setApiNotifications((prev) => prev.filter((n) => n.id !== id));
-          setPagination((prev) => ({ ...prev, total: prev.total - 1 }));
           notifyCountChange(wasUnread ? { apiUnreadDelta: -1 } : undefined);
         } else {
           await window.electron.deleteLocalNotification(id);
@@ -342,13 +273,7 @@ export default function Notifications() {
       await new Promise((resolve) => setTimeout(resolve, EXIT_DURATION_MS));
 
       // Perform actual backend deletions (state is already cleared by staggered removal)
-      if (userDetails) {
-        await window.electron.hydraApi.delete(`/profile/notifications/all`, {
-          needsAuth: true,
-        });
-      }
       await window.electron.clearAllLocalNotifications();
-      setPagination({ total: 0, hasMore: false, skip: 0 });
       notifyCountChange({ resetApiUnread: true });
       showSuccessToast(t("cleared_all"));
     } catch (error) {
@@ -362,25 +287,15 @@ export default function Notifications() {
     displayedNotifications,
     isClearing,
     removeNotificationWithDelay,
-    userDetails,
     showSuccessToast,
     showErrorToast,
     t,
     notifyCountChange,
   ]);
 
-  const handleLoadMore = useCallback(() => {
-    if (pagination.hasMore && !isLoading) {
-      fetchApiNotifications(pagination.skip, true, filter);
-    }
-  }, [pagination, isLoading, fetchApiNotifications, filter]);
-
   const handleFilterChange = useCallback(
     (newFilter: NotificationFilter) => {
-      if (newFilter !== filter) {
-        setFilter(newFilter);
-        setPagination({ total: 0, hasMore: false, skip: 0 });
-      }
+      if (newFilter !== filter) setFilter(newFilter);
     },
     [filter]
   );
@@ -532,18 +447,6 @@ export default function Notifications() {
             )}
           </motion.div>
         </AnimatePresence>
-
-        {pagination.hasMore && !isClearing && (
-          <div className="notifications__load-more">
-            <Button
-              theme="outline"
-              onClick={handleLoadMore}
-              disabled={isLoading}
-            >
-              {isLoading ? t("loading") : t("load_more")}
-            </Button>
-          </div>
-        )}
       </div>
     );
   };
