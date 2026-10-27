@@ -7,13 +7,26 @@ import { getHydraExecutablePath } from "./hydra-executable-path";
 
 export { getHydraExecutablePath } from "./hydra-executable-path";
 
+// "hydralauncher" is Hydra's scheme; registering it would hijack links meant
+// for an installed Hydra. Old shortcuts still pass it to our exe, so accept it.
+export const DEEP_LINK_PROTOCOL = "chimaera";
+const LEGACY_DEEP_LINK_PROTOCOL = "hydralauncher";
+
+const hasDeepLinkPrefix = (arg: string, path: string) =>
+  arg.startsWith(`${DEEP_LINK_PROTOCOL}://${path}`) ||
+  arg.startsWith(`${LEGACY_DEEP_LINK_PROTOCOL}://${path}`);
+
+export const isDeepLink = (arg: string) => hasDeepLinkPrefix(arg, "");
+export const isRunDeepLink = (arg?: string) =>
+  !!arg && hasDeepLinkPrefix(arg, "run");
+
 export const buildRunDeepLink = (shop: GameShop, objectId: string) => {
   const query = new URLSearchParams({
     shop,
     objectId,
   });
 
-  return `hydralauncher://run?${query.toString()}`;
+  return `${DEEP_LINK_PROTOCOL}://run?${query.toString()}`;
 };
 
 const quoteLinuxExecArg = (value: string) => {

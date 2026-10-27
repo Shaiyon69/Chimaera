@@ -80,7 +80,7 @@ linux:
   maintainer: electronjs.org
   category: Game
   mimeTypes:
-    - x-scheme-handler/hydralauncher
+    - x-scheme-handler/chimaera
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false

@@ -28,7 +28,12 @@ import { TorrentService } from "./services/torrent-service";
 import { db, gamesSublevel, levelKeys } from "./level";
 import { GameShop, UserPreferences } from "@types";
 import { launchGame, openClassicsGame } from "./helpers";
-import { refreshPortableShortcutLauncher } from "./helpers/shortcut-launch";
+import {
+  DEEP_LINK_PROTOCOL,
+  isDeepLink,
+  isRunDeepLink,
+  refreshPortableShortcutLauncher,
+} from "./helpers/shortcut-launch";
 import { sweepTempFiles } from "./helpers/sweep-temp-files";
 import { checkSignature } from "./services/update-signature-core";
 import { syncBloodbornePort } from "./services/bloodborne/bloodborne-port-installer";
@@ -110,8 +115,6 @@ i18n.init({
   },
 });
 
-const PROTOCOL = "hydralauncher";
-
 // Register the custom schemes as privileged so the renderer can fetch them
 // (supportFetchAPI) and use the results on a canvas without tainting it
 // (corsEnabled). Must run before the app is ready.
@@ -132,12 +135,12 @@ protocol.registerSchemesAsPrivileged([
 
 if (process.defaultApp) {
   if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [
+    app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [
       path.resolve(process.argv[1]),
     ]);
   }
 } else {
-  app.setAsDefaultProtocolClient(PROTOCOL);
+  app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL);
 }
 
 const initializeApp = async () => {
@@ -257,13 +260,10 @@ const initializeApp = async () => {
   if (language) i18n.changeLanguage(language);
 
   // Check if starting from a "run" deep link - don't show main window in that case
-  const deepLinkArg = process.argv.find((arg) =>
-    arg.startsWith("hydralauncher://")
-  );
+  const deepLinkArg = process.argv.find(isDeepLink);
   const forceBigPicture = process.argv.includes("--big-picture");
-  const isRunDeepLink = deepLinkArg?.startsWith("hydralauncher://run");
 
-  if (!process.argv.includes("--hidden") && !isRunDeepLink) {
+  if (!process.argv.includes("--hidden") && !isRunDeepLink(deepLinkArg)) {
     WindowManager.createMainWindow({ forceBigPicture });
   }
 
@@ -393,15 +393,11 @@ const handleDeepLinkPath = (uri?: string) => {
 };
 
 app.on("second-instance", (_event, commandLine) => {
-  const deepLink = commandLine.find((arg) =>
-    arg.startsWith("hydralauncher://")
-  );
+  const deepLink = commandLine.find(isDeepLink);
   const forceBigPicture = commandLine.includes("--big-picture");
 
   // Check if this is a "run" deep link - don't show main window in that case
-  const isRunDeepLink = deepLink?.startsWith("hydralauncher://run");
-
-  if (!isRunDeepLink) {
+  if (!isRunDeepLink(deepLink)) {
     if (WindowManager.mainWindow) {
       if (WindowManager.mainWindow.isMinimized())
         WindowManager.mainWindow.restore();

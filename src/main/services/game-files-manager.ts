@@ -32,7 +32,10 @@ import { getPathType } from "./extraction-path";
 import { GameExecutables } from "./game-executables";
 import { logger } from "./logger";
 import { platformToRetroArchPlatform, platformToSystem } from "@main/helpers";
-import { getWindowsVbsPath } from "@main/helpers/shortcut-launch";
+import {
+  buildRunDeepLink,
+  getWindowsVbsPath,
+} from "@main/helpers/shortcut-launch";
 import { deleteArchiveFile } from "@main/events/library/delete-archive";
 import { publishExtractionCompleteNotification } from "./notifications";
 import { SystemPath } from "./system-path";
@@ -642,15 +645,6 @@ export class GameFilesManager {
     }
   }
 
-  private buildRunDeepLink() {
-    const query = new URLSearchParams({
-      shop: this.shop,
-      objectId: this.objectId,
-    });
-
-    return `hydralauncher://run?${query.toString()}`;
-  }
-
   private quoteLinuxExecArg(value: string) {
     return `"${value.replaceAll('"', '\\"')}"`;
   }
@@ -733,7 +727,7 @@ export class GameFilesManager {
 
       const shortcutName =
         removeSymbolsFromName(gameTitle).trim() || this.objectId;
-      const deepLink = this.buildRunDeepLink();
+      const deepLink = buildRunDeepLink(this.shop, this.objectId);
       const shortcutArguments = this.getShortcutArguments(deepLink);
       const iconPath = await this.downloadGameIcon();
 
