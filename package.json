@@ -32,12 +32,17 @@
     "build:mac": "npm run build:native && electron-vite build && electron-builder --mac",
     "build:linux": "npm run build:native && electron-vite build && electron-builder --linux",
     "dev:big-picture": "vite dev src/big-picture",
-    "prepare": "husky"
+    "prepare": "husky",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:parity": "node scripts/tauri-parity.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@supabase/supabase-js": "2.108.2",
+    "@tauri-apps/api": "~2.12",
+    "@tauri-apps/plugin-opener": "^2",
     "auto-launch": "^5.0.6",
     "axios": "^1.18.0",
     "axios-cookiejar-support": "^5.0.5",
@@ -94,6 +99,7 @@
     "@sentry/react": "^10.33.0",
     "@swc/core": "^1.4.16",
     "@tanstack/react-virtual": "^3.14.3",
+    "@tauri-apps/cli": "^2",
     "@tiptap/extension-bold": "^3.6.2",
     "@tiptap/extension-italic": "^3.6.2",
     "@tiptap/extension-link": "^3.6.2",
