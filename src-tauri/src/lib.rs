@@ -7,6 +7,7 @@ mod hydra_api;
 mod image_cache;
 mod ipc;
 mod library;
+mod local_files;
 mod store;
 
 use serde_json::{json, Value};
@@ -46,6 +47,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![ipc])
+        .register_asynchronous_uri_scheme_protocol("local", |_ctx, request, responder| {
+            let path = request.uri().path().to_string();
+            // Off the webview thread: a large hero image would stall the UI.
+            std::thread::spawn(move || responder.respond(local_files::handle(&path)));
+        })
         .register_asynchronous_uri_scheme_protocol("cached-image", |ctx, request, responder| {
             let dir = ctx.app_handle().path().app_data_dir().map(|dir| image_cache::cache_dir(&dir));
             let path = request.uri().path().to_string();
