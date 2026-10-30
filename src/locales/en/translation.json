@@ -1929,8 +1929,8 @@
   },
   "bloodborne_setup": {
     "title": "Bloodborne setup",
-    "port_missing": "The Bloodborne Windows port is not installed yet. Download it once to continue.",
-    "download_port": "Download port",
+    "port_missing": "Bloodborne runs on Lantern Engine by Awaken, which is not installed yet. Download it once to continue.",
+    "download_port": "Download Lantern Engine",
     "port_downloading": "Downloading… {{percent}}%",
     "port_extracting": "Extracting… {{percent}}%",
     "port_download_failed": "Download failed: {{message}}",

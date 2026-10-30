@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type {
+  Game,
   GameShop,
   ShopAssets,
   ShopDetails,
@@ -10,23 +11,30 @@ import type {
 } from "@types";
 import { gamesSublevel, levelKeys } from "@main/level";
 import { logger } from "../logger";
-import { downloadedPortDir } from "./bloodborne-port-installer";
-import { WindowManager } from "../window-manager";
-import { isPortDir } from "./bloodborne-core";
 import {
-  launchEnvFromSettings,
-  parseTrophyId,
-  trophyAchievementName,
-} from "./bloodborne-trophies-core";
+  downloadedPortDir,
+  readLanternSettings,
+} from "./bloodborne-port-installer";
+import { WindowManager } from "../window-manager";
+import {
+  LAUNCHER_EXE,
+  engineDirOf,
+  gameDir,
+  isPortDir,
+  parseTrophyLog,
+  savesDir,
+} from "./bloodborne-core";
+import { trophyAchievementName } from "./bloodborne-trophies-core";
 import { mergeAchievements } from "../achievements/merge-achievements";
-import { createInterface } from "node:readline";
 
-/** The port's own GUI launcher: it holds the game folder, graphics, keybinds and mods. */
-const launcherExe = () =>
-  path.join(downloadedPortDir(), "BloodborneLauncher.exe");
+/** Lantern Engine's launcher: it holds the game folder, graphics, keybinds and mods. */
+const launcherExe = () => path.join(downloadedPortDir(), LAUNCHER_EXE);
+
+/** Starts the game with the launcher's saved settings and waits for it to end. */
+const playExe = () => path.join(downloadedPortDir(), "Bloodborne.exe");
 
 export const getBloodborneSetup = () => ({
-  portInstalled: isPortDir(downloadedPortDir()) && fs.existsSync(launcherExe()),
+  portInstalled: isPortDir(downloadedPortDir()),
 });
 
 const fail = (problems: string[]) => {
@@ -73,15 +81,15 @@ const SCREENSHOT_FILES = [
   "086",
 ].map((n) => `screenshot-${n}.jpg`);
 
-// Figures from the port README (github.com/Shaiyon69/bloodborne_pc_windows_port)
-// and early player reports (RX 6650 XT + Ryzen 5 5600X: 89-100 FPS at 1080p).
+// Figures from earlier bbport-based builds and player reports
+// (RX 6650 XT + Ryzen 5 5600X: 89-100 FPS at 1080p).
 const REQUIREMENTS = {
   minimum:
     '<ul class="bb_ul"><li><strong>OS:</strong> Windows 10 (1903+) 64-bit</li>' +
     "<li><strong>Processor:</strong> Intel Core 4th gen (Haswell) or AMD Ryzen, with AVX2</li>" +
     "<li><strong>Memory:</strong> 6 GB free (RAM + page file)</li>" +
     "<li><strong>Graphics:</strong> Vulkan 1.3 GPU: GeForce GTX 1060, Radeon RX 480 or Intel Arc A380</li>" +
-    "<li><strong>Additional Notes:</strong> Python 3.10+. Your own decrypted CUSA03173 v1.09 dump (eboot.bin). Target: 30-60 FPS at 720p-1080p with an upscaler.</li></ul>",
+    "<li><strong>Additional Notes:</strong> Your own decrypted CUSA03173 v1.09 dump (eboot.bin). Target: 30-60 FPS at 720p-1080p with an upscaler.</li></ul>",
   recommended:
     '<ul class="bb_ul"><li><strong>OS:</strong> Windows 11 64-bit</li>' +
     "<li><strong>Processor:</strong> AMD Ryzen 5 5600X or better</li>" +
@@ -92,13 +100,13 @@ const REQUIREMENTS = {
 
 export const bloodborneShopDetails = (): ShopDetails => {
   const about =
-    "Hunt your nightmares in the gothic city of Yharnam. Native Windows port of the PlayStation 4 game: bring your own CUSA03173 dump.";
+    "Hunt your nightmares in the gothic city of Yharnam. Runs on Lantern Engine by Awaken: bring your own CUSA03173 dump.";
   const description =
     "<p>Face your fears as you search for answers in the ancient city of Yharnam, now cursed with a strange endemic illness spreading through the streets like wildfire. Danger, death and madness lurk around every corner of this dark and horrifying world, and you must discover its darkest secrets in order to survive.</p>" +
     "<ul><li>Fast, aggressive combat built around trick weapons and the regain system.</li>" +
     "<li>Interconnected gothic world, optional chalice dungeons and three endings.</li>" +
     "<li>The Old Hunters expansion adds the Hunter's Nightmare and new bosses.</li></ul>" +
-    "<p><strong>PC port notes:</strong> this is a native Windows build of the PlayStation 4 game, not an emulator. It needs your own decrypted CUSA03173 v1.09 dump and supports FSR, DLSS and TAA upscaling plus FPS and resolution patches.</p>";
+    '<p><strong>PC notes:</strong> runs on <a href="https://github.com/Awakenchan/LanternEngine">Lantern Engine by Awaken</a>, where the game\'s own code runs natively and its graphics are translated to Vulkan. It needs your own decrypted CUSA03173 v1.09 dump and supports FSR, DLSS and TAA upscaling plus FPS and resolution patches.</p>';
   return {
     objectId: BLOODBORNE_OBJECT_ID,
     name: "Bloodborne",
@@ -125,7 +133,7 @@ export const bloodborneShopDetails = (): ShopDetails => {
   } as ShopDetails;
 };
 
-// [displayName, description, hidden], in PS4 trophy id order; the port reports unlocks on stdout.
+// [displayName, description, hidden], indexed by PS4 trophy id (Lantern's Trophies.cs order).
 const TROPHIES: [string, string, boolean][] = [
   ["Bloodborne", "All trophies acquired. Hats off!", false],
   ["Yharnam Sunrise", "You lived through the hunt, and saw another day.", true],
@@ -138,6 +146,11 @@ const TROPHIES: [string, string, boolean][] = [
     "Childhood's Beginning",
     "You became an infant Great One, lifting humanity into its next childhood.",
     true,
+  ],
+  [
+    "Yharnam, Pthumerian Queen",
+    "Defeat Yharnam, Blood Queen of the Old Labyrinth.",
+    false,
   ],
   ["Hunter's Essence", "Acquire all hunter weapons.", false],
   ["Hunter's Craft", "Acquire all special hunter tools.", false],
@@ -158,6 +171,29 @@ const TROPHIES: [string, string, boolean][] = [
   [
     "Nightmare Lecture Building",
     "Gain entry into the Byrgenwerth lecture building, that drifts within the realm of nightmare.",
+    false,
+  ],
+  ["Father Gascoigne", "Defeat Father Gascoigne.", false],
+  ["Vicar Amelia", "Defeat Vicar Amelia.", false],
+  ["Shadow of Yharnam", "Defeat the Shadows of Yharnam.", false],
+  ["Rom, the Vacuous Spider", "Defeat Rom, the Vacuous Spider.", false],
+  ["The One Reborn", "Defeat The One Reborn.", false],
+  [
+    "Micolash, Host of the Nightmare",
+    "Defeat Micolash, Host of the Nightmare.",
+    false,
+  ],
+  ["Mergo's Wet Nurse", "Defeat Mergo's Wet Nurse.", false],
+  ["Cleric Beast", "Defeat the Cleric Beast.", false],
+  ["Blood-starved Beast", "Defeat the Blood-starved Beast.", false],
+  ["The Witch of Hemwick", "Defeat the Witch of Hemwick.", false],
+  ["Darkbeast Paarl", "Defeat Darkbeast Paarl.", false],
+  ["Amygdala", "Defeat Great One: Amygdala.", false],
+  ["Martyr Logarius", "Defeat Martyr Logarius.", false],
+  ["Celestial Emissary", "Defeat the Celestial Emissary.", false],
+  [
+    "Ebrietas, Daughter of the Cosmos",
+    "Defeat Ebrietas, Daughter of the Cosmos.",
     false,
   ],
   [
@@ -183,34 +219,6 @@ const TROPHIES: [string, string, boolean][] = [
   [
     "Chalice of Isz",
     "Acquire the Great Chalice of Isz that seals the home of the cosmic kin.",
-    false,
-  ],
-  ["Cleric Beast", "Defeat the Cleric Beast.", false],
-  ["Father Gascoigne", "Defeat Father Gascoigne.", false],
-  ["Blood-starved Beast", "Defeat the Blood-starved Beast.", false],
-  ["Vicar Amelia", "Defeat Vicar Amelia.", false],
-  ["Shadow of Yharnam", "Defeat the Shadows of Yharnam.", false],
-  ["Rom, the Vacuous Spider", "Defeat Rom, the Vacuous Spider.", false],
-  ["The One Reborn", "Defeat The One Reborn.", false],
-  [
-    "Micolash, Host of the Nightmare",
-    "Defeat Micolash, Host of the Nightmare.",
-    false,
-  ],
-  ["Mergo's Wet Nurse", "Defeat Mergo's Wet Nurse.", false],
-  ["Martyr Logarius", "Defeat Martyr Logarius.", false],
-  ["Darkbeast Paarl", "Defeat Darkbeast Paarl.", false],
-  ["Amygdala", "Defeat Great One: Amygdala.", false],
-  ["Celestial Emissary", "Defeat the Celestial Emissary.", false],
-  [
-    "Ebrietas, Daughter of the Cosmos",
-    "Defeat Ebrietas, Daughter of the Cosmos.",
-    false,
-  ],
-  ["The Witch of Hemwick", "Defeat the Witch of Hemwick.", false],
-  [
-    "Yharnam, Pthumerian Queen",
-    "Defeat Yharnam, Blood Queen of the Old Labyrinth.",
     false,
   ],
   ["Old Hunter's Essence", "Acquire all old hunter weapons.", false],
@@ -261,8 +269,28 @@ export const openBloodborneLauncher = () => {
   proc.unref();
 };
 
+/** Merges trophies.log into the game's achievements; the engine appends to it as trophies unlock. */
+const syncTrophies = async (record: Game, logPath: string, notify = true) => {
+  let text: string;
+  try {
+    text = await fs.promises.readFile(logPath, "utf-8");
+  } catch {
+    return; // no trophies yet
+  }
+  const unlocked = parseTrophyLog(text).flatMap(({ id, unlockTime }) => {
+    const trophy = TROPHIES[id];
+    return trophy
+      ? [{ name: trophyAchievementName(trophy[0]), unlockTime }]
+      : [];
+  });
+  if (unlocked.length === 0) return;
+  await mergeAchievements(record, unlocked, notify).catch((err) =>
+    logger.error("Bloodborne trophy merge failed", err)
+  );
+};
+
 export const launchBloodborne = async (shop: GameShop, objectId: string) => {
-  // The setup modal offers the port download when it is missing.
+  // The setup modal offers the download when Lantern Engine is missing.
   if (!getBloodborneSetup().portInstalled) {
     WindowManager.sendToAppWindows(
       "on-bloodborne-setup-required",
@@ -272,65 +300,49 @@ export const launchBloodborne = async (shop: GameShop, objectId: string) => {
     return null;
   }
 
-  // Lets the process watcher track playtime from the game itself, not the launcher window.
+  const portDir = downloadedPortDir();
   const key = levelKeys.game(shop, objectId);
   const record = await gamesSublevel.get(key).catch(() => null);
   if (record) {
+    // Lets the process watcher track playtime from the engine itself, not the launcher.
     await gamesSublevel.put(key, {
       ...record,
-      executablePath: launcherExe(),
+      executablePath: playExe(),
       executablePathUpdatedAt: new Date(),
       trackingExecutablePaths: [
-        path.join(downloadedPortDir(), "out", "bbport.exe"),
+        path.join(engineDirOf(portDir), "out", "bb-probe.exe"),
       ],
       trackingExecutablePathsUpdatedAt: new Date(),
     });
   }
 
-  const settings = readLauncherSettings();
-  const env = launchEnvFromSettings(settings);
-
-  // The launcher hides the game's stdout, where the port prints trophy unlocks.
-  // Without a saved eboot path, fall back to the launcher so the user can set it up.
-  if (!env.BB_GAME_DIR || !record) {
+  // Without a game folder the launcher's setup guide asks for one.
+  const settings = readLanternSettings();
+  if (!gameDir(settings) || !record) {
     openBloodborneLauncher();
     return null;
   }
 
-  const proc = spawn("cmd.exe", ["/c", "run.bat"], {
-    cwd: downloadedPortDir(),
-    env: { ...process.env, ...env, BB_DATA_DIR: downloadedPortDir() },
-    stdio: ["ignore", "pipe", "ignore"],
-    windowsHide: true,
+  const proc = spawn(playExe(), [], {
+    cwd: portDir,
+    detached: true,
+    stdio: "ignore",
   });
   proc.once("error", (error) => {
-    fail([`could not start the Bloodborne port: ${error.message}`]);
+    fail([`could not start Bloodborne: ${error.message}`]);
   });
 
-  createInterface({ input: proc.stdout }).on("line", (line) => {
-    const id = parseTrophyId(line);
-    const trophy = id === null ? undefined : TROPHIES[id];
-    if (!trophy) return;
-
-    mergeAchievements(
-      record,
-      [{ name: trophyAchievementName(trophy[0]), unlockTime: Date.now() }],
-      true
-    ).catch((err) => logger.error("Bloodborne trophy merge failed", err));
+  // Bloodborne.exe waits for the game, so the log is watched until it exits.
+  const logPath = path.join(savesDir(portDir, settings), "trophies.log");
+  // Unlocks from games started in Lantern's own launcher come in without a notification.
+  await syncTrophies(record, logPath, false);
+  const onChange = () => void syncTrophies(record, logPath);
+  fs.watchFile(logPath, { interval: 2000 }, onChange);
+  proc.once("exit", () => {
+    fs.unwatchFile(logPath, onChange);
+    onChange();
   });
+  proc.unref();
 
   return null;
-};
-
-const readLauncherSettings = (): { eboot?: string; fps?: string } => {
-  try {
-    return JSON.parse(
-      fs.readFileSync(
-        path.join(downloadedPortDir(), "bblauncher_settings.json"),
-        "utf-8"
-      )
-    );
-  } catch {
-    return {};
-  }
 };

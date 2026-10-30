@@ -10,28 +10,47 @@ import { SevenZip } from "../7zip";
 import { WindowManager } from "../window-manager";
 import { isPortDir, pickPortRelease } from "./bloodborne-core";
 
-// Follows the upstream port's latest GitHub release; the zip is verified against the
-// sha256 digest GitHub publishes for the asset.
+// Installs Lantern Engine (by Awaken) from its latest stable release; the zip is verified
+// against the sha256 digest GitHub publishes for the asset. Lantern's own launcher updates
+// the package after that, keeping the player's files.
 const LATEST_RELEASE =
-  "https://api.github.com/repos/Mrsuss60/bloodborne_pc_windows_port/releases/latest";
-const VERSION_FILE = ".port-version";
+  "https://api.github.com/repos/Awakenchan/LanternEngine/releases/latest";
 
-/** The NSIS installer writes this when "Include Bloodborne port" is ticked. */
+/** The NSIS installer writes this when "Include Bloodborne" is ticked. */
 const INSTALL_REQUESTED_MARKER = "bloodborne-install-requested";
 
 export const downloadedPortDir = () =>
-  path.join(app.getPath("userData"), "bloodborne-port");
+  path.join(app.getPath("userData"), "lantern-engine");
 
-/** The port's launcher keeps saves, settings, keybinds and mods inside its own folder. */
-const USER_DATA = ["user", "mods", "bbport.ini", "bblauncher_settings.json"];
+/** Lantern's launcher settings (game folder, saves folder, profile), shared by every package. */
+export const lanternSettingsFile = () =>
+  path.join(app.getPath("appData"), "Lantern Engine", "settings.json");
 
-/** Copies the user's files from one port-shaped folder over a fresh port. */
-const carryUserData = async (
-  from: string,
-  to: string,
-  names: string[] = USER_DATA
-) => {
-  for (const name of names) {
+export const readLanternSettings = (): Record<string, unknown> => {
+  try {
+    const data = JSON.parse(fs.readFileSync(lanternSettingsFile(), "utf-8"));
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+};
+
+/** The player's files in a package, as Lantern's own updater keeps them (Updater.Kept). */
+const USER_DATA = [
+  "lantern.ini",
+  "bbport.ini",
+  "mods.json",
+  "patches.json",
+  "user",
+  "mods",
+  "logs",
+  "network",
+  "engine-assets",
+];
+
+/** Copies the player's files from a replaced package over the fresh one. */
+const carryUserData = async (from: string, to: string) => {
+  for (const name of USER_DATA) {
     const source = path.join(from, name);
     if (!fs.existsSync(source)) continue;
     await fs.promises.rm(path.join(to, name), { recursive: true, force: true });
@@ -39,24 +58,47 @@ const carryUserData = async (
   }
 };
 
-/** Chimaera's own launcher used <userData>/bloodborne; move it into the port once. */
-const migrateLegacyData = async (port: string) => {
-  const legacy = path.join(app.getPath("userData"), "bloodborne");
-  if (!fs.existsSync(legacy)) return;
-  // Only saves and mods: the old bbport.ini forced FSR 3 and disabled effects, which crash the port.
-  await carryUserData(legacy, port, ["user", "mods"]);
-  // launcher_settings.json only held the game folder the port launcher also asks for.
-  try {
-    const { eboot } = JSON.parse(
-      fs.readFileSync(path.join(legacy, "launcher_settings.json"), "utf-8")
-    );
-    const settings = path.join(port, "bblauncher_settings.json");
-    if (typeof eboot === "string" && !fs.existsSync(settings))
-      fs.writeFileSync(settings, JSON.stringify({ eboot }, null, 2));
-  } catch {
-    // no old setup to import
+/** Copies what the new package lacks yet; never overwrites the player's Lantern files. */
+const copyMissing = async (from: string, to: string, names: string[]) => {
+  for (const name of names) {
+    const source = path.join(from, name);
+    const target = path.join(to, name);
+    if (!fs.existsSync(source) || fs.existsSync(target)) continue;
+    await fs.promises.cp(source, target, { recursive: true });
   }
-  await fs.promises.rename(legacy, `${legacy}.migrated`);
+};
+
+/** Takes saves, mods and the game folder over from the ports Chimaera used before Lantern. */
+const migrateLegacyData = async (port: string) => {
+  const root = app.getPath("userData");
+  // The Mrsuss60 port, then Chimaera's own launcher before it.
+  for (const [legacy, settingsName] of [
+    [path.join(root, "bloodborne-port"), "bblauncher_settings.json"],
+    [path.join(root, "bloodborne"), "launcher_settings.json"],
+  ]) {
+    if (!fs.existsSync(legacy)) continue;
+    // Not bbport.ini: its old FSR and effect settings crashed the engine before.
+    await copyMissing(legacy, port, ["user", "mods"]);
+    try {
+      const { eboot } = JSON.parse(
+        fs.readFileSync(path.join(legacy, settingsName), "utf-8")
+      );
+      const settings = readLanternSettings();
+      if (typeof eboot === "string" && !settings.game_dir) {
+        settings.game_dir = eboot.replace(/[\\/]+eboot\.bin$/i, "");
+        await fs.promises.mkdir(path.dirname(lanternSettingsFile()), {
+          recursive: true,
+        });
+        await fs.promises.writeFile(
+          lanternSettingsFile(),
+          JSON.stringify(settings, null, 2)
+        );
+      }
+    } catch {
+      // no game folder to carry over
+    }
+    await fs.promises.rename(legacy, `${legacy}.migrated`);
+  }
 };
 
 let installing: Promise<void> | null = null;
@@ -72,23 +114,28 @@ const fetchLatestRelease = async () => {
     headers: { Accept: "application/vnd.github+json" },
   });
   if (!response.ok) {
-    throw new Error(`Port release lookup failed: HTTP ${response.status}`);
+    throw new Error(
+      `Lantern Engine release lookup failed: HTTP ${response.status}`
+    );
   }
   const release = pickPortRelease(await response.json());
-  if (!release) throw new Error("Latest port release has no verifiable zip");
+  if (!release)
+    throw new Error("Latest Lantern Engine release has no verifiable zip");
   return release;
 };
 
 const install = async () => {
   const release = await fetchLatestRelease();
   const root = app.getPath("userData");
-  const zipPath = path.join(root, "bloodborne-port.zip.part");
-  const extractDir = path.join(root, "bloodborne-port.tmp");
+  const zipPath = path.join(root, "lantern-engine.zip.part");
+  const extractDir = path.join(root, "lantern-engine.tmp");
 
   try {
     const response = await fetch(release.url);
     if (!response.ok || !response.body) {
-      throw new Error(`Port download failed: HTTP ${response.status}`);
+      throw new Error(
+        `Lantern Engine download failed: HTTP ${response.status}`
+      );
     }
 
     const total = Number(response.headers.get("content-length")) || 0;
@@ -114,7 +161,9 @@ const install = async () => {
     );
 
     if (hash.digest("hex") !== release.sha256) {
-      throw new Error("Port download is corrupted (checksum mismatch)");
+      throw new Error(
+        "Lantern Engine download is corrupted (checksum mismatch)"
+      );
     }
 
     sendProgress("extracting", 0);
@@ -134,11 +183,11 @@ const install = async () => {
         : extractDir;
 
     if (!isPortDir(portRoot)) {
-      throw new Error("Port archive is missing run.bat or out/bbport.exe");
+      throw new Error("Archive is missing Lantern Engine.exe or its engine");
     }
 
-    // Swap in last so a failed attempt never leaves a half-installed port. Windows refuses
-    // the first rename while the game runs, which aborts the update and leaves it untouched.
+    // Swap in last so a failed attempt never leaves a half-installed package. Windows refuses
+    // the first rename while the game runs, which aborts and leaves the old one untouched.
     const dir = downloadedPortDir();
     const old = `${dir}.old`;
     await fs.promises.rm(old, { recursive: true, force: true });
@@ -149,7 +198,6 @@ const install = async () => {
       if (fs.existsSync(old)) await fs.promises.rename(old, dir);
       throw error;
     }
-    await fs.promises.writeFile(path.join(dir, VERSION_FILE), release.tag);
     if (fs.existsSync(old)) await carryUserData(old, dir);
     await migrateLegacyData(dir);
     await fs.promises.rm(old, { recursive: true, force: true });
@@ -166,31 +214,16 @@ export const downloadBloodbornePort = () => {
   return installing;
 };
 
-const installedTag = () => {
-  try {
-    return fs.readFileSync(
-      path.join(downloadedPortDir(), VERSION_FILE),
-      "utf-8"
-    );
-  } catch {
-    return null; // no version file: a build from before tracking
-  }
-};
-
-/** Installs when the installer box was ticked and keeps an installed port on the latest release. Offline keeps what is there. */
+/** Installs when the installer box was ticked; Lantern's launcher keeps an installed package current. */
 export const syncBloodbornePort = async () => {
   const marker = path.join(app.getPath("userData"), INSTALL_REQUESTED_MARKER);
   const requested = fs.existsSync(marker);
   fs.rmSync(marker, { force: true });
-
-  const installed = isPortDir(downloadedPortDir());
-  if (!installed && !requested) return;
+  if (!requested || isPortDir(downloadedPortDir())) return;
 
   try {
-    if (installed && installedTag() === (await fetchLatestRelease()).tag)
-      return;
     await downloadBloodbornePort();
   } catch (error) {
-    logger.error("Bloodborne port sync failed", error);
+    logger.error("Lantern Engine install failed", error);
   }
 };

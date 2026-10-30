@@ -24,7 +24,7 @@ TO-DO.md
 native/torrent-bridge/build/
 native/torrent-bridge/vcpkg_installed/
 
-# Staged by yarn stage:bloodborne
+# Left by the removed stage:bloodborne script (Mrsuss60 port)
 /bloodborne-port/
 # Upstream port source, cloned for reference only
 /bloodborne_pc_windows_port/
