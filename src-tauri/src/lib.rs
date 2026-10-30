@@ -2,6 +2,7 @@
 //! unchanged (src/tauri/electron-shim.ts); every preload IPC call arrives at the
 //! single `ipc` command and is routed by channel name in `ipc.rs`.
 
+mod electron_import;
 mod hydra_api;
 mod ipc;
 mod library;
@@ -47,7 +48,16 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            app.manage(store::Store::open(&data_dir.join("chimaera.db"))?);
+            let store = store::Store::open(&data_dir.join("chimaera.db"))?;
+            let user_data = electron_import::electron_user_data(&app.path().config_dir()?);
+            let scratch = app.path().app_cache_dir()?.join("electron-import");
+            match electron_import::run_once(&store, &user_data, &scratch) {
+                Ok(Some(result)) => eprintln!("[import] Electron data: {result}"),
+                Ok(None) => {}
+                // Not fatal: the app starts empty and the import retries next launch.
+                Err(error) => eprintln!("[import] Electron data import failed: {error}"),
+            }
+            app.manage(store);
             app.manage(ipc::AppSession(uuid::Uuid::new_v4().to_string()));
             // Same size and chrome as WindowManager.createMainWindow: the renderer
             // draws its own title bar and window buttons.

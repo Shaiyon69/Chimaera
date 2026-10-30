@@ -82,6 +82,20 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let include_concealed = args.first().and_then(Value::as_bool).unwrap_or(false);
             library::get_library(&app.state::<Store>(), include_concealed)
         }
+        // HydraApi.isLoggedIn() is always false in Chimaera, so Electron returns [] too.
+        "getHiddenLibrary" => Ok(json!([])),
+        "getGameAssets" => {
+            let version = app.package_info().version.to_string();
+            let (object_id, shop) = (arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default());
+            let force_fresh = args.get(2).and_then(|o| o["forceFresh"].as_bool()).unwrap_or(false);
+            library::get_game_assets(&app.state::<Store>(), &version, object_id, shop, force_fresh).await
+        }
+        // Electron merges /profile/games from Hydra, which local mode blocks, so it fails there too.
+        "refreshLibraryAssets" => Err("library/refresh-failed".into()),
+        "getDownloadLayoutState" => library::download_layout_state(&app.state::<Store>()),
+        // No process watcher yet (F2): nothing is tracked as running.
+        "getGamesRunning" => Ok(json!([])),
+        "getClassicsImportStatus" => Ok(json!(false)),
         "getUserPreferences" => app.state::<Store>().get("", "userPreferences"),
         "updateUserPreferences" => {
             let store = app.state::<Store>();

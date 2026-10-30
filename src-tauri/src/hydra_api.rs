@@ -234,6 +234,24 @@ fn build_profile(p: &Value, games: &[Value]) -> Value {
     out
 }
 
+/// loadGamesWithArtwork (local-api.ts): catalogue art fills in only the fields it has.
+fn games_with_artwork(store: &Store) -> Result<Vec<Value>, String> {
+    store
+        .entries("games")?
+        .into_iter()
+        .map(|(key, mut game)| {
+            if let (Value::Object(target), Value::Object(art)) = (&mut game, crate::library::composed_assets_for(store, &key)?) {
+                let title = art.get("title").and_then(Value::as_str).filter(|t| !t.is_empty()).map(str::to_string);
+                target.extend(art.into_iter().filter(|(_, v)| !v.is_null()));
+                if let Some(title) = title {
+                    target.insert("title".into(), json!(title));
+                }
+            }
+            Ok(game)
+        })
+        .collect()
+}
+
 fn collection_name(body: &Value) -> Result<String, String> {
     match body["name"].as_str().map(str::trim) {
         Some(name) if !name.is_empty() => Ok(name.chars().take(64).collect()),
@@ -282,8 +300,7 @@ fn answer_local(store: &Store, route: &str, query: &[(String, String)], body: &V
             Ok(json!({}))
         }
         _ => {
-            // shortcut: games carry their own art here; catalogue artwork composition (composeAssetsWithArtwork) comes with milestone F3.
-            let games: Vec<Value> = store.entries("games")?.into_iter().map(|(_, g)| g).collect();
+            let games = games_with_artwork(store)?;
             match route {
                 "listCollections" => Ok(Value::Array(
                     collections()?
