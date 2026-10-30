@@ -1,0 +1,286 @@
+//! Library mutations on `games/<shop>:<objectId>`, ported from src/main/events/library/.
+//! Chimaera runs in local mode, so the Hydra profile calls those handlers make are dropped.
+
+use serde_json::{json, Map, Value};
+
+use crate::library::iso_now;
+use crate::store::Store;
+
+pub fn game_key(shop: &str, object_id: &str) -> String {
+    format!("{shop}:{object_id}")
+}
+
+/// updateGameExecutablePath (src/main/helpers/update-executable-path.ts): the timestamp moves only on change.
+pub fn with_executable_path(mut game: Value, path: Option<&str>) -> Value {
+    if game["executablePath"].as_str() == path {
+        return game;
+    }
+    game["executablePath"] = json!(path);
+    game["executablePathUpdatedAt"] = if path.is_some() { json!(iso_now()) } else { Value::Null };
+    game
+}
+
+/// Applies `patch` to a stored game. Ok(None) when the game does not exist, like Electron's early return.
+pub fn update(store: &Store, key: &str, patch: impl FnOnce(&mut Map<String, Value>)) -> Result<Option<Value>, String> {
+    let Value::Object(mut game) = store.get("games", key)? else { return Ok(None) };
+    patch(&mut game);
+    let game = Value::Object(game);
+    store.put("games", key, &game)?;
+    Ok(Some(game))
+}
+
+fn set(field: &'static str, value: Value) -> impl FnOnce(&mut Map<String, Value>) {
+    move |game| {
+        game.insert(field.into(), value);
+    }
+}
+
+/// `getGameByObjectId`.
+// shortcut: achievement counts come from the record as stored; the achievement memory store arrives with achievements (F6).
+pub fn get_by_object_id(store: &Store, shop: &str, object_id: &str) -> Result<Value, String> {
+    let key = game_key(shop, object_id);
+    let Value::Object(mut game) = store.get("games", &key)? else { return Ok(Value::Null) };
+    if game.get("isDeleted").and_then(Value::as_bool).unwrap_or(false) {
+        return Ok(Value::Null);
+    }
+    game.insert("id".into(), json!(key));
+    game.insert("download".into(), store.get("downloads", &key)?);
+    Ok(Value::Object(game))
+}
+
+/// `addGameToLibrary`: revives a removed game or creates one from its cached shop assets.
+// shortcut: finished-download cleanup and the launchbox platform lookup arrive with downloads (F4) and emulators.
+pub fn add_to_library(store: &Store, shop: &str, object_id: &str, title: &str, platform: Option<&str>) -> Result<(), String> {
+    let key = game_key(shop, object_id);
+    let revived = update(store, &key, |game| {
+        game.insert("isDeleted".into(), json!(false));
+        if game.get("addedToLibraryAt").is_none_or(Value::is_null) {
+            game.insert("addedToLibraryAt".into(), json!(iso_now()));
+        }
+        game.insert("source".into(), json!("hydra"));
+        if let Some(platform) = platform.filter(|_| game.get("platform").is_none_or(Value::is_null)) {
+            game.insert("platform".into(), json!(platform));
+        }
+    })?;
+    if revived.is_some() {
+        return Ok(());
+    }
+    let assets = store.get("gameShopAssets", &key)?;
+    let game = json!({
+        "title": title,
+        "iconUrl": assets["iconUrl"],
+        "libraryHeroImageUrl": assets["libraryHeroImageUrl"],
+        "logoImageUrl": assets["logoImageUrl"],
+        "objectId": object_id,
+        "shop": shop,
+        "remoteId": null,
+        "isDeleted": false,
+        "playTimeInMilliseconds": 0,
+        "lastTimePlayed": null,
+        "addedToLibraryAt": iso_now(),
+        "platform": platform,
+        "source": "hydra",
+    });
+    store.put("games", &key, &game)
+}
+
+/// `removeGameFromLibrary`: marks the game deleted, drops its custom art and artwork picks.
+pub fn remove_from_library(store: &Store, shop: &str, object_id: &str) -> Result<(), String> {
+    let key = game_key(shop, object_id);
+    let game = store.get("games", &key)?;
+    if game.is_null() {
+        return Ok(());
+    }
+    // Custom games own their main art; shop games only their overrides.
+    let art_fields: &[&str] = if shop == "custom" {
+        &["iconUrl", "logoImageUrl", "libraryHeroImageUrl", "customCoverImageUrl"]
+    } else {
+        &["customIconUrl", "customLogoImageUrl", "customHeroImageUrl", "customCoverImageUrl"]
+    };
+    let files: Vec<String> =
+        art_fields.iter().filter_map(|f| game[*f].as_str()?.strip_prefix("local:").map(String::from)).collect();
+    let mut game = with_executable_path(game, None);
+    game["isDeleted"] = json!(true);
+    if shop != "custom" {
+        for field in art_fields {
+            game[*field] = Value::Null;
+        }
+    }
+    store.put("games", &key, &game)?;
+    store.del("artworkSelection", &key)?;
+    for file in files {
+        if let Err(error) = std::fs::remove_file(&file) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("[games] failed to delete asset {file}: {error}");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn set_favorite(store: &Store, shop: &str, object_id: &str, favorite: bool) -> Result<(), String> {
+    update(store, &game_key(shop, object_id), set("favorite", json!(favorite))).map(|_| ())
+}
+
+pub fn set_pin(store: &Store, shop: &str, object_id: &str, pin: bool) -> Result<(), String> {
+    update(store, &game_key(shop, object_id), |game| {
+        game.insert("isPinned".into(), json!(pin));
+        game.insert("pinnedDate".into(), if pin { json!(iso_now()) } else { Value::Null });
+    })
+    .map(|_| ())
+}
+
+pub fn set_launch_options(store: &Store, shop: &str, object_id: &str, options: Option<&str>) -> Result<(), String> {
+    let options = options.filter(|o| !o.trim().is_empty());
+    update(store, &game_key(shop, object_id), set("launchOptions", json!(options))).map(|_| ())
+}
+
+/// `setGameVisibility`: returns the saved pair, as the Hydra API response did.
+pub fn set_visibility(store: &Store, shop: &str, object_id: &str, field: &str, value: bool) -> Result<Value, String> {
+    let key = game_key(shop, object_id);
+    let game = store.get("games", &key)?;
+    let field_ok = matches!(field, "isConcealed") || (field == "isHiddenFromOthers" && shop != "custom");
+    if game.is_null() || game["isDeleted"].as_bool().unwrap_or(false) || !field_ok {
+        return Err("game/not-found-local".into());
+    }
+    let mut saved = json!({
+        "isHiddenFromOthers": shop != "custom" && game["isHiddenFromOthers"].as_bool().unwrap_or(false),
+        "isConcealed": game["isConcealed"].as_bool().unwrap_or(false),
+    });
+    saved[field] = json!(value);
+    update(store, &key, |game| {
+        game.insert("isHiddenFromOthers".into(), saved["isHiddenFromOthers"].clone());
+        game.insert("isConcealed".into(), saved["isConcealed"].clone());
+    })?;
+    Ok(saved)
+}
+
+pub fn change_playtime(store: &Store, shop: &str, object_id: &str, seconds: f64) -> Result<(), String> {
+    update(store, &game_key(shop, object_id), |game| {
+        game.insert("playTimeInMilliseconds".into(), json!(seconds * 1000.0));
+        game.insert("hasManuallyUpdatedPlaytime".into(), json!(true));
+    })
+    .map(|_| ())
+}
+
+pub fn reset_playtime(store: &Store, shop: &str, object_id: &str) -> Result<(), String> {
+    update(store, &game_key(shop, object_id), |game| {
+        game.insert("playTimeInMilliseconds".into(), json!(0));
+        game.insert("lastTimePlayed".into(), Value::Null);
+        game.insert("hasManuallyUpdatedPlaytime".into(), json!(false));
+    })
+    .map(|_| ())
+}
+
+/// `updateExecutablePath`; `path` is already resolved from a .lnk.
+// shortcut: no background installedSizeInBytes scan of the game folder; it arrives with downloads (F4).
+pub fn set_executable_path(store: &Store, shop: &str, object_id: &str, path: Option<&str>) -> Result<(), String> {
+    let key = game_key(shop, object_id);
+    let game = store.get("games", &key)?;
+    if game.is_null() {
+        return Ok(());
+    }
+    let mut game = with_executable_path(game, path);
+    if path.is_none() {
+        game["installedSizeInBytes"] = Value::Null;
+        game["automaticCloudSync"] = json!(false);
+    }
+    store.put("games", &key, &game)
+}
+
+pub fn set_tracking_paths(store: &Store, shop: &str, object_id: &str, paths: Vec<String>) -> Result<(), String> {
+    update(store, &game_key(shop, object_id), |game| {
+        let at = if paths.is_empty() { Value::Null } else { json!(iso_now()) };
+        game.insert("trackingExecutablePaths".into(), json!(paths));
+        game.insert("trackingExecutablePathsUpdatedAt".into(), at);
+    })
+    .map(|_| ())
+}
+
+/// `verifyExecutablePathInUse`: the first game (deleted ones included, as in Electron) using this exe.
+pub fn game_using_executable(store: &Store, path: &str) -> Result<Value, String> {
+    Ok(store.entries("games")?.into_iter().map(|(_, g)| g).find(|g| g["executablePath"].as_str() == Some(path)).unwrap_or(Value::Null))
+}
+
+/// `getPlaySessions`: newest first, at most 200.
+pub fn play_sessions(store: &Store, shop: &str, object_id: &str) -> Result<Value, String> {
+    let key = game_key(shop, object_id);
+    let mut sessions: Vec<Value> =
+        store.entries("playSessions")?.into_iter().map(|(_, s)| s).filter(|s| s["gameKey"].as_str() == Some(&key)).collect();
+    sessions.sort_by_key(|s| std::cmp::Reverse(s["startedAt"].as_i64().unwrap_or(0)));
+    sessions.truncate(200);
+    Ok(Value::Array(sessions))
+}
+
+/// `getPlaytimeSummary`: library-wide totals and the top 5; deleted games do not count.
+pub fn playtime_summary(store: &Store) -> Result<Value, String> {
+    let games: Vec<Value> =
+        store.entries("games")?.into_iter().map(|(_, g)| g).filter(|g| !g["isDeleted"].as_bool().unwrap_or(false)).collect();
+    let ms = |g: &Value| g["playTimeInMilliseconds"].as_f64().unwrap_or(0.0).trunc() as i64;
+    let mut played: Vec<&Value> = games.iter().filter(|g| ms(g) > 0).collect();
+    played.sort_by_key(|g| std::cmp::Reverse(ms(g)));
+    Ok(json!({
+        "totalPlayTimeInMilliseconds": games.iter().map(ms).sum::<i64>(),
+        "gameCount": games.len(),
+        "playedGameCount": played.len(),
+        "mostPlayed": played.iter().take(5).map(|g| json!({
+            "shop": g["shop"], "objectId": g["objectId"], "title": g["title"], "playTimeInMilliseconds": ms(g),
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn executable_timestamp_moves_only_on_change() {
+        let game = json!({ "executablePath": "C:\\a.exe", "executablePathUpdatedAt": "old" });
+        assert_eq!(with_executable_path(game.clone(), Some("C:\\a.exe"))["executablePathUpdatedAt"], "old");
+        let moved = with_executable_path(game.clone(), Some("C:\\b.exe"));
+        assert_ne!(moved["executablePathUpdatedAt"], "old");
+        assert_eq!(with_executable_path(game, None)["executablePathUpdatedAt"], Value::Null);
+    }
+
+    #[test]
+    fn add_remove_and_revive() {
+        let store = Store::memory().unwrap();
+        store.put("gameShopAssets", "steam:620", &json!({ "iconUrl": "icon" })).unwrap();
+        add_to_library(&store, "steam", "620", "Portal 2", None).unwrap();
+        let game = get_by_object_id(&store, "steam", "620").unwrap();
+        assert_eq!((game["id"].as_str(), game["iconUrl"].as_str()), (Some("steam:620"), Some("icon")));
+
+        set_executable_path(&store, "steam", "620", Some("C:\\p2.exe")).unwrap();
+        store.put("artworkSelection", "steam:620", &json!({})).unwrap();
+        remove_from_library(&store, "steam", "620").unwrap();
+        assert!(get_by_object_id(&store, "steam", "620").unwrap().is_null());
+        assert!(store.get("artworkSelection", "steam:620").unwrap().is_null());
+        assert!(store.get("games", "steam:620").unwrap()["executablePath"].is_null());
+
+        add_to_library(&store, "steam", "620", "Portal 2", None).unwrap();
+        assert_eq!(get_by_object_id(&store, "steam", "620").unwrap()["source"], "hydra");
+    }
+
+    #[test]
+    fn visibility_rules_match_electron() {
+        let store = Store::memory().unwrap();
+        store.put("games", "custom:x", &json!({ "shop": "custom" })).unwrap();
+        assert!(set_visibility(&store, "custom", "x", "isHiddenFromOthers", true).is_err());
+        assert_eq!(set_visibility(&store, "custom", "x", "isConcealed", true).unwrap(), json!({ "isHiddenFromOthers": false, "isConcealed": true }));
+        assert!(set_visibility(&store, "steam", "missing", "isConcealed", true).is_err());
+    }
+
+    #[test]
+    fn sessions_and_summary() {
+        let store = Store::memory().unwrap();
+        store.put("games", "steam:1", &json!({ "shop": "steam", "objectId": "1", "title": "A", "playTimeInMilliseconds": 5000.7 })).unwrap();
+        store.put("games", "steam:2", &json!({ "shop": "steam", "objectId": "2", "isDeleted": true, "playTimeInMilliseconds": 9 })).unwrap();
+        store.put("playSessions", "000000000001", &json!({ "gameKey": "steam:1", "startedAt": 10 })).unwrap();
+        store.put("playSessions", "1793404800000", &json!({ "gameKey": "steam:1", "startedAt": 20 })).unwrap();
+        let sessions = play_sessions(&store, "steam", "1").unwrap();
+        assert_eq!(sessions[0]["startedAt"], 20);
+        let summary = playtime_summary(&store).unwrap();
+        assert_eq!((summary["totalPlayTimeInMilliseconds"].as_i64(), summary["gameCount"].as_u64()), (Some(5000), Some(1)));
+        assert_eq!(summary["mostPlayed"][0]["title"], "A");
+    }
+}

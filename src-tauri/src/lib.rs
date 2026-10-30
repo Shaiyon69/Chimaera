@@ -3,12 +3,15 @@
 //! single `ipc` command and is routed by channel name in `ipc.rs`.
 
 mod electron_import;
+mod games;
 mod hydra_api;
 mod image_cache;
 mod ipc;
+mod launch;
 mod library;
 mod local_files;
 mod store;
+mod watcher;
 
 use serde_json::{json, Value};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -26,7 +29,7 @@ fn node_platform() -> &'static str {
 
 /// What the preload reads from `process` at load time. Only these variables,
 /// never the whole environment: the webview loads remote content.
-fn process_script() -> String {
+pub(crate) fn process_script() -> String {
     let env: serde_json::Map<String, Value> = ["PORTABLE_EXECUTABLE_FILE", "XDG_SESSION_TYPE", "WAYLAND_DISPLAY"]
         .iter()
         .filter_map(|key| std::env::var(key).ok().map(|value| (key.to_string(), json!(value))))
@@ -79,6 +82,9 @@ pub fn run() {
             }
             app.manage(store);
             app.manage(ipc::AppSession(uuid::Uuid::new_v4().to_string()));
+            app.manage(launch::LauncherStatuses::default());
+            app.manage(watcher::Sessions::default());
+            watcher::spawn(app.handle().clone());
             // Same size and chrome as WindowManager.createMainWindow: the renderer
             // draws its own title bar and window buttons.
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("tauri.html".into()))

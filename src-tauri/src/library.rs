@@ -86,7 +86,7 @@ pub fn merge_preferences(stored: Value, patch: &Value) -> Value {
 
 const ASSETS_CACHE_MS: u64 = 1000 * 60 * 60 * 8;
 
-fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
@@ -125,15 +125,32 @@ pub fn download_layout_state(store: &Store) -> Result<Value, String> {
     Ok(if stored.is_null() { empty } else { stored })
 }
 
-/// Gregorian year for a Unix time, without a date crate (Howard Hinnant's civil_from_days).
-fn year_from_unix(secs: u64) -> i64 {
-    let z = (secs / 86_400) as i64 + 719_468;
+/// (year, month, day) for days since 1970-01-01, without a date crate (Howard Hinnant's civil_from_days).
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
-    yoe + era * 400 + i64::from(mp >= 10)
+    let (day, month) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
+    (yoe + era * 400 + i64::from(month <= 2), month, day)
+}
+
+fn year_from_unix(secs: u64) -> i64 {
+    civil_from_days((secs / 86_400) as i64).0
+}
+
+/// `Date.prototype.toISOString` for Unix milliseconds: how Electron stored dates in LevelDB.
+pub fn iso_from_ms(ms: u64) -> String {
+    let (secs, millis) = (ms / 1000, ms % 1000);
+    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
+    let rem = secs % 86_400;
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{millis:03}Z", rem / 3600, rem / 60 % 60, rem % 60)
+}
+
+pub fn iso_now() -> String {
+    iso_from_ms(now_ms())
 }
 
 /// `<a ... data-title="Name" ... href=".../app/620">` entries, as the jsdom query read them.
@@ -188,6 +205,9 @@ mod tests {
         assert_eq!(year_from_unix(0), 1970);
         assert_eq!(year_from_unix(1_793_404_800), 2026); // 2026-10-31
         assert_eq!(year_from_unix(1_798_761_600), 2027); // 2027-01-01
+        assert_eq!(iso_from_ms(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(iso_from_ms(1_793_448_245_007), "2026-10-31T12:04:05.007Z");
+        assert_eq!(iso_from_ms(951_782_400_000), "2000-02-29T00:00:00.000Z");
     }
 
     #[test]

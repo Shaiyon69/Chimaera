@@ -39,7 +39,7 @@ impl Store {
     }
 
     #[cfg(test)]
-    fn memory() -> rusqlite::Result<Self> {
+    pub(crate) fn memory() -> rusqlite::Result<Self> {
         Self::init(Connection::open_in_memory()?)
     }
 

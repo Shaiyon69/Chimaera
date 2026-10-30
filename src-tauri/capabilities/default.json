@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core APIs only; app IPC goes through the `ipc` command",
-  "windows": ["main"],
+  "description": "Main and game-launcher windows: core APIs only; app IPC goes through the `ipc` command",
+  "windows": ["main", "game-launcher"],
   "permissions": ["core:default"]
 }

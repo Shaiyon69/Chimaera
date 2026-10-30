@@ -1,0 +1,307 @@
+//! `openGame` / `closeGame` and the game-launcher window: the Windows path of
+//! src/main/helpers/launch-game.ts, events/library/close-game.ts and
+//! WindowManager.createGameLauncherWindow.
+
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_opener::OpenerExt;
+
+use crate::games::{game_key, with_executable_path};
+use crate::store::Store;
+
+const LAUNCH_DELAY_MS: u64 = 2_000;
+pub const LAUNCHER_LABEL: &str = "game-launcher";
+
+/// Latest status per game and group ("compatibility" / "achievements"), as game-launcher-status.ts keeps them.
+#[derive(Default)]
+pub struct LauncherStatuses(Mutex<HashMap<String, Vec<(String, Value)>>>);
+
+impl LauncherStatuses {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<(String, Value)>>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn get(&self, key: &str) -> Value {
+        Value::Array(self.lock().get(key).map(|s| s.iter().map(|(_, p)| p.clone()).collect()).unwrap_or_default())
+    }
+
+    pub fn clear(&self, key: &str) {
+        self.lock().remove(key);
+    }
+
+    pub fn send(&self, app: &AppHandle, key: &str, status: &str) {
+        let group = if matches!(status, "preparing_compatibility_layer" | "compatibility_layer_ready" | "compatibility_layer_failed" | "game_started") {
+            "compatibility"
+        } else {
+            "achievements"
+        };
+        let payload = json!({ "gameKey": key, "status": status, "detail": null });
+        let mut all = self.lock();
+        let statuses = all.entry(key.to_string()).or_default();
+        statuses.retain(|(g, _)| g != group);
+        statuses.push((group.to_string(), payload.clone()));
+        drop(all);
+        let _ = app.emit_to(LAUNCHER_LABEL, "game-launcher-status", [payload]);
+    }
+}
+
+/// parseExecutablePath: a Windows shortcut stands for its target.
+pub fn parse_executable_path(path: &str) -> String {
+    #[cfg(windows)]
+    if path.to_lowercase().ends_with(".lnk") {
+        // lnk's link_target panics on malformed LinkInfo; a bad shortcut keeps its own path.
+        let target = std::panic::catch_unwind(|| lnk::ShellLink::open(path, encoding_rs::WINDOWS_1252).ok()?.link_target());
+        if let Ok(Some(target)) = target {
+            return target;
+        }
+    }
+    path.to_string()
+}
+
+/// string-argv: whitespace-separated, quotes group words and are dropped around a whole token.
+pub fn split_args(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    for c in input.chars() {
+        match quote {
+            Some(q) if c == q => {
+                quote = None;
+                current.push(c);
+            }
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                current.push(c);
+            }
+            None if c.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+        .into_iter()
+        .map(|t| {
+            let quoted = t.len() >= 2 && (t.starts_with('"') && t.ends_with('"') || t.starts_with('\'') && t.ends_with('\''));
+            if quoted { t[1..t.len() - 1].to_string() } else { t }
+        })
+        .collect()
+}
+
+#[derive(Debug, PartialEq)]
+pub struct LaunchCommand {
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+fn is_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// resolveLaunchCommand without wrappers (gamemode / mangohud are Linux-only).
+pub fn resolve_launch_command(base: &str, launch_options: Option<&str>) -> LaunchCommand {
+    let tokens = split_args(launch_options.unwrap_or_default());
+    let plain = |args| LaunchCommand { command: base.to_string(), args, env: Vec::new() };
+    if !tokens.iter().any(|t| t == "%command%") {
+        return plain(tokens);
+    }
+    let expanded: Vec<String> = tokens.into_iter().map(|t| if t == "%command%" { base.to_string() } else { t }).collect();
+    let env_count = expanded.iter().take_while(|t| t.find('=').is_some_and(|i| i > 0 && is_env_name(&t[..i]))).count();
+    let env = expanded[..env_count].iter().map(|t| t.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).unwrap()).collect();
+    let rest = &expanded[env_count..];
+    match rest.split_first() {
+        Some((command, args)) => LaunchCommand { command: command.clone(), args: args.to_vec(), env },
+        None => LaunchCommand { env, ..plain(Vec::new()) },
+    }
+}
+
+pub fn is_batch_file(command: &str) -> bool {
+    let lower = command.to_lowercase();
+    lower.ends_with(".bat") || lower.ends_with(".cmd")
+}
+
+/// buildWindowsBatchCommand: every part quoted, inner quotes doubled.
+pub fn batch_command_line(command: &str, args: &[String]) -> String {
+    std::iter::once(command).chain(args.iter().map(String::as_str)).map(|v| format!("\"{}\"", v.replace('"', "\"\""))).collect::<Vec<_>>().join(" ")
+}
+
+fn spawn_detached(launch: &LaunchCommand, cwd: &Path) -> std::io::Result<()> {
+    let mut command = if cfg!(windows) && is_batch_file(&launch.command) {
+        let mut cmd = std::process::Command::new("cmd.exe");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // What Node's spawn(..., { shell: true }) runs.
+            cmd.raw_arg(format!("/d /s /c \"{}\"", batch_command_line(&launch.command, &launch.args)));
+        }
+        cmd
+    } else {
+        let mut cmd = std::process::Command::new(&launch.command);
+        cmd.args(&launch.args);
+        cmd
+    };
+    command.current_dir(cwd).envs(launch.env.iter().cloned()).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    command.spawn().map(|_| ())
+}
+
+/// `openGame`.
+// shortcut: Windows-native only. externalLaunch, bundled games (Bloodborne, Horizon), Steam protocol launch,
+// the common-redist preflight and Linux Wine/umu/Proton are not ported; each lands with its milestone.
+pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_path: &str, launch_options: Option<&str>) -> Result<Value, String> {
+    let store = app.state::<Store>();
+    let key = game_key(shop, object_id);
+    let parsed = parse_executable_path(executable_path);
+    if executable_path.is_empty() || !Path::new(executable_path).exists() || !Path::new(&parsed).exists() {
+        app.emit("on-game-executable-not-found", [shop, object_id]).map_err(|e| e.to_string())?;
+        return Ok(Value::Null);
+    }
+    let game = store.get("games", &key)?;
+    if !game.is_null() {
+        let mut game = with_executable_path(game, Some(&parsed));
+        game["launchOptions"] = json!(launch_options);
+        store.put("games", &key, &game)?;
+    }
+
+    app.state::<LauncherStatuses>().clear(&key);
+    open_launcher_window(app, shop, object_id)?;
+    tokio::time::sleep(std::time::Duration::from_millis(LAUNCH_DELAY_MS)).await;
+
+    let launch = resolve_launch_command(&parsed, launch_options);
+    let cwd = Path::new(&parsed).parent().unwrap_or(Path::new("."));
+    if launch.command == parsed && launch.args.is_empty() && launch.env.is_empty() {
+        // shell.openPath: lets Windows pick the handler and UAC prompt, as Electron did.
+        app.opener().open_path(&parsed, None::<&str>).map_err(|e| e.to_string())?;
+    } else if let Err(error) = spawn_detached(&launch, cwd) {
+        eprintln!("[launch] failed to launch {key}: {error}");
+    }
+    Ok(Value::Null)
+}
+
+fn path_key(path: &str) -> String {
+    path.replace('/', "\\").to_lowercase()
+}
+
+/// `closeGame`: kills the processes running the game's exe or tracking exes.
+// shortcut: no emulator sessions or Linux process matching yet.
+pub fn close_game(store: &Store, shop: &str, object_id: &str) -> Result<Value, String> {
+    let game = store.get("games", &game_key(shop, object_id))?;
+    if game.is_null() {
+        return Ok(Value::Null);
+    }
+    let mut targets: Vec<String> = game["trackingExecutablePaths"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|p| !p.is_empty()).map(path_key).collect();
+    if let Some(exe) = game["executablePath"].as_str().filter(|e| !is_batch_file(e)) {
+        targets.push(path_key(exe));
+    }
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always));
+    for process in system.processes().values() {
+        if process.exe().is_some_and(|exe| targets.contains(&path_key(&exe.to_string_lossy()))) && !process.kill() {
+            eprintln!("[launch] could not kill pid {}", process.pid());
+        }
+    }
+    Ok(Value::Null)
+}
+
+/// The "launching game" splash: hidden until its page calls showGameLauncherWindow.
+pub fn open_launcher_window(app: &AppHandle, shop: &str, object_id: &str) -> Result<(), String> {
+    if let Some(existing) = app.get_webview_window(LAUNCHER_LABEL) {
+        let _ = existing.destroy();
+    }
+    let query = url::form_urlencoded::Serializer::new(String::new()).append_pair("shop", shop).append_pair("objectId", object_id).finish();
+    WebviewWindowBuilder::new(app, LAUNCHER_LABEL, WebviewUrl::App(format!("tauri.html#/game-launcher?{query}").into()))
+        .title("Chimaera")
+        .inner_size(550.0, 320.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .decorations(false)
+        .center()
+        .visible(false)
+        .background_color(tauri::webview::Color(0x0c, 0x0c, 0x0c, 0xff))
+        .initialization_script(crate::process_script())
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+pub fn close_launcher_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(LAUNCHER_LABEL) {
+        let _ = window.close();
+    }
+}
+
+/// `getImageDataUrl`: a remote cover as a data: URL, so the launcher can read its pixels for the
+/// accent colour without a tainted canvas. Null for non-http(s) URLs or a failed fetch.
+pub async fn image_data_url(url: &str) -> Value {
+    use base64::Engine;
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Value::Null;
+    }
+    let Ok(response) = reqwest::get(url).await else { return Value::Null };
+    if !response.status().is_success() {
+        return Value::Null;
+    }
+    let content_type = response.headers().get("content-type").and_then(|v| v.to_str().ok()).and_then(|v| v.split(';').next()).map(str::trim).map(String::from);
+    let Ok(bytes) = response.bytes().await else { return Value::Null };
+    let extension = url::Url::parse(url).ok().and_then(|u| u.path().rsplit_once('.').map(|(_, e)| e.to_lowercase())).unwrap_or_default();
+    let by_extension = match extension.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "avif" => "image/avif",
+        "ico" => "image/x-icon",
+        _ => "image/png",
+    };
+    let mime = content_type.filter(|t| t.starts_with("image/")).unwrap_or_else(|| by_extension.into());
+    json!(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splits_like_string_argv() {
+        assert_eq!(split_args(r#"-w  "two words" --x="a b" 'q'"#), ["-w", "two words", r#"--x="a b""#, "q"]);
+        assert!(split_args("").is_empty());
+    }
+
+    #[test]
+    fn resolves_launch_commands() {
+        let cmd = |c: &str, a: &[&str], e: &[(&str, &str)]| LaunchCommand {
+            command: c.into(),
+            args: a.iter().map(|s| s.to_string()).collect(),
+            env: e.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        };
+        assert_eq!(resolve_launch_command("g.exe", None), cmd("g.exe", &[], &[]));
+        assert_eq!(resolve_launch_command("g.exe", Some("-dx12 -w")), cmd("g.exe", &["-dx12", "-w"], &[]));
+        assert_eq!(resolve_launch_command("g.exe", Some("A=1 B_2=x %command% -q")), cmd("g.exe", &["-q"], &[("A", "1"), ("B_2", "x")]));
+        assert_eq!(resolve_launch_command("g.exe", Some("run.exe %command%")), cmd("run.exe", &["g.exe"], &[]));
+        assert_eq!(resolve_launch_command("g.exe", Some("A=1 %command%")), cmd("g.exe", &[], &[("A", "1")]));
+    }
+
+    #[test]
+    fn quotes_batch_commands() {
+        assert!(is_batch_file("C:\\x\\Start.CMD"));
+        assert_eq!(batch_command_line("C:\\a b\\s.bat", &["say \"hi\"".into()]), r#""C:\a b\s.bat" "say ""hi""""#);
+    }
+}

@@ -6,14 +6,25 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
-use crate::{hydra_api, library};
+use crate::watcher::Sessions;
+use crate::{games, hydra_api, launch, library};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
 
 fn arg_str(args: &[Value], index: usize) -> Option<&str> {
     args.get(index).and_then(Value::as_str)
+}
+
+/// Most library channels start with (shop, objectId).
+fn shop(args: &[Value]) -> &str {
+    arg_str(args, 0).unwrap_or_default()
+}
+
+fn object_id(args: &[Value]) -> &str {
+    arg_str(args, 1).unwrap_or_default()
 }
 
 pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, args: &[Value]) -> Result<Value, String> {
@@ -93,8 +104,74 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         // Electron merges /profile/games from Hydra, which local mode blocks, so it fails there too.
         "refreshLibraryAssets" => Err("library/refresh-failed".into()),
         "getDownloadLayoutState" => library::download_layout_state(&app.state::<Store>()),
-        // No process watcher yet (F2): nothing is tracked as running.
-        "getGamesRunning" => Ok(json!([])),
+        "getGamesRunning" => Ok(app.state::<Sessions>().running()),
+        "getGameByObjectId" => games::get_by_object_id(&app.state::<Store>(), shop(args), object_id(args)),
+        "addGameToLibrary" => {
+            let (title, platform) = (arg_str(args, 2).unwrap_or_default(), arg_str(args, 3));
+            games::add_to_library(&app.state::<Store>(), shop(args), object_id(args), title, platform).map(|_| Value::Null)
+        }
+        "removeGameFromLibrary" => games::remove_from_library(&app.state::<Store>(), shop(args), object_id(args)).map(|_| Value::Null),
+        "removeGame" => app.state::<Store>().del("downloads", &games::game_key(shop(args), object_id(args))).map(|_| Value::Null),
+        "addGameToFavorites" => games::set_favorite(&app.state::<Store>(), shop(args), object_id(args), true).map(|_| Value::Null),
+        "removeGameFromFavorites" => games::set_favorite(&app.state::<Store>(), shop(args), object_id(args), false).map(|_| Value::Null),
+        "toggleGamePin" => {
+            let pin = args.get(2).and_then(Value::as_bool).unwrap_or(false);
+            games::set_pin(&app.state::<Store>(), shop(args), object_id(args), pin).map(|_| Value::Null)
+        }
+        "updateLaunchOptions" => games::set_launch_options(&app.state::<Store>(), shop(args), object_id(args), arg_str(args, 2)).map(|_| Value::Null),
+        "setGameVisibility" => {
+            let (field, value) = (arg_str(args, 2).unwrap_or_default(), args.get(3).and_then(Value::as_bool).unwrap_or(false));
+            games::set_visibility(&app.state::<Store>(), shop(args), object_id(args), field, value)
+        }
+        "changeGamePlayTime" => {
+            let seconds = args.get(2).and_then(Value::as_f64).unwrap_or(0.0);
+            games::change_playtime(&app.state::<Store>(), shop(args), object_id(args), seconds).map(|_| Value::Null)
+        }
+        "resetGamePlayTime" => games::reset_playtime(&app.state::<Store>(), shop(args), object_id(args)).map(|_| Value::Null),
+        "updateExecutablePath" => {
+            let path = arg_str(args, 2).map(launch::parse_executable_path);
+            games::set_executable_path(&app.state::<Store>(), shop(args), object_id(args), path.as_deref()).map(|_| Value::Null)
+        }
+        "updateTrackingExecutablePaths" => {
+            let paths = args.get(2).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(launch::parse_executable_path).collect();
+            games::set_tracking_paths(&app.state::<Store>(), shop(args), object_id(args), paths).map(|_| Value::Null)
+        }
+        "verifyExecutablePathInUse" => games::game_using_executable(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default()),
+        "openGameExecutablePath" => {
+            let game = app.state::<Store>().get("games", &games::game_key(shop(args), object_id(args)))?;
+            if let Some(path) = game["executablePath"].as_str() {
+                app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())?;
+            }
+            Ok(Value::Null)
+        }
+        "getPlaySessions" => games::play_sessions(&app.state::<Store>(), shop(args), object_id(args)),
+        "getPlaytimeSummary" => games::playtime_summary(&app.state::<Store>()),
+        "openGame" => {
+            let (executable_path, launch_options) = (arg_str(args, 2).unwrap_or_default(), arg_str(args, 3));
+            launch::open_game(app, shop(args), object_id(args), executable_path, launch_options).await
+        }
+        "closeGame" => launch::close_game(&app.state::<Store>(), shop(args), object_id(args)),
+        "getGameLauncherStatuses" => Ok(app.state::<LauncherStatuses>().get(&games::game_key(shop(args), object_id(args)))),
+        "showGameLauncherWindow" => {
+            if let Some(launcher) = app.get_webview_window(launch::LAUNCHER_LABEL) {
+                launcher.show().map_err(|e| e.to_string())?;
+            }
+            Ok(Value::Null)
+        }
+        "closeGameLauncherWindow" => {
+            launch::close_launcher_window(app);
+            Ok(Value::Null)
+        }
+        "openMainWindow" => {
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.show();
+                let _ = main.unminimize();
+                main.set_focus().map_err(|e| e.to_string())?;
+            }
+            Ok(Value::Null)
+        }
+        "isMainWindowOpen" => Ok(json!(app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false)))),
+        "getImageDataUrl" => Ok(launch::image_data_url(arg_str(args, 0).unwrap_or_default()).await),
         // null = "no still poster", so the renderer shows the original cover.
         // shortcut: animated covers play instead of a still first frame until the local: protocol (F1) can serve built posters.
         "getCoverPoster" => Ok(Value::Null),
