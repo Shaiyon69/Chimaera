@@ -4,6 +4,7 @@
 
 mod electron_import;
 mod hydra_api;
+mod image_cache;
 mod ipc;
 mod library;
 mod store;
@@ -45,9 +46,22 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![ipc])
+        .register_asynchronous_uri_scheme_protocol("cached-image", |ctx, request, responder| {
+            let dir = ctx.app_handle().path().app_data_dir().map(|dir| image_cache::cache_dir(&dir));
+            let path = request.uri().path().to_string();
+            tauri::async_runtime::spawn(async move {
+                let response = match dir {
+                    Ok(dir) => image_cache::handle(&dir, &path).await,
+                    Err(_) => image_cache::status(tauri::http::StatusCode::INTERNAL_SERVER_ERROR),
+                };
+                responder.respond(response);
+            });
+        })
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
+            let image_dir = image_cache::cache_dir(&data_dir);
+            std::thread::spawn(move || image_cache::prune(&image_dir));
             let store = store::Store::open(&data_dir.join("chimaera.db"))?;
             let user_data = electron_import::electron_user_data(&app.path().config_dir()?);
             let scratch = app.path().app_cache_dir()?.join("electron-import");

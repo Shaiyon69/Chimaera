@@ -494,10 +494,12 @@ name = "chimaera"
 version = "1.0.3"
 dependencies = [
  "fastrand",
+ "percent-encoding",
  "reqwest 0.12.28",
  "rusqlite",
  "rusty-leveldb",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",

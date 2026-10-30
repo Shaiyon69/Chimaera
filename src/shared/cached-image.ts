@@ -7,6 +7,15 @@ export const CACHED_IMAGE_SCHEME = "cached-image";
  */
 export const cachedImage = <T extends string | null | undefined>(url: T): T => {
   if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return url;
+  // Tauri serves custom schemes at a per-platform URL (http://cached-image.localhost/ on Windows).
+  const tauri = (
+    globalThis as {
+      __TAURI_INTERNALS__?: {
+        convertFileSrc: (path: string, protocol: string) => string;
+      };
+    }
+  ).__TAURI_INTERNALS__;
+  if (tauri) return tauri.convertFileSrc(url, CACHED_IMAGE_SCHEME) as T;
   return `${CACHED_IMAGE_SCHEME}:${encodeURIComponent(url)}` as T;
 };
 
