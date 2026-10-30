@@ -28,11 +28,11 @@ import { DiscSelectionModal } from "../modals/disc-selection-modal";
 
 import "./hero-panel-actions.scss";
 import { useEffect } from "react";
-import { isBloodborne } from "@shared";
+import { findBundledGame } from "@shared";
 import {
-  BLOODBORNE_CONFIGURED_EVENT,
-  BLOODBORNE_SETUP_EVENT,
-} from "@renderer/components/bloodborne-setup-modal/events";
+  BUNDLED_GAME_CONFIGURED_EVENT,
+  openBundledGameSetup,
+} from "@renderer/components/bundled-game-setup-modal/events";
 
 export function HeroPanelActions() {
   const [toggleLibraryGameDisabled, setToggleLibraryGameDisabled] =
@@ -142,20 +142,21 @@ export function HeroPanelActions() {
     };
   }, [updateLibrary, updateGame]);
 
-  const bloodborne = isBloodborne(gameTitle);
-  const [bloodborneConfigured, setBloodborneConfigured] = useState(true);
+  const bundled = findBundledGame({ shop, objectId, title: gameTitle });
+  const bundledId = bundled?.objectId;
+  const [bundledConfigured, setBundledConfigured] = useState(true);
 
   useEffect(() => {
-    if (!bloodborne) return;
+    if (!bundledId) return;
     const refresh = () =>
       window.electron
-        .getBloodborneSetup()
-        .then((setup) => setBloodborneConfigured(setup.portInstalled));
+        .getBundledGameSetup(bundledId)
+        .then((setup) => setBundledConfigured(setup.installed));
     void refresh();
-    window.addEventListener(BLOODBORNE_CONFIGURED_EVENT, refresh);
+    window.addEventListener(BUNDLED_GAME_CONFIGURED_EVENT, refresh);
     return () =>
-      window.removeEventListener(BLOODBORNE_CONFIGURED_EVENT, refresh);
-  }, [bloodborne]);
+      window.removeEventListener(BUNDLED_GAME_CONFIGURED_EVENT, refresh);
+  }, [bundledId]);
 
   const addGameToLibrary = async () => {
     setToggleLibraryGameDisabled(true);
@@ -293,8 +294,8 @@ export function HeroPanelActions() {
       return;
     }
 
-    // Bloodborne starts through the built-in port launcher, so no exe is picked.
-    if (game.executablePath || isBloodborne(game.title)) {
+    // Bundled games start through their own launcher, so no exe is picked.
+    if (game.executablePath || findBundledGame(game)) {
       window.electron.openGame(
         game.shop,
         game.objectId,
@@ -332,19 +333,19 @@ export function HeroPanelActions() {
     </Button>
   );
 
-  // Bloodborne's "download" is its one-time setup: the port ships with Chimaera.
-  const bloodborneInstallButton = (
+  // A bundled game's "download" is its one-time setup: Chimaera fetches its launcher.
+  const bundledInstallButton = (
     <Button
       theme="outline"
       disabled={toggleLibraryGameDisabled || deleting}
       onClick={async () => {
         if (!game) await addGameToLibrary();
-        window.dispatchEvent(new Event(BLOODBORNE_SETUP_EVENT));
+        if (bundledId) openBundledGameSetup(bundledId);
       }}
       className="hero-panel-actions__action"
     >
       <DownloadIcon />
-      {t("bloodborne_install")}
+      {t("bundled_game_install")}
     </Button>
   );
 
@@ -393,13 +394,9 @@ export function HeroPanelActions() {
     const isPlayableClassics =
       game?.shop === "launchbox" && (game?.discs?.length ?? 0) > 0;
 
-    if (bloodborne && !bloodborneConfigured) return bloodborneInstallButton;
+    if (bundled && !bundledConfigured) return bundledInstallButton;
 
-    if (
-      game?.executablePath ||
-      isPlayableClassics ||
-      isBloodborne(game?.title)
-    ) {
+    if (game?.executablePath || isPlayableClassics || findBundledGame(game)) {
       return (
         <Button
           onClick={openGame}
@@ -439,14 +436,16 @@ export function HeroPanelActions() {
     return (
       <div className="hero-panel-actions__container">
         {gameActionButton()}
-        {bloodborne && bloodborneConfigured && !isGameRunning && (
+        {bundled?.launcherButton && bundledConfigured && !isGameRunning && (
           <Button
-            onClick={() => window.electron.openBloodborneLauncher()}
+            onClick={() =>
+              window.electron.openBundledGameLauncher(bundled.objectId)
+            }
             theme="outline"
             disabled={deleting}
             className="hero-panel-actions__action"
           >
-            {t("bloodborne_launcher")}
+            {t("bundled_game_launcher")}
           </Button>
         )}
         <div className="hero-panel-actions__separator" />
@@ -513,11 +512,11 @@ export function HeroPanelActions() {
     );
   }
 
-  if (bloodborne) {
+  if (bundled) {
     return (
       <>
         {addGameToLibraryButton}
-        {bloodborneInstallButton}
+        {bundledInstallButton}
       </>
     );
   }

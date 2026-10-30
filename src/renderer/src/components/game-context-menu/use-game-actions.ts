@@ -12,7 +12,7 @@ import {
   handleClassicsLaunchError,
 } from "@renderer/helpers";
 import { logger } from "@renderer/logger";
-import { isBloodborne } from "@shared";
+import { findBundledGame } from "@shared";
 import { useGameOptionsModal } from "@renderer/context/game-options-modal/game-options-modal.context";
 import type { GameSettingsCategoryId } from "@renderer/pages/game-details/modals/game-options-modal/types";
 import type { GameContextMenuGame } from "./game-context-menu.types";
@@ -44,7 +44,7 @@ export function useGameActions(game: GameContextMenuGame) {
   const hasClassicsDiscs = (game.discs?.length ?? 0) > 0;
   const canPlay =
     Boolean(game.executablePath) ||
-    isBloodborne(game.title) ||
+    Boolean(findBundledGame(game)) ||
     (isClassics && hasClassicsDiscs);
   const isDeleting = isGameDeleting(game.id ?? "");
   const isGameDownloading =

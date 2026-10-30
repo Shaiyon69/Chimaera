@@ -291,8 +291,8 @@
     "view_on_protondb": "View on ProtonDB",
     "accuracy": "{{accuracy}}% accuracy",
     "add_to_library": "Add to library",
-    "bloodborne_install": "Install",
-    "bloodborne_launcher": "Launcher",
+    "bundled_game_install": "Install",
+    "bundled_game_launcher": "Launcher",
     "already_in_library": "Already in library",
     "remove_from_library": "Remove from library",
     "no_downloads": "No downloads available",
@@ -832,8 +832,8 @@
     "save_backups_drive_download": "Download",
     "save_backups_drive_downloaded": "Downloaded. Restore it from the list above.",
     "save_backups_drive_empty": "No backups on Drive yet.",
-    "bloodborne_launch_failed_title": "Bloodborne could not start",
-    "bloodborne_launch_failed_description": "{{problems}}",
+    "bundled_game_launch_failed_title": "{{title}} could not start",
+    "bundled_game_launch_failed_description": "{{problems}}",
     "executable_not_found_title": "Executable not found",
     "executable_not_found_description": "The executable at the selected path was not found. Select another one in the Options > Locations tab.",
     "executable_not_found_big_picture_description": "The executable at the selected path was not found. Select another one in the Options > Launch tab.",
@@ -1927,10 +1927,12 @@
   "modal": {
     "close": "Close button"
   },
-  "bloodborne_setup": {
-    "title": "Bloodborne setup",
-    "port_missing": "Bloodborne runs on Lantern Engine by Awaken, which is not installed yet. Download it once to continue.",
-    "download_port": "Download Lantern Engine",
+  "bundled_game_setup": {
+    "title": "{{title}} setup",
+    "port_missing_bloodborne": "Bloodborne runs on Lantern Engine by Awaken, which is not installed yet. Download it once to continue.",
+    "port_missing_horizon": "Horizon runs through its own launcher, which is not installed yet. Download it once to continue. You need a Microsoft account that owns Minecraft: Java Edition.",
+    "download_port_bloodborne": "Download Lantern Engine",
+    "download_port_horizon": "Download Horizon launcher",
     "port_downloading": "Downloading… {{percent}}%",
     "port_extracting": "Extracting… {{percent}}%",
     "port_download_failed": "Download failed: {{message}}",

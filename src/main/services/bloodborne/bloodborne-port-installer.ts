@@ -1,12 +1,8 @@
 import { app } from "electron";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { logger } from "../logger";
-import { SevenZip } from "../7zip";
+import { installGithubZip } from "../github-zip-install";
 import { WindowManager } from "../window-manager";
 import { isPortDir, pickPortRelease } from "./bloodborne-core";
 
@@ -104,7 +100,8 @@ const migrateLegacyData = async (port: string) => {
 let installing: Promise<void> | null = null;
 
 const sendProgress = (phase: "downloading" | "extracting", percent: number) =>
-  WindowManager.sendToAppWindows("on-bloodborne-port-progress", {
+  WindowManager.sendToAppWindows("on-bundled-game-progress", {
+    id: "bloodborne",
     phase,
     percent,
   });
@@ -124,88 +121,20 @@ const fetchLatestRelease = async () => {
   return release;
 };
 
-const install = async () => {
-  const release = await fetchLatestRelease();
-  const root = app.getPath("userData");
-  const zipPath = path.join(root, "lantern-engine.zip.part");
-  const extractDir = path.join(root, "lantern-engine.tmp");
-
-  try {
-    const response = await fetch(release.url);
-    if (!response.ok || !response.body) {
-      throw new Error(
-        `Lantern Engine download failed: HTTP ${response.status}`
-      );
-    }
-
-    const total = Number(response.headers.get("content-length")) || 0;
-    const hash = createHash("sha256");
-    let received = 0;
-    let lastPercent = -1;
-
-    await pipeline(
-      Readable.fromWeb(response.body as WebReadableStream),
-      new Transform({
-        transform(chunk: Buffer, _encoding, callback) {
-          hash.update(chunk);
-          received += chunk.length;
-          const percent = total ? Math.floor((received / total) * 100) : 0;
-          if (percent !== lastPercent) {
-            lastPercent = percent;
-            sendProgress("downloading", percent);
-          }
-          callback(null, chunk);
-        },
-      }),
-      fs.createWriteStream(zipPath)
-    );
-
-    if (hash.digest("hex") !== release.sha256) {
-      throw new Error(
-        "Lantern Engine download is corrupted (checksum mismatch)"
-      );
-    }
-
-    sendProgress("extracting", 0);
-    await fs.promises.rm(extractDir, { recursive: true, force: true });
-    await SevenZip.extractFile(
-      { filePath: zipPath, outputPath: extractDir },
-      ({ percent }) => sendProgress("extracting", Math.floor(percent))
-    );
-
-    // The release zip wraps everything in one folder.
-    const inner = fs
-      .readdirSync(extractDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory());
-    const portRoot =
-      !isPortDir(extractDir) && inner.length === 1
-        ? path.join(extractDir, inner[0].name)
-        : extractDir;
-
-    if (!isPortDir(portRoot)) {
-      throw new Error("Archive is missing Lantern Engine.exe or its engine");
-    }
-
-    // Swap in last so a failed attempt never leaves a half-installed package. Windows refuses
-    // the first rename while the game runs, which aborts and leaves the old one untouched.
-    const dir = downloadedPortDir();
-    const old = `${dir}.old`;
-    await fs.promises.rm(old, { recursive: true, force: true });
-    if (fs.existsSync(dir)) await fs.promises.rename(dir, old);
-    try {
-      await fs.promises.rename(portRoot, dir);
-    } catch (error) {
-      if (fs.existsSync(old)) await fs.promises.rename(old, dir);
-      throw error;
-    }
-    if (fs.existsSync(old)) await carryUserData(old, dir);
-    await migrateLegacyData(dir);
-    await fs.promises.rm(old, { recursive: true, force: true });
-  } finally {
-    await fs.promises.rm(zipPath, { force: true });
-    await fs.promises.rm(extractDir, { recursive: true, force: true });
-  }
-};
+const install = async () =>
+  installGithubZip({
+    release: await fetchLatestRelease(),
+    label: "Lantern Engine",
+    tempName: "lantern-engine",
+    targetDir: downloadedPortDir(),
+    isValidDir: isPortDir,
+    missingMessage: "Archive is missing Lantern Engine.exe or its engine",
+    onProgress: sendProgress,
+    afterSwap: async (dir, old) => {
+      if (old) await carryUserData(old, dir);
+      await migrateLegacyData(dir);
+    },
+  });
 
 export const downloadBloodbornePort = () => {
   installing ??= install().finally(() => {

@@ -33,13 +33,19 @@ const launcherExe = () => path.join(downloadedPortDir(), LAUNCHER_EXE);
 /** Starts the game with the launcher's saved settings and waits for it to end. */
 const playExe = () => path.join(downloadedPortDir(), "Bloodborne.exe");
 
+export const BLOODBORNE_OBJECT_ID = "bloodborne";
+
 export const getBloodborneSetup = () => ({
   portInstalled: isPortDir(downloadedPortDir()),
 });
 
 const fail = (problems: string[]) => {
   logger.error("Bloodborne launch failed", { problems });
-  WindowManager.sendToAppWindows("on-bloodborne-launch-error", problems);
+  WindowManager.sendToAppWindows(
+    "on-bundled-game-launch-error",
+    BLOODBORNE_OBJECT_ID,
+    problems
+  );
   return null;
 };
 
@@ -53,8 +59,6 @@ const art = (name: string) => {
   const file = path.join(artDir(), name);
   return fs.existsSync(file) ? `local:${file}` : null;
 };
-
-export const BLOODBORNE_OBJECT_ID = "bloodborne";
 
 export const bloodborneShopAssets = (): ShopAssets => ({
   objectId: BLOODBORNE_OBJECT_ID,
@@ -293,9 +297,8 @@ export const launchBloodborne = async (shop: GameShop, objectId: string) => {
   // The setup modal offers the download when Lantern Engine is missing.
   if (!getBloodborneSetup().portInstalled) {
     WindowManager.sendToAppWindows(
-      "on-bloodborne-setup-required",
-      shop,
-      objectId
+      "on-bundled-game-setup-required",
+      BLOODBORNE_OBJECT_ID
     );
     return null;
   }

@@ -26,6 +26,7 @@ import { debounce } from "lodash-es";
 import { useTranslation } from "react-i18next";
 import Skeleton, { SkeletonTheme } from "react-loading-skeleton";
 import cn from "classnames";
+import { BUNDLED_GAMES } from "@shared";
 import { CatalogueModeToggle } from "./catalogue-mode-toggle";
 import { getClassicsPlatformGroup } from "./classics-platform-group";
 import { FilterItem } from "./filter-item";
@@ -138,28 +139,31 @@ export default function Catalogue() {
   }, [filters, deferredTitleFilter]);
 
   const [isLoading, setIsLoading] = useState(true);
-  const [bloodborne, setBloodborne] = useState<CatalogueSearchResult | null>(
-    null
-  );
+  const [bundledCards, setBundledCards] = useState<CatalogueSearchResult[]>([]);
 
-  // Bloodborne is not in the Hydra catalogue, so it is injected locally.
+  // Bundled games are not in the Hydra catalogue, so they are injected locally.
   useEffect(() => {
     if (window.electron.platform !== "win32") return;
-    window.electron.getGameAssets("bloodborne", "custom").then((assets) => {
-      if (!assets) return;
-      setBloodborne({
-        id: "custom:bloodborne",
-        objectId: "bloodborne",
-        title: "Bloodborne",
-        shop: "custom",
-        genres: ["Action", "RPG"],
-        releaseYear: 2015,
-        developers: ["FromSoftware"],
-        publishers: ["Sony Interactive Entertainment"],
-        libraryImageUrl: assets.libraryImageUrl ?? assets.coverImageUrl,
-        downloadSources: [],
-      });
-    });
+    Promise.all(
+      BUNDLED_GAMES.map(async (game) => {
+        const assets = await window.electron.getGameAssets(
+          game.objectId,
+          "custom"
+        );
+        if (!assets) return [];
+        return [
+          {
+            id: `custom:${game.objectId}`,
+            objectId: game.objectId,
+            title: game.title,
+            shop: "custom" as const,
+            ...game.card,
+            libraryImageUrl: assets.libraryImageUrl ?? assets.coverImageUrl,
+            downloadSources: [],
+          },
+        ];
+      })
+    ).then((cards) => setBundledCards(cards.flat()));
   }, []);
   const [isFetching, setIsFetching] = useState(false);
 
@@ -173,12 +177,15 @@ export default function Catalogue() {
       !filters.developers.length &&
       !filters.publishers.length &&
       !filters.downloadSourceFingerprints.length;
-    const titleMatches = !filters.title || /blood/i.test(filters.title);
+    if (mode !== "modern" || page !== 1 || !unfiltered) return results;
 
-    if (!bloodborne || mode !== "modern" || page !== 1) return results;
-    if (!unfiltered || !titleMatches) return results;
-    return [bloodborne, ...results.filter((r) => r.id !== bloodborne.id)];
-  }, [bloodborne, results, filters, mode, page]);
+    const title = filters.title.trim().toLowerCase();
+    const cards = bundledCards.filter(
+      (card) => !title || card.title.toLowerCase().includes(title)
+    );
+    const ids = new Set(cards.map((card) => card.id));
+    return [...cards, ...results.filter((r) => !ids.has(r.id))];
+  }, [bundledCards, results, filters, mode, page]);
 
   const [itemsCount, setItemsCount] = useState(0);
 

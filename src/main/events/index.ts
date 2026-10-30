@@ -10,7 +10,7 @@ import {
 
 import "./autoupdater";
 import "./big-picture";
-import "./bloodborne";
+import "./bundled-games";
 import "./catalogue";
 import "./connectivity";
 import "./download-sources";

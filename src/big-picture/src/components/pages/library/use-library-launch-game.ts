@@ -1,5 +1,5 @@
 import type { LibraryGame } from "@types";
-import { isBloodborne } from "@shared";
+import { findBundledGame } from "@shared";
 import { useCallback } from "react";
 import { getClassicsLaunchErrorCode } from "@renderer/helpers";
 import { IS_DESKTOP } from "../../../constants";
@@ -66,7 +66,7 @@ export function useLibraryLaunchGame(
         return;
       }
 
-      if (!game.executablePath && !isBloodborne(game.title)) {
+      if (!game.executablePath && !findBundledGame(game)) {
         onMissingExecutable(game);
         return;
       }

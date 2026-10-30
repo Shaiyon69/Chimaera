@@ -43,7 +43,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ArchiveDeletionModal } from "./pages/downloads/archive-deletion-error-modal";
-import { BloodborneSetupModal } from "./components/bloodborne-setup-modal/bloodborne-setup-modal";
+import { BundledGameSetupModal } from "./components/bundled-game-setup-modal/bundled-game-setup-modal";
+import { BUNDLED_GAMES } from "@shared";
 import { ClassicsScanModal } from "./pages/settings/emulation/classics-scan-modal";
 import { RetroArchScanModal } from "./pages/settings/emulation/retroarch-scan-modal";
 import Home from "./pages/home/home";
@@ -541,10 +542,15 @@ export function App() {
           t("executable_not_found_description", { ns: "game_details" })
         );
       }),
-      window.electron.onBloodborneLaunchError((problems) => {
+      window.electron.onBundledGameLaunchError((objectId, problems) => {
         showErrorToast(
-          t("bloodborne_launch_failed_title", { ns: "game_details" }),
-          t("bloodborne_launch_failed_description", {
+          t("bundled_game_launch_failed_title", {
+            ns: "game_details",
+            title:
+              BUNDLED_GAMES.find((g) => g.objectId === objectId)?.title ??
+              objectId,
+          }),
+          t("bundled_game_launch_failed_description", {
             ns: "game_details",
             problems: problems.join("; "),
           })
@@ -704,7 +710,7 @@ export function App() {
         duration={toast.duration}
       />
 
-      <BloodborneSetupModal />
+      <BundledGameSetupModal />
 
       <ArchiveDeletionModal
         visible={showArchiveDeletionModal}

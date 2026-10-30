@@ -7,25 +7,24 @@ import { AchievementMemoryStore } from "@main/services/achievements/achievement-
 import { AchievementSouvenirStore } from "@main/services/achievements/achievement-souvenir-store";
 import { fetchRemoteUserGameAchievements } from "@main/services/achievements/get-achievement-souvenirs";
 import { mergeUnlockedAchievementLists } from "@main/services/achievements/merge-unlocked-achievements";
-import {
-  BLOODBORNE_OBJECT_ID,
-  bloodborneAchievements,
-} from "@main/services/bloodborne/bloodborne";
+import { bundledGameService } from "@main/services/bundled-games";
 
 export const getUnlockedAchievements = async (
   objectId: string,
   shop: GameShop,
   useCachedData: boolean
 ): Promise<UserAchievement[]> => {
-  // Unlocks come from the port's stdout; skip remote sync.
-  if (shop === "custom" && objectId === BLOODBORNE_OBJECT_ID) {
+  // Bundled games log unlocks locally; skip remote sync.
+  const bundledAchievements =
+    shop === "custom" ? bundledGameService(objectId)?.achievements : undefined;
+  if (bundledAchievements) {
     const unlocks = new Map(
       (
         AchievementMemoryStore.get(shop, objectId)?.unlockedAchievements ?? []
       ).map((u) => [u.name.toUpperCase(), u.unlockTime])
     );
 
-    return bloodborneAchievements().map((achievement) => ({
+    return bundledAchievements().map((achievement) => ({
       ...achievement,
       unlocked: unlocks.has(achievement.name),
       unlockTime: unlocks.get(achievement.name) ?? null,

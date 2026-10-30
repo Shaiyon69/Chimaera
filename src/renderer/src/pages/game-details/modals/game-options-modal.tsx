@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { isBloodborne } from "@shared";
+import { findBundledGame } from "@shared";
 import { Modal } from "@renderer/components";
 import {
   formatBytes,
@@ -766,7 +766,7 @@ export function GameOptionsModal({
   const showOptiscalerSettings =
     !!game.executablePath &&
     globalThis.window.electron.platform === "win32" &&
-    !isBloodborne(game.title); // the port is Vulkan with built-in FSR4
+    findBundledGame(game)?.optiscaler !== false; // Lantern is Vulkan with built-in FSR4
   const showDownloadSettings = game.shop !== "custom";
   const shouldShowWinePrefixConfiguration =
     globalThis.window.electron.platform === "linux";

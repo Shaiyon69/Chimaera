@@ -1,3 +1,4 @@
+import { findBundledGame } from "@shared";
 import { lazy, Suspense, useContext, useEffect, useState } from "react";
 import type {
   HowLongToBeatCategory,
@@ -131,9 +132,9 @@ export function Sidebar() {
   const { formatDateTime } = useDate();
   const { numberFormatter } = useFormat();
   const achievementsCount = achievements?.length ?? 0;
-  const isBloodborne = shop === "custom" && objectId === "bloodborne";
+  const localAchievements = !!findBundledGame({ shop, objectId })?.achievements;
   const shouldRenderAchievementsSection =
-    ((!!userDetails || isBloodborne) && achievementsCount > 0) ||
+    ((!!userDetails || localAchievements) && achievementsCount > 0) ||
     (shop === "launchbox" &&
       !!shopDetails?.retroAchievementsGameId &&
       !userPreferences?.retroAchievementsWebApiKey);

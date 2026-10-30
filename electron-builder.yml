@@ -42,6 +42,8 @@ win:
     - from: binaries/7z.dll
     - from: resources/bloodborne
       to: bloodborne
+    - from: resources/horizon
+      to: horizon
   target:
     - nsis
     - portable

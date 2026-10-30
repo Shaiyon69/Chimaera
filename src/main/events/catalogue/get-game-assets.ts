@@ -7,10 +7,7 @@ import {
   levelKeys,
 } from "@main/level";
 import { composeAssetsWithArtwork } from "@shared";
-import {
-  BLOODBORNE_OBJECT_ID,
-  bloodborneShopAssets,
-} from "@main/services/bloodborne/bloodborne";
+import { bundledGameService } from "@main/services/bundled-games";
 
 const LOCAL_CACHE_EXPIRATION = 1000 * 60 * 60 * 8; // 8 hours
 
@@ -31,10 +28,11 @@ export const getGameAssets = async (
   options?: { forceFresh?: boolean }
 ) => {
   if (shop === "custom") {
-    if (objectId !== BLOODBORNE_OBJECT_ID) return null;
+    const bundled = bundledGameService(objectId);
+    if (!bundled) return null;
 
     // Cached so addGameToLibrary copies the art onto the library record.
-    const assets = bloodborneShopAssets();
+    const assets = bundled.shopAssets();
     await gamesShopAssetsSublevel.put(levelKeys.game(shop, objectId), {
       ...assets,
       updatedAt: Date.now(),

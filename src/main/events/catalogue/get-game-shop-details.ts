@@ -1,8 +1,4 @@
-import {
-  BLOODBORNE_OBJECT_ID,
-  bloodborneShopAssets,
-  bloodborneShopDetails,
-} from "@main/services/bloodborne/bloodborne";
+import { bundledGameService } from "@main/services/bundled-games";
 import {
   getSteamAppDetails,
   getSteamLanguage,
@@ -233,8 +229,9 @@ const getGameShopDetails = async (
   language: string
 ): Promise<ShopDetailsWithAssets | null> => {
   if (shop === "custom") {
-    if (objectId !== BLOODBORNE_OBJECT_ID) return null;
-    return { ...bloodborneShopDetails(), assets: bloodborneShopAssets() };
+    const bundled = bundledGameService(objectId);
+    if (!bundled) return null;
+    return { ...bundled.shopDetails(), assets: bundled.shopAssets() };
   }
 
   if (shop === "launchbox") {

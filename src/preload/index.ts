@@ -1026,22 +1026,30 @@ contextBridge.exposeInMainWorld("electron", {
     return () =>
       ipcRenderer.removeListener("on-game-executable-not-found", listener);
   },
-  getBloodborneSetup: () => ipcRenderer.invoke("getBloodborneSetup"),
-  openBloodborneLauncher: () => ipcRenderer.invoke("openBloodborneLauncher"),
-  downloadBloodbornePort: () => ipcRenderer.invoke("downloadBloodbornePort"),
-  onBloodbornePortProgress: (
+  getBundledGameSetup: (objectId: string) =>
+    ipcRenderer.invoke("getBundledGameSetup", objectId),
+  openBundledGameLauncher: (objectId: string) =>
+    ipcRenderer.invoke("openBundledGameLauncher", objectId),
+  downloadBundledGame: (objectId: string) =>
+    ipcRenderer.invoke("downloadBundledGame", objectId),
+  onBundledGameProgress: (
     cb: (progress: {
+      id: string;
       phase: "downloading" | "extracting";
       percent: number;
     }) => void
   ) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      progress: { phase: "downloading" | "extracting"; percent: number }
+      progress: {
+        id: string;
+        phase: "downloading" | "extracting";
+        percent: number;
+      }
     ) => cb(progress);
-    ipcRenderer.on("on-bloodborne-port-progress", listener);
+    ipcRenderer.on("on-bundled-game-progress", listener);
     return () =>
-      ipcRenderer.removeListener("on-bloodborne-port-progress", listener);
+      ipcRenderer.removeListener("on-bundled-game-progress", listener);
   },
   openHydraBackupsFolder: () => ipcRenderer.invoke("openHydraBackupsFolder"),
   importHydraBackup: () => ipcRenderer.invoke("importHydraBackup"),
@@ -1077,18 +1085,24 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("deleteDriveSaveBackup", driveFileId),
   setAutomaticCloudSync: (shop: GameShop, objectId: string, enabled: boolean) =>
     ipcRenderer.invoke("setAutomaticCloudSync", shop, objectId, enabled),
-  onBloodborneSetupRequired: (cb: () => void) => {
-    const listener = () => cb();
-    ipcRenderer.on("on-bloodborne-setup-required", listener);
+  onBundledGameSetupRequired: (cb: (objectId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, objectId: string) =>
+      cb(objectId);
+    ipcRenderer.on("on-bundled-game-setup-required", listener);
     return () =>
-      ipcRenderer.removeListener("on-bloodborne-setup-required", listener);
+      ipcRenderer.removeListener("on-bundled-game-setup-required", listener);
   },
-  onBloodborneLaunchError: (cb: (problems: string[]) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, problems: string[]) =>
-      cb(problems);
-    ipcRenderer.on("on-bloodborne-launch-error", listener);
+  onBundledGameLaunchError: (
+    cb: (objectId: string, problems: string[]) => void
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      objectId: string,
+      problems: string[]
+    ) => cb(objectId, problems);
+    ipcRenderer.on("on-bundled-game-launch-error", listener);
     return () =>
-      ipcRenderer.removeListener("on-bloodborne-launch-error", listener);
+      ipcRenderer.removeListener("on-bundled-game-launch-error", listener);
   },
   onArchiveDeletionPrompt: (cb: (archivePaths: string[]) => void) => {
     const listener = (

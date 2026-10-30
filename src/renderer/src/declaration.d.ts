@@ -123,8 +123,8 @@ declare global {
     problems: number;
   }
 
-  interface BloodborneSetup {
-    portInstalled: boolean;
+  interface BundledGameSetup {
+    installed: boolean;
   }
 }
 
@@ -886,11 +886,12 @@ declare global {
     onGameExecutableNotFound: (
       cb: (shop: GameShop, objectId: string) => void
     ) => () => Electron.IpcRenderer;
-    getBloodborneSetup: () => Promise<BloodborneSetup>;
-    openBloodborneLauncher: () => Promise<void>;
-    downloadBloodbornePort: () => Promise<void>;
-    onBloodbornePortProgress: (
+    getBundledGameSetup: (objectId: string) => Promise<BundledGameSetup>;
+    openBundledGameLauncher: (objectId: string) => Promise<void>;
+    downloadBundledGame: (objectId: string) => Promise<void>;
+    onBundledGameProgress: (
       cb: (progress: {
+        id: string;
         phase: "downloading" | "extracting";
         percent: number;
       }) => void
@@ -971,9 +972,11 @@ declare global {
       objectId: string,
       enabled: boolean
     ) => Promise<void>;
-    onBloodborneSetupRequired: (cb: () => void) => () => Electron.IpcRenderer;
-    onBloodborneLaunchError: (
-      cb: (problems: string[]) => void
+    onBundledGameSetupRequired: (
+      cb: (objectId: string) => void
+    ) => () => Electron.IpcRenderer;
+    onBundledGameLaunchError: (
+      cb: (objectId: string, problems: string[]) => void
     ) => () => Electron.IpcRenderer;
     onArchiveDeletionPrompt: (
       cb: (archivePaths: string[]) => void

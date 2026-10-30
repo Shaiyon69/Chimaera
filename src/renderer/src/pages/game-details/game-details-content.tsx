@@ -1,3 +1,4 @@
+import { findBundledGame } from "@shared";
 import {
   useContext,
   useEffect,
@@ -154,7 +155,7 @@ export function GameDetailsContent() {
 
   const heroImage = isCustomGame
     ? game?.libraryHeroImageUrl ||
-      // Bloodborne's library record can predate its bundled art.
+      // A bundled game's library record can predate its art.
       shopDetails?.assets?.libraryHeroImageUrl ||
       game?.iconUrl ||
       ""
@@ -454,7 +455,9 @@ export function GameDetailsContent() {
             )}
           </div>
 
-          {(shop !== "custom" || objectId === "bloodborne") && <Sidebar />}
+          {(shop !== "custom" || findBundledGame({ shop, objectId })) && (
+            <Sidebar />
+          )}
         </div>
       </section>
     </div>

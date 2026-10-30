@@ -1,3 +1,4 @@
+import { findBundledGame } from "@shared";
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
 
 import { setHeaderTitle } from "@renderer/features";
@@ -147,10 +148,10 @@ export function GameDetailsContextProvider({
           setIsLoading(false);
         }
 
-        // Bloodborne's local trophy list needs no Hydra account.
+        // A bundled game's local trophy list needs no Hydra account.
         if (
           (userDetails && shop !== "custom") ||
-          (shop === "custom" && objectId === "bloodborne")
+          findBundledGame({ shop, objectId })?.achievements
         ) {
           const achievementUpdateCount = achievementUpdateCountRef.current;
           const isStaleAchievementResult = () =>

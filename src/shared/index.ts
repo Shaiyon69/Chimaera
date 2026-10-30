@@ -351,6 +351,6 @@ export const generateAchievementCustomNotificationTest = (
   };
 };
 export * from "./emulator-systems";
-export * from "./bloodborne";
+export * from "./bundled-games";
 export * from "./cached-image";
 export * from "./chimaera-icon";
