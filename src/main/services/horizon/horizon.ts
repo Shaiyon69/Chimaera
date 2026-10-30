@@ -123,6 +123,12 @@ const art = (name: string) => {
 
 const TITLE = "Minecraft (Horizon)";
 
+// In-game shots from playhorizon.dev: village, survival, night, nether, underwater, launcher, settings.
+const SCREENSHOT_FILES = Array.from(
+  { length: 7 },
+  (_, i) => `screenshot-0${i + 1}.jpg`
+);
+
 export const horizonShopAssets = (): ShopAssets => ({
   objectId: HORIZON_OBJECT_ID,
   shop: "custom",
@@ -157,7 +163,10 @@ export const horizonShopDetails = (): ShopDetails => {
     detailed_description: description,
     about_the_game: description,
     short_description: about,
-    screenshots: [],
+    screenshots: SCREENSHOT_FILES.flatMap((name, id) => {
+      const url = art(name);
+      return url ? [{ id, path_thumbnail: url, path_full: url }] : [];
+    }),
     developers: ["Horizon contributors"],
     publishers: ["Horizon contributors"],
     genres: [
