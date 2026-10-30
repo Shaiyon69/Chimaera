@@ -95,6 +95,9 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "getDownloadLayoutState" => library::download_layout_state(&app.state::<Store>()),
         // No process watcher yet (F2): nothing is tracked as running.
         "getGamesRunning" => Ok(json!([])),
+        // null = "no still poster", so the renderer shows the original cover.
+        // shortcut: animated covers play instead of a still first frame until the local: protocol (F1) can serve built posters.
+        "getCoverPoster" => Ok(Value::Null),
         "getClassicsImportStatus" => Ok(json!(false)),
         "getUserPreferences" => app.state::<Store>().get("", "userPreferences"),
         "updateUserPreferences" => {
