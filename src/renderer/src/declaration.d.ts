@@ -396,6 +396,11 @@ declare global {
       objectId: string,
       pinned: boolean
     ) => Promise<void>;
+    setGameDedupeExcluded: (
+      shop: GameShop,
+      objectId: string,
+      excluded: boolean
+    ) => Promise<void>;
     updateLaunchOptions: (
       shop: GameShop,
       objectId: string,

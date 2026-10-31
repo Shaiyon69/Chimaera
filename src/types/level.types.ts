@@ -53,6 +53,15 @@ export interface DetectedLauncherGame {
   imported: boolean;
 }
 
+/** A copy of the same game under another key, folded into the winning library entry. */
+export interface LinkedGame {
+  id: string;
+  shop: GameShop;
+  objectId: string;
+  launcher: LauncherId | "steam" | null;
+  executablePath: string | null;
+}
+
 export interface Game {
   title: string;
   iconUrl: string | null;
@@ -113,6 +122,10 @@ export interface Game {
   launcher?: LauncherId;
   launcherGameId?: string;
   externalLaunch?: ExternalLaunch | null;
+  /** Set by "Show copies separately": the library never groups this record. */
+  dedupeExcluded?: boolean;
+  /** Only on the winner of a group, from getLibrary and getGameByObjectId. */
+  linkedGames?: LinkedGame[];
 }
 
 export interface DownloadFile {

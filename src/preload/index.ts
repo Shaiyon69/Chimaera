@@ -782,6 +782,11 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("clearNewDownloadOptions", shop, objectId),
   toggleGamePin: (shop: GameShop, objectId: string, pinned: boolean) =>
     ipcRenderer.invoke("toggleGamePin", shop, objectId, pinned),
+  setGameDedupeExcluded: (
+    shop: GameShop,
+    objectId: string,
+    excluded: boolean
+  ) => ipcRenderer.invoke("setGameDedupeExcluded", shop, objectId, excluded),
   updateLaunchOptions: (
     shop: GameShop,
     objectId: string,

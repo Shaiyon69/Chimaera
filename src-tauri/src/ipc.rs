@@ -161,6 +161,10 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let enabled = args.get(2).and_then(Value::as_bool).unwrap_or(false);
             games::set_field(&app.state::<Store>(), shop(args), object_id(args), "enableHydraPlaytimeTracking", json!(enabled)).map(|_| Value::Null)
         }
+        "setGameDedupeExcluded" => {
+            let excluded = args.get(2).and_then(Value::as_bool).unwrap_or(false);
+            games::set_field(&app.state::<Store>(), shop(args), object_id(args), "dedupeExcluded", json!(excluded)).map(|_| Value::Null)
+        }
         "toggleGameGamemode" => {
             let on = args.get(2).and_then(Value::as_bool).unwrap_or(false);
             games::set_field(&app.state::<Store>(), shop(args), object_id(args), "autoRunGamemode", json!(on)).map(|_| Value::Null)
