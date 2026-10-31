@@ -226,7 +226,20 @@ pub fn set_visibility(store: &Store, shop: &str, object_id: &str, field: &str, v
     Ok(saved)
 }
 
+/// A grouped game shows its copies' summed playtime, so a manual set or reset is meant for
+/// that total: the copies' own playtime is cleared and the winner holds the whole value.
+fn clear_linked_playtime(store: &Store, key: &str) -> Result<(), String> {
+    let Some(view) = crate::library::linked_view(store, key)? else { return Ok(()) };
+    for id in view["linkedGames"].as_array().into_iter().flatten().filter_map(|copy| copy["id"].as_str()) {
+        update(store, id, |copy| {
+            copy.insert("playTimeInMilliseconds".into(), json!(0));
+        })?;
+    }
+    Ok(())
+}
+
 pub fn change_playtime(store: &Store, shop: &str, object_id: &str, seconds: f64) -> Result<(), String> {
+    clear_linked_playtime(store, &game_key(shop, object_id))?;
     update(store, &game_key(shop, object_id), |game| {
         game.insert("playTimeInMilliseconds".into(), json!(seconds * 1000.0));
         game.insert("hasManuallyUpdatedPlaytime".into(), json!(true));
@@ -235,6 +248,7 @@ pub fn change_playtime(store: &Store, shop: &str, object_id: &str, seconds: f64)
 }
 
 pub fn reset_playtime(store: &Store, shop: &str, object_id: &str) -> Result<(), String> {
+    clear_linked_playtime(store, &game_key(shop, object_id))?;
     update(store, &game_key(shop, object_id), |game| {
         game.insert("playTimeInMilliseconds".into(), json!(0));
         game.insert("lastTimePlayed".into(), Value::Null);
@@ -318,6 +332,30 @@ mod tests {
     fn gog_import(store: &Store) {
         let game = json!({ "shop": "custom", "objectId": "gog-1", "launcher": "gog", "iconUrl": LN2_ART, "title": "Little Nightmares II", "isDeleted": false });
         store.put("games", "custom:gog-1", &game).unwrap();
+    }
+
+    fn grouped_pair(store: &Store) {
+        store.put("games", "steam:860510", &json!({ "shop": "steam", "objectId": "860510", "title": "LN2", "playTimeInMilliseconds": 36_000 })).unwrap();
+        let gog = json!({ "shop": "custom", "objectId": "gog-1", "launcher": "gog", "iconUrl": LN2_ART, "title": "LN2", "playTimeInMilliseconds": 18_000 });
+        store.put("games", "custom:gog-1", &gog).unwrap();
+    }
+
+    #[test]
+    fn manual_playtime_on_a_group_sets_the_shown_total() {
+        let store = Store::memory().unwrap();
+        grouped_pair(&store);
+        change_playtime(&store, "steam", "860510", 72.0).unwrap();
+        let view = crate::library::linked_view(&store, "steam:860510").unwrap().unwrap();
+        assert_eq!(view["playTimeInMilliseconds"], 72_000.0);
+    }
+
+    #[test]
+    fn reset_playtime_on_a_group_clears_every_copy() {
+        let store = Store::memory().unwrap();
+        grouped_pair(&store);
+        reset_playtime(&store, "steam", "860510").unwrap();
+        let view = crate::library::linked_view(&store, "steam:860510").unwrap().unwrap();
+        assert_eq!(view["playTimeInMilliseconds"], 0.0);
     }
 
     #[test]
