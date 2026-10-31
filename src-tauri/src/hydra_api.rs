@@ -270,7 +270,8 @@ fn answer_local(store: &Store, route: &str, query: &[(String, String)], body: &V
             Ok(build_me(&next))
         }
         "friends" => Ok(json!({ "totalFriends": 0, "friends": [] })),
-        "souvenirs" => Ok(json!({ "items": [], "total": 0, "hasReachedLimit": true, "hiddenReason": null })),
+        // Souvenirs live on Hydra's servers, so the local profile has none; "true" here only showed a false 1,000-souvenir banner.
+        "souvenirs" => Ok(json!({ "items": [], "total": 0, "hasReachedLimit": false, "hiddenReason": null })),
         "gameAchievements" => Ok(crate::achievements::profile_game_achievements(
             store,
             query_get(query, "shop").unwrap_or_default(),
