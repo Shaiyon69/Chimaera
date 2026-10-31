@@ -118,8 +118,9 @@ fn store_counts(store: &Store, key: &str, unlocked: &[Value], catalogue: &[Value
 }
 
 /// mergeAchievements: stores new unlocks and refreshes the counts. `publish` also tells
-/// the open game page; it is off for the silent startup scan.
-pub async fn merge(app: &AppHandle, shop: &str, object_id: &str, found: &[Unlock], publish: bool) -> Result<usize, String> {
+/// the open game page; it is off for the silent startup scan. `popup` is off for unlocks
+/// the Steam client found, since Steam already showed its own.
+pub async fn merge(app: &AppHandle, shop: &str, object_id: &str, found: &[Unlock], publish: bool, popup: bool) -> Result<usize, String> {
     let key = game_key(shop, object_id);
     let fresh = {
         let store = app.state::<Store>();
@@ -140,7 +141,7 @@ pub async fn merge(app: &AppHandle, shop: &str, object_id: &str, found: &[Unlock
         let preferences = preferences(&store);
         let list = user_achievements(&catalogue, &all, &preferences);
         app.emit(&format!("on-update-achievements-{object_id}-{shop}"), [list]).map_err(|e| e.to_string())?;
-        if achievement_popup::enabled(&preferences) {
+        if popup && achievement_popup::enabled(&preferences) {
             let infos = achievement_popup::notification_infos(&fresh, previously_unlocked, &catalogue);
             achievement_popup::show_achievements(app, &achievement_popup::position(&preferences), infos);
         }
@@ -250,8 +251,12 @@ impl AchievementWatcher {
     }
 }
 
-fn parse_all(files: &[AchievementFile]) -> Vec<Unlock> {
-    files.iter().flat_map(achievement_files::parse_file).collect()
+/// The unlocks in `files` as (Steam client cache, every other source). Steam shows its
+/// own pop-up for the first list, so only the second gets Chimaera's.
+fn parse_all(files: &[AchievementFile]) -> (Vec<Unlock>, Vec<Unlock>) {
+    let (steam, other): (Vec<&AchievementFile>, Vec<&AchievementFile>) = files.iter().partition(|f| f.cracker == achievement_files::Cracker::Steam);
+    let parse = |list: Vec<&AchievementFile>| list.into_iter().flat_map(achievement_files::parse_file).collect();
+    (parse(steam), parse(other))
 }
 
 /// Reads every game's files once without notifications (preSearchAchievements), then
@@ -281,8 +286,13 @@ pub fn spawn(app: AppHandle) {
             .await
             .unwrap_or_default();
             let (mut games_with_new, mut total_new) = (0, 0);
-            for (shop, id, unlocks) in found {
-                match merge(&app, &shop, &id, &unlocks, !first).await {
+            for (shop, id, (steam_unlocks, other_unlocks)) in found {
+                // Steam first: an unlock both report is then stored without a Chimaera pop-up.
+                if let Err(error) = merge(&app, &shop, &id, &steam_unlocks, !first, false).await {
+                    eprintln!("[achievements] merge {shop}:{id} failed: {error}");
+                }
+                // Only these count toward the startup summary pop-up.
+                match merge(&app, &shop, &id, &other_unlocks, !first, !first).await {
                     Ok(0) => {}
                     Ok(count) => {
                         games_with_new += 1;
@@ -312,14 +322,15 @@ pub async fn get_unlocked_achievements(app: &AppHandle, object_id: &str, shop: &
     if first_look {
         let exe = app.state::<Store>().get("games", &key)?["executablePath"].as_str().map(str::to_string);
         let (scan_app, id) = (app.clone(), object_id.to_string());
-        let unlocks = tauri::async_runtime::spawn_blocking(move || {
+        let (steam_unlocks, other_unlocks) = tauri::async_runtime::spawn_blocking(move || {
             let store = scan_app.state::<Store>();
             let steam = preferences(&store)["enableSteamAchievements"].as_bool().unwrap_or(false).then(steam_path).flatten();
             parse_all(&achievement_files::game_files(&roots(&scan_app), &id, exe.as_deref(), steam.as_deref()))
         })
         .await
         .map_err(|e| e.to_string())?;
-        merge(app, shop, object_id, &unlocks, true).await?;
+        merge(app, shop, object_id, &steam_unlocks, true, false).await?;
+        merge(app, shop, object_id, &other_unlocks, true, true).await?;
     }
     let catalogue = catalogue(app, shop, object_id, true).await;
     let store = app.state::<Store>();
@@ -392,6 +403,36 @@ mod tests {
         let stored = vec![json!({ "name": "ACH_A", "unlockTime": 1 })];
         let fresh = new_unlocks(&stored, &[u("ach_a", 5), u("ach_b", 2), u("ACH_B", 9)]);
         assert_eq!(fresh, vec![json!({ "name": "ACH_B", "unlockTime": 2 })]);
+    }
+
+    fn names(unlocks: &[Unlock]) -> Vec<&str> {
+        unlocks.iter().map(|u| u.name.as_str()).collect()
+    }
+
+    #[test]
+    fn parse_all_splits_steam_client_files() {
+        let dir = std::env::temp_dir().join(format!("chimaera-split-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache = dir.join("860510.json");
+        std::fs::write(&cache, r#"[["achievements", { "data": { "vecHighlight": [{ "strID": "S1", "bAchieved": true, "rtUnlocked": 3 }] } }]]"#).unwrap();
+        let goldberg = dir.join("achievements.json");
+        std::fs::write(&goldberg, r#"{ "G1": { "earned": true, "earned_time": 5 } }"#).unwrap();
+        let files = [
+            AchievementFile { cracker: achievement_files::Cracker::Steam, path: cache },
+            AchievementFile { cracker: achievement_files::Cracker::Goldberg, path: goldberg },
+        ];
+        let (steam, other) = parse_all(&files);
+        assert_eq!(names(&steam), ["S1"]);
+        assert_eq!(names(&other), ["G1"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn same_unlock_from_both_sources_is_new_once() {
+        // The watcher merges the Steam list first, so a crack file repeating it adds nothing (and shows no pop-up).
+        let from_steam = new_unlocks(&[], &[u("ACH_A", 3)]);
+        assert_eq!(from_steam.len(), 1);
+        assert!(new_unlocks(&from_steam, &[u("ach_a", 4)]).is_empty());
     }
 
     #[test]
