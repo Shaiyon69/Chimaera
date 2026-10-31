@@ -12,6 +12,7 @@ mod ipc;
 mod launch;
 mod library;
 mod local_files;
+mod shop_details;
 mod store;
 mod watcher;
 

@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{artwork, file_system, games, hydra_api, launch, library};
+use crate::{artwork, bundled_games, file_system, games, hydra_api, launch, library};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -233,6 +233,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         // shortcut: animated covers play instead of a still first frame until the local: protocol (F1) can serve built posters.
         "getCoverPoster" => Ok(Value::Null),
         "getClassicsImportStatus" => Ok(json!(false)),
+        "getBundledGameSetup" => bundled_games::setup(app, arg_str(args, 0).unwrap_or_default()),
         "getUserPreferences" => app.state::<Store>().get("", "userPreferences"),
         "updateUserPreferences" => {
             let store = app.state::<Store>();
