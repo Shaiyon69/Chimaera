@@ -2,6 +2,7 @@
 //! src/main/events/library/get-library.ts, user-preferences/ and services/steam-250.ts.
 
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use crate::store::Store;
@@ -58,12 +59,125 @@ pub fn library_entry(key: &str, game: Value, download: Value, composed: Value) -
     Value::Object(entry)
 }
 
+/// The Steam appid a record stands for: its own id on the steam shop, else the first
+/// `/steam/apps/<id>/` in the art URLs that the launcher import picked from Steam.
+pub fn steam_app_id(game: &Value) -> Option<String> {
+    if game["shop"] == "steam" {
+        return game["objectId"].as_str().filter(|id| !id.is_empty()).map(str::to_string);
+    }
+    ["iconUrl", "libraryHeroImageUrl", "logoImageUrl"].iter().find_map(|field| {
+        let url = game[*field].as_str()?;
+        let rest = &url[url.find("/steam/apps/")? + "/steam/apps/".len()..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        (!digits.is_empty()).then_some(digits)
+    })
+}
+
+/// toComparableTitle in dedupe-library.ts.
+fn comparable_title(game: &Value) -> String {
+    game["title"].as_str().unwrap_or_default().to_lowercase().chars().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit()).collect()
+}
+
+/// `steam:<appid>`, else `title:<normalized>`; None for records that never group.
+// LaunchBox is skipped as in Electron: one title spans several platforms.
+pub fn dedupe_key(game: &Value) -> Option<String> {
+    if game["shop"] == "launchbox" || game["dedupeExcluded"].as_bool().unwrap_or(false) {
+        return None;
+    }
+    if let Some(id) = steam_app_id(game) {
+        return Some(format!("steam:{id}"));
+    }
+    let title = comparable_title(game);
+    (!title.is_empty()).then(|| format!("title:{title}"))
+}
+
+/// The dedupe rank: steam shop, has an exe, playtime, last played.
+pub fn rank_better(candidate: &Value, current: &Value) -> bool {
+    let rank = |g: &Value| {
+        (
+            g["shop"] == "steam",
+            g["executablePath"].as_str().is_some_and(|e| !e.is_empty()),
+            g["playTimeInMilliseconds"].as_f64().unwrap_or(0.0),
+            // ISO strings in one fixed format sort in time order.
+            g["lastTimePlayed"].as_str().unwrap_or_default().to_string(),
+        )
+    };
+    rank(candidate).partial_cmp(&rank(current)) == Some(std::cmp::Ordering::Greater)
+}
+
+/// Folds copies of one game (Steam record, launcher imports, custom adds) into its best
+/// record, at the position of the group's first member. Nothing is written back: the
+/// winner only carries `linkedGames`, a borrowed exe and the group's summed playtime.
+pub fn dedupe_library(entries: Vec<(String, Value)>) -> Vec<(String, Value)> {
+    let mut keys: Vec<Option<String>> = entries.iter().map(|(_, g)| dedupe_key(g)).collect();
+    // A copy with no Steam art still joins the Steam record of the same title.
+    let mut appid_by_title = HashMap::new();
+    for ((_, game), key) in entries.iter().zip(&keys) {
+        if let Some(key) = key.as_ref().filter(|k| k.starts_with("steam:")) {
+            appid_by_title.entry(format!("title:{}", comparable_title(game))).or_insert_with(|| key.clone());
+        }
+    }
+    for key in keys.iter_mut() {
+        if let Some(steam) = key.as_ref().and_then(|k| appid_by_title.get(k)) {
+            *key = Some(steam.clone());
+        }
+    }
+
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut slot_of: HashMap<String, usize> = HashMap::new();
+    for (i, key) in keys.into_iter().enumerate() {
+        match key.as_ref().and_then(|k| slot_of.get(k)) {
+            Some(&slot) => groups[slot].push(i),
+            None => {
+                if let Some(key) = key {
+                    slot_of.insert(key, groups.len());
+                }
+                groups.push(vec![i]);
+            }
+        }
+    }
+    groups.into_iter().map(|members| merge_group(&entries, &members)).collect()
+}
+
+fn merge_group(entries: &[(String, Value)], members: &[usize]) -> (String, Value) {
+    let winner = members.iter().copied().fold(members[0], |best, i| if rank_better(&entries[i].1, &entries[best].1) { i } else { best });
+    let (key, game) = &entries[winner];
+    let mut game = game.clone();
+    let losers: Vec<&(String, Value)> = members.iter().filter(|&&i| i != winner).map(|&i| &entries[i]).collect();
+    if losers.is_empty() {
+        return (key.clone(), game);
+    }
+    let linked: Vec<Value> = losers
+        .iter()
+        .map(|(id, g)| {
+            let launcher = if g["shop"] == "steam" { json!("steam") } else { g.get("launcher").cloned().unwrap_or(Value::Null) };
+            json!({ "id": id, "shop": g["shop"], "objectId": g["objectId"], "launcher": launcher, "executablePath": g.get("executablePath").cloned().unwrap_or(Value::Null) })
+        })
+        .collect();
+    if !game["executablePath"].as_str().is_some_and(|e| !e.is_empty()) {
+        if let Some(exe) = losers.iter().find_map(|(_, g)| g["executablePath"].as_str().filter(|e| !e.is_empty())) {
+            game["executablePath"] = json!(exe);
+        }
+    }
+    let playtime: f64 = members.iter().map(|&i| entries[i].1["playTimeInMilliseconds"].as_f64().unwrap_or(0.0)).sum();
+    game["playTimeInMilliseconds"] = json!(playtime);
+    game["linkedGames"] = Value::Array(linked);
+    (key.clone(), game)
+}
+
+/// The grouped record that `getGameByObjectId` returns for a group's winner, so the
+/// game page sees the linked copies and can launch them. None for any other key.
+pub fn linked_view(store: &Store, key: &str) -> Result<Option<Value>, String> {
+    let games = store.entries("games")?.into_iter().filter(|(_, g)| in_library(g, true)).collect();
+    Ok(dedupe_library(games).into_iter().find(|(k, g)| k == key && g.get("linkedGames").is_some()).map(|(_, g)| g))
+}
+
 /// `getLibrary`: each game with its id (store key), download record and artwork.
-// shortcut: no duplicate-entry merge (dedupeLibrary) or stale installer/install-folder
-// checks yet; they come with library milestone F2.
+// shortcut: no stale installer/install-folder checks yet; they come with library milestone F2.
 pub fn get_library(store: &Store, include_concealed: bool) -> Result<Value, String> {
     let mut out = Vec::new();
-    for (key, game) in store.entries("games")?.into_iter().filter(|(_, g)| in_library(g, include_concealed)) {
+    let games = store.entries("games")?.into_iter().filter(|(_, g)| in_library(g, include_concealed)).collect();
+    for (key, game) in dedupe_library(games) {
         let download = store.get("downloads", &key)?;
         let composed = composed_assets_for(store, &key)?;
         out.push(library_entry(&key, game, download, composed));
@@ -238,6 +352,113 @@ mod tests {
         assert_eq!(entry["customCoverImageUrl"], "mine");
         assert_eq!(entry["selectedArtworkTypes"], json!(["grid"]));
         assert_eq!(library_entry("k", json!({ "title": "T" }), Value::Null, Value::Null)["title"], "T");
+    }
+
+    const LN2_ART: &str = "https://shared.steamstatic.com/store_item_assets/steam/apps/860510/library_600x900_2x.jpg";
+
+    fn ln2_pair() -> Vec<(String, Value)> {
+        vec![
+            ("steam:860510".into(), json!({ "shop": "steam", "objectId": "860510", "title": "Little Nightmares II", "playTimeInMilliseconds": 1000 })),
+            (
+                "custom:gog-1871006055".into(),
+                json!({ "shop": "custom", "objectId": "gog-1871006055", "launcher": "gog", "iconUrl": LN2_ART, "executablePath": "C:\\G\\LN2.exe", "playTimeInMilliseconds": 500, "title": "Little Nightmares 2" }),
+            ),
+        ]
+    }
+
+    fn keys(entries: &[(String, Value)]) -> Vec<&str> {
+        entries.iter().map(|(k, _)| k.as_str()).collect()
+    }
+
+    #[test]
+    fn groups_steam_and_gog_by_appid() {
+        let out = dedupe_library(ln2_pair());
+        assert_eq!(keys(&out), ["steam:860510"]);
+        let winner = &out[0].1;
+        assert_eq!(winner["executablePath"], "C:\\G\\LN2.exe");
+        assert_eq!(winner["playTimeInMilliseconds"], 1500.0);
+        assert_eq!(
+            winner["linkedGames"],
+            json!([{ "id": "custom:gog-1871006055", "shop": "custom", "objectId": "gog-1871006055", "launcher": "gog", "executablePath": "C:\\G\\LN2.exe" }])
+        );
+    }
+
+    #[test]
+    fn keeps_steam_copy_over_custom() {
+        let out = dedupe_library(vec![
+            ("custom:a".into(), json!({ "shop": "custom", "title": "Hades", "executablePath": "C:/h.exe" })),
+            ("steam:1".into(), json!({ "shop": "steam", "objectId": "1", "title": "HADES" })),
+        ]);
+        assert_eq!(keys(&out), ["steam:1"]);
+    }
+
+    #[test]
+    fn prefers_more_playtime_when_shops_match() {
+        let out = dedupe_library(vec![
+            ("custom:a".into(), json!({ "shop": "custom", "title": "Game", "playTimeInMilliseconds": 5 })),
+            ("custom:b".into(), json!({ "shop": "custom", "title": "Game", "playTimeInMilliseconds": 50 })),
+        ]);
+        assert_eq!(keys(&out), ["custom:b"]);
+    }
+
+    #[test]
+    fn never_merges_launchbox() {
+        let out = dedupe_library(vec![
+            ("launchbox:a".into(), json!({ "shop": "launchbox", "title": "Game" })),
+            ("launchbox:b".into(), json!({ "shop": "launchbox", "title": "Game" })),
+        ]);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn different_appids_never_merge_on_title() {
+        let out = dedupe_library(vec![
+            ("steam:1".into(), json!({ "shop": "steam", "objectId": "1", "title": "Doom" })),
+            ("steam:2".into(), json!({ "shop": "steam", "objectId": "2", "title": "DOOM" })),
+        ]);
+        assert_eq!(keys(&out), ["steam:1", "steam:2"]);
+    }
+
+    #[test]
+    fn excluded_records_stand_alone() {
+        let mut pair = ln2_pair();
+        pair[1].1["dedupeExcluded"] = json!(true);
+        let out = dedupe_library(pair);
+        assert_eq!(keys(&out), ["steam:860510", "custom:gog-1871006055"]);
+        assert!(out[0].1.get("linkedGames").is_none());
+    }
+
+    #[test]
+    fn non_steam_art_falls_back_to_title() {
+        assert_eq!(steam_app_id(&json!({ "shop": "custom", "iconUrl": "https://cdn.example.com/x.png" })), None);
+        assert_eq!(steam_app_id(&json!({ "shop": "custom", "iconUrl": null })), None);
+        assert_eq!(steam_app_id(&json!({ "shop": "custom", "logoImageUrl": LN2_ART })), Some("860510".into()));
+        let out = dedupe_library(vec![
+            ("custom:a".into(), json!({ "shop": "custom", "title": "Hades", "iconUrl": "https://cdn.example.com/x.png" })),
+            ("custom:b".into(), json!({ "shop": "custom", "title": "HADES!", "iconUrl": null })),
+        ]);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn output_keeps_store_order() {
+        let out = dedupe_library(vec![
+            ("custom:a".into(), json!({ "shop": "custom", "title": "Alpha" })),
+            ("custom:b".into(), json!({ "shop": "custom", "title": "Hades" })),
+            ("steam:1".into(), json!({ "shop": "steam", "objectId": "1", "title": "Hades" })),
+        ]);
+        assert_eq!(keys(&out), ["custom:a", "steam:1"]);
+    }
+
+    #[test]
+    fn linked_view_only_for_group_winner() {
+        let store = Store::memory().unwrap();
+        for (key, game) in ln2_pair() {
+            store.put("games", &key, &game).unwrap();
+        }
+        let view = linked_view(&store, "steam:860510").unwrap().expect("winner view");
+        assert_eq!(view["executablePath"], "C:\\G\\LN2.exe");
+        assert!(linked_view(&store, "custom:gog-1871006055").unwrap().is_none());
     }
 
     #[test]

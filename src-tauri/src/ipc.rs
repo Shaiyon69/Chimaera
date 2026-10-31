@@ -106,7 +106,13 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "refreshLibraryAssets" => Err("library/refresh-failed".into()),
         "getDownloadLayoutState" => library::download_layout_state(&app.state::<Store>()),
         "getGamesRunning" => Ok(app.state::<Sessions>().running()),
-        "getGameByObjectId" => games::get_by_object_id(&app.state::<Store>(), shop(args), object_id(args)),
+        "getGameByObjectId" => {
+            let store = app.state::<Store>();
+            match library::linked_view(&store, &games::game_key(shop(args), object_id(args)))? {
+                Some(grouped) => Ok(grouped),
+                None => games::get_by_object_id(&store, shop(args), object_id(args)),
+            }
+        }
         "addGameToLibrary" => {
             let (title, platform) = (arg_str(args, 2).unwrap_or_default(), arg_str(args, 3));
             games::add_to_library(&app.state::<Store>(), shop(args), object_id(args), title, platform).map(|_| Value::Null)
