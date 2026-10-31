@@ -87,7 +87,9 @@ pub fn close_session(store: &Store, key: &str, session: Session, now: Instant) -
 }
 
 fn running_exes(system: &mut sysinfo::System) -> HashSet<String> {
-    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::OnlyIfNotSet));
+    // Always, not OnlyIfNotSet: sysinfo keys processes by PID only, and Windows recycles PIDs
+    // within the 2 s tick, so a cached exe makes an unrelated process look like a game.
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always));
     system.processes().values().filter_map(|p| p.exe()).map(|exe| path_key(&exe.to_string_lossy())).collect()
 }
 
