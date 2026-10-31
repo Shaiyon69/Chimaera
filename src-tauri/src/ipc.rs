@@ -4,12 +4,13 @@
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{artwork, games, hydra_api, launch, library};
+use crate::{artwork, file_system, games, hydra_api, launch, library};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -258,6 +259,35 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         // Returns whether auto-install is on; the Tauri updater arrives with milestone F1.
         "checkForUpdates" => Ok(json!(false)),
         "getRandomGame" => library::random_steam250_game().await,
+        "showOpenDialog" => file_system::open_dialog(app, window, args.first().unwrap_or(&Value::Null)).await,
+        "showItemInFolder" => {
+            app.opener().reveal_item_in_dir(arg_str(args, 0).unwrap_or_default()).map_err(|e| e.to_string())?;
+            Ok(Value::Null)
+        }
+        "openFolder" => {
+            let folder = arg_str(args, 0).unwrap_or_default();
+            file_system::prepare_folder(folder)?;
+            // shell.openPath resolves to "" on success.
+            app.opener().open_path(folder, None::<&str>).map_err(|e| e.to_string())?;
+            Ok(json!(""))
+        }
+        "clipboardWriteText" => app.clipboard().write_text(arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null).map_err(|e| e.to_string()),
+        "readDirectory" => {
+            let dir = arg_str(args, 0).unwrap_or_default().to_string();
+            file_system::assert_not_app_data(&app.path().app_data_dir().map_err(|e| e.to_string())?, &dir)?;
+            tauri::async_runtime::spawn_blocking(move || file_system::read_directory(&dir)).await.map_err(|e| e.to_string())?
+        }
+        "getPathInfo" => {
+            let path = arg_str(args, 0).unwrap_or_default();
+            file_system::assert_not_app_data(&app.path().app_data_dir().map_err(|e| e.to_string())?, path)?;
+            Ok(file_system::path_info(path))
+        }
+        "listDrives" => Ok(file_system::list_drives()),
+        "getDiskFreeSpace" => {
+            let path = arg_str(args, 0).unwrap_or_default().to_string();
+            tauri::async_runtime::spawn_blocking(move || file_system::disk_usage(&path)).await.map_err(|e| e.to_string())
+        }
+        "checkFolderWritePermission" => Ok(json!(file_system::can_write(arg_str(args, 0).unwrap_or_default()))),
         "minimizeMainWindow" => window.minimize().map(|_| Value::Null).map_err(|e| e.to_string()),
         "toggleMaximizeMainWindow" => {
             let maximized = window.is_maximized().map_err(|e| e.to_string())?;

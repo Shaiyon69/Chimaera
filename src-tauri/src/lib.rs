@@ -4,6 +4,7 @@
 
 mod artwork;
 mod electron_import;
+mod file_system;
 mod games;
 mod hydra_api;
 mod image_cache;
@@ -50,6 +51,8 @@ async fn ipc(app: tauri::AppHandle, window: tauri::WebviewWindow, channel: Strin
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![ipc])
         .register_asynchronous_uri_scheme_protocol("local", |_ctx, request, responder| {
             let path = request.uri().path().to_string();
