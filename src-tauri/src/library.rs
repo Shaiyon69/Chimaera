@@ -169,7 +169,11 @@ fn merge_group(entries: &[(String, Value)], members: &[usize]) -> (String, Value
 /// game page sees the linked copies and can launch them. None for any other key.
 pub fn linked_view(store: &Store, key: &str) -> Result<Option<Value>, String> {
     let games = store.entries("games")?.into_iter().filter(|(_, g)| in_library(g, true)).collect();
-    Ok(dedupe_library(games).into_iter().find(|(k, g)| k == key && g.get("linkedGames").is_some()).map(|(_, g)| g))
+    let Some((_, mut game)) = dedupe_library(games).into_iter().find(|(k, g)| k == key && g.get("linkedGames").is_some()) else { return Ok(None) };
+    // Same extra fields as games::get_by_object_id.
+    game["id"] = json!(key);
+    game["download"] = store.get("downloads", key)?;
+    Ok(Some(game))
 }
 
 /// `getLibrary`: each game with its id (store key), download record and artwork.
@@ -456,8 +460,12 @@ mod tests {
         for (key, game) in ln2_pair() {
             store.put("games", &key, &game).unwrap();
         }
+        store.put("downloads", "steam:860510", &json!({ "status": "complete" })).unwrap();
         let view = linked_view(&store, "steam:860510").unwrap().expect("winner view");
         assert_eq!(view["executablePath"], "C:\\G\\LN2.exe");
+        // The game page keys its running state and download progress on these, as for get_by_object_id.
+        assert_eq!(view["id"], "steam:860510");
+        assert_eq!(view["download"]["status"], "complete");
         assert!(linked_view(&store, "custom:gog-1871006055").unwrap().is_none());
     }
 
