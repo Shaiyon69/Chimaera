@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{artwork, bundled_games, file_system, games, hydra_api, launch, library, shop_details};
+use crate::{achievement_popup, achievements, artwork, bundled_games, file_system, games, hydra_api, launch, library, shop_details};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -242,6 +242,23 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             shop_details::get_game_stats(&app.state::<Store>(), &version, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).await
         }
         "getBundledGameSetup" => bundled_games::setup(app, arg_str(args, 0).unwrap_or_default()),
+        "getUnlockedAchievements" => achievements::get_unlocked_achievements(app, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).await,
+        "resetGameAchievements" => achievements::reset(app, shop(args), object_id(args)).await.map(|_| Value::Null),
+        "achievementNotificationHostReady" | "achievementNotificationContentReady" | "achievementNotificationFinished" | "achievementNotificationFailed" => {
+            // Only the pop-up window takes part in its handshake.
+            if window.label() == achievement_popup::LABEL {
+                achievement_popup::handle(app, channel, arg_str(args, 0), arg_str(args, 1));
+            }
+            Ok(Value::Null)
+        }
+        "showAchievementTestNotification" => {
+            achievement_popup::show_test(app, &app.state::<Store>().get("", "userPreferences")?);
+            Ok(Value::Null)
+        }
+        "updateAchievementCustomNotificationWindow" => {
+            achievement_popup::dispose(app);
+            Ok(Value::Null)
+        }
         "getUserPreferences" => app.state::<Store>().get("", "userPreferences"),
         "updateUserPreferences" => {
             let store = app.state::<Store>();

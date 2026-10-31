@@ -271,8 +271,11 @@ fn answer_local(store: &Store, route: &str, query: &[(String, String)], body: &V
         }
         "friends" => Ok(json!({ "totalFriends": 0, "friends": [] })),
         "souvenirs" => Ok(json!({ "items": [], "total": 0, "hasReachedLimit": true, "hiddenReason": null })),
-        // shortcut: achievements are not ported yet (milestone F6), so a game shows none.
-        "gameAchievements" => Ok(json!([])),
+        "gameAchievements" => Ok(crate::achievements::profile_game_achievements(
+            store,
+            query_get(query, "shop").unwrap_or_default(),
+            query_get(query, "objectId").unwrap_or_default(),
+        )),
         "createCollection" => {
             let created = json!({ "id": uuid::Uuid::new_v4().to_string(), "name": collection_name(body)? });
             let mut all = collections()?;

@@ -2,6 +2,9 @@
 //! unchanged (src/tauri/electron-shim.ts); every preload IPC call arrives at the
 //! single `ipc` command and is routed by channel name in `ipc.rs`.
 
+mod achievement_files;
+mod achievement_popup;
+mod achievements;
 mod artwork;
 mod bundled_games;
 mod electron_import;
@@ -91,6 +94,9 @@ pub fn run() {
             app.manage(launch::LauncherStatuses::default());
             app.manage(watcher::Sessions::default());
             watcher::spawn(app.handle().clone());
+            app.manage(achievements::AchievementWatcher::default());
+            app.manage(achievement_popup::Popup::default());
+            achievements::spawn(app.handle().clone());
             // Same size and chrome as WindowManager.createMainWindow: the renderer
             // draws its own title bar and window buttons.
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("tauri.html".into()))
