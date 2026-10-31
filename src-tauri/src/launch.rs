@@ -161,6 +161,20 @@ fn spawn_detached(launch: &LaunchCommand, cwd: &Path) -> std::io::Result<()> {
     command.spawn().map(|_| ())
 }
 
+/// `launchExternal`: a launcher URI, or a launcher client exe with its arguments.
+fn launch_external(app: &AppHandle, launch: &Value) -> Result<(), String> {
+    match launch["kind"].as_str() {
+        Some("uri") => app.opener().open_url(launch["uri"].as_str().unwrap_or_default(), None::<&str>).map_err(|e| e.to_string()),
+        Some("exe") => {
+            let command = launch["path"].as_str().unwrap_or_default().to_string();
+            let args = launch["args"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+            let cwd = Path::new(&command).parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
+            spawn_detached(&LaunchCommand { command, args, env: vec![] }, &cwd).map_err(|e| e.to_string())
+        }
+        other => Err(format!("unknown external launch kind {other:?}")),
+    }
+}
+
 /// The record after launching `exe` for it. The exe is saved only when the record has none
 /// that still exists: playing another copy of a grouped game keeps this record's own install.
 /// `lastLaunchedAt` tells the playtime watcher which of several records sharing an exe ran it.
@@ -172,12 +186,19 @@ pub fn record_launch(game: Value, exe: &str, launch_options: Option<&str>, own_e
 }
 
 /// `openGame`.
-// shortcut: Windows-native only. externalLaunch, bundled games (Bloodborne, Horizon), Steam protocol launch,
+// shortcut: Windows-native only. Bundled games (Bloodborne, Horizon), Steam protocol launch,
 // the common-redist preflight and Linux Wine/umu/Proton are not ported; each lands with its milestone.
 pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_path: &str, launch_options: Option<&str>) -> Result<Value, String> {
     let store = app.state::<Store>();
     let key = game_key(shop, object_id);
     let parsed = parse_executable_path(executable_path);
+    // Imported launcher games start through their own launcher; the watcher still tracks playtime.
+    if let Some(launch) = store.get("games", &key)?.get("externalLaunch").filter(|l| l.is_object()) {
+        match launch_external(app, launch) {
+            Ok(()) => return Ok(Value::Null),
+            Err(error) => eprintln!("[launch] external launch failed for {key}, falling back to the executable: {error}"),
+        }
+    }
     if executable_path.is_empty() || !Path::new(executable_path).exists() || !Path::new(&parsed).exists() {
         app.emit("on-game-executable-not-found", [shop, object_id]).map_err(|e| e.to_string())?;
         return Ok(Value::Null);

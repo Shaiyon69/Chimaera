@@ -15,6 +15,7 @@ mod image_cache;
 mod installer;
 mod ipc;
 mod launch;
+mod launcher_import;
 mod library;
 mod local_files;
 mod shop_details;

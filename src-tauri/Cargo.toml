@@ -30,6 +30,7 @@ percent-encoding = "2"
 sysinfo = { version = "0.37", default-features = false, features = ["system", "disk"] }
 tokio = { version = "1", features = ["time", "macros"] }
 base64 = "0.22"
+unicode-normalization = "0.1"
 crc32fast = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico", "webp", "gif"] }
 
