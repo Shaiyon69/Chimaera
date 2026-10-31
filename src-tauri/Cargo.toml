@@ -43,3 +43,8 @@ encoding_rs = "0.8"
 lto = true
 codegen-units = 1
 strip = true
+
+# From Pake: no debug info for dependencies keeps dev builds and target/ much smaller.
+# Backtraces and breakpoints in Chimaera's own code are unchanged.
+[profile.dev.package."*"]
+debug = false
