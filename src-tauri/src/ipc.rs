@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, file_system, games, hydra_api, launch, library, shop_details};
+use crate::{achievement_popup, achievements, artwork, bundled_games, file_system, games, hydra_api, installer, launch, library, shop_details};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -26,6 +26,14 @@ fn shop(args: &[Value]) -> &str {
 
 fn object_id(args: &[Value]) -> &str {
     arg_str(args, 1).unwrap_or_default()
+}
+
+/// The (shop, objectId) download record and the downloads folder it defaults to.
+fn download_of(app: &AppHandle, args: &[Value]) -> Result<(Value, std::path::PathBuf), String> {
+    let store = app.state::<Store>();
+    let download = store.get("downloads", &games::game_key(shop(args), object_id(args)))?;
+    let default = app.path().download_dir().map_err(|e| e.to_string())?;
+    Ok((download, installer::downloads_path(&store, &default)))
 }
 
 pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, args: &[Value]) -> Result<Value, String> {
@@ -151,6 +159,36 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             }
             Ok(Value::Null)
         }
+        "hasDownloadFolder" => {
+            let (download, root) = download_of(app, args)?;
+            Ok(json!(installer::folder_path(&download, &root).is_some_and(|f| f.exists())))
+        }
+        "getExecutablePickerPath" => {
+            let (download, root) = download_of(app, args)?;
+            let launched = download["installerLaunched"].as_bool().unwrap_or(false);
+            let folder = installer::folder_path(&download, &root).filter(|f| !launched && f.is_dir());
+            Ok(json!(folder.map(|f| f.to_string_lossy().into_owned())))
+        }
+        "hasSourceArchive" => {
+            let (download, root) = download_of(app, args)?;
+            Ok(json!(installer::source_archive(&download, &root).is_some()))
+        }
+        "hasGameInstaller" => {
+            if shop(args) == "launchbox" {
+                return Ok(json!(false));
+            }
+            let (download, root) = download_of(app, args)?;
+            tauri::async_runtime::spawn_blocking(move || json!(installer::download_installer(&download, &root).is_some())).await.map_err(|e| e.to_string())
+        }
+        "openGameInstallerPath" => {
+            let (download, _) = download_of(app, args)?;
+            // Like Electron, only a download with its own recorded path is revealed.
+            if let (Some(root), Some(folder)) = (download["downloadPath"].as_str(), download["folderName"].as_str()) {
+                app.opener().reveal_item_in_dir(std::path::Path::new(root).join(folder)).map_err(|e| e.to_string())?;
+            }
+            Ok(Value::Null)
+        }
+        "getAvailableDrives" => tauri::async_runtime::spawn_blocking(file_system::available_drives).await.map_err(|e| e.to_string()),
         "clearNewDownloadOptions" => games::clear_new_download_options(&app.state::<Store>(), shop(args), object_id(args)).map(|_| Value::Null),
         "assignGameToCollection" => {
             let ids = args.get(2).cloned().unwrap_or(json!([]));

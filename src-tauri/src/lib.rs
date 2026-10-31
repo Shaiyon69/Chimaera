@@ -12,6 +12,7 @@ mod file_system;
 mod games;
 mod hydra_api;
 mod image_cache;
+mod installer;
 mod ipc;
 mod launch;
 mod library;

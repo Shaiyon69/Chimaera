@@ -133,6 +133,22 @@ pub fn list_drives() -> Value {
     }
 }
 
+/// `getAvailableDrives`: `{ root, label, free, total }` per mounted disk. Windows labels
+/// read `C:`; Linux labels are the mount point.
+pub fn available_drives() -> Value {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let drives: Vec<Value> = disks
+        .iter()
+        .filter(|disk| disk.total_space() > 0)
+        .map(|disk| {
+            let root = disk.mount_point().to_string_lossy().into_owned();
+            let label = if cfg!(windows) { root.chars().take(2).collect() } else { root.clone() };
+            json!({ "root": root, "label": label, "free": disk.available_space(), "total": disk.total_space() })
+        })
+        .collect();
+    json!(drives)
+}
+
 /// `{ free, total }` of the disk holding `target`, measured at its nearest existing
 /// folder so a download path that does not exist yet still reports its drive.
 pub fn disk_usage(target: &str) -> Value {
