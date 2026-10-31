@@ -104,6 +104,10 @@ pub fn backfill_steam_records(store: &Store) -> Result<usize, String> {
                     steam.insert(field.into(), game[field].clone());
                 }
             }
+            // A hidden import must not surface again through its new Steam twin.
+            if game["isConcealed"].as_bool().unwrap_or(false) {
+                steam.insert("isConcealed".into(), Value::Bool(true));
+            }
         })?;
         created += 1;
     }
@@ -367,6 +371,18 @@ mod tests {
         assert_eq!((steam["shop"].as_str(), steam["objectId"].as_str(), steam["isDeleted"].as_bool()), (Some("steam"), Some("860510"), Some(false)));
         assert_eq!(steam["title"], "Little Nightmares II");
         assert_eq!(steam["iconUrl"], LN2_ART);
+    }
+
+    #[test]
+    fn a_hidden_import_gets_a_hidden_steam_record() {
+        let store = Store::memory().unwrap();
+        gog_import(&store);
+        crate::games::update(&store, "custom:gog-1", |g| {
+            g.insert("isConcealed".into(), json!(true));
+        })
+        .unwrap();
+        assert_eq!(backfill_steam_records(&store).unwrap(), 1);
+        assert_eq!(store.get("games", "steam:860510").unwrap()["isConcealed"], true);
     }
 
     #[test]

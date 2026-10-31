@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::games::update;
 use crate::launch::{close_launcher_window, is_batch_file, LauncherStatuses};
-use crate::library::{iso_now, now_ms, rank_better};
+use crate::library::{group_winners, iso_now, now_ms, rank_better};
 use crate::store::Store;
 
 const INTERVAL: Duration = Duration::from_secs(2);
@@ -93,20 +93,27 @@ fn running_exes(system: &mut sysinfo::System) -> HashSet<String> {
     system.processes().values().filter_map(|p| p.exe()).map(|exe| path_key(&exe.to_string_lossy())).collect()
 }
 
-/// The running records that earn this tick's playtime. Copies of one game launched
-/// through a grouped tile share an exe; only the best-ranked copy counts it.
+/// The records that earn this tick's playtime. A running copy of a grouped game is credited
+/// to its group's winner, so the grouped tile shows it running. When separate records share
+/// one exe, the one launched last (then the best-ranked) gets it, never both.
 pub fn credited_keys(games: &[(String, Value)], running: &HashSet<String>) -> HashSet<String> {
+    let live: Vec<(String, Value)> = games.iter().filter(|(_, g)| !g["isDeleted"].as_bool().unwrap_or(false)).cloned().collect();
+    let winners = group_winners(&live);
+    let launched_later = |a: &Value, b: &Value| {
+        let at = |g: &Value| g["lastLaunchedAt"].as_str().unwrap_or_default().to_string();
+        at(a) > at(b) || (at(a) == at(b) && rank_better(a, b))
+    };
     let mut by_exe: HashMap<String, &(String, Value)> = HashMap::new();
-    for entry in games.iter().filter(|(_, g)| !g["isDeleted"].as_bool().unwrap_or(false) && game_matches(g, running)) {
+    for entry in live.iter().filter(|(_, g)| game_matches(g, running)) {
         let exe = path_key(entry.1["executablePath"].as_str().unwrap_or_default());
         match by_exe.get(&exe) {
-            Some(best) if !rank_better(&entry.1, &best.1) => {}
+            Some(best) if !launched_later(&entry.1, &best.1) => {}
             _ => {
                 by_exe.insert(exe, entry);
             }
         }
     }
-    by_exe.into_values().map(|(key, _)| key.clone()).collect()
+    by_exe.into_values().map(|(key, _)| winners.get(key).cloned().unwrap_or_else(|| key.clone())).collect()
 }
 
 // shortcut: no Steam playtime policy, Hydra sync, achievement watcher, souvenir capture or Drive backup on exit;
@@ -206,6 +213,29 @@ mod tests {
             ("custom:x".into(), json!({ "shop": "custom", "executablePath": r"C:\H\b.exe" })),
         ];
         assert_eq!(keys(credited_keys(&games, &running(&[r"C:\G\a.exe", r"C:\H\b.exe"]))), ["custom:x", "steam:1"]);
+    }
+
+    const LN2_ART: &str = "https://shared.steamstatic.com/store_item_assets/steam/apps/860510/library_600x900_2x.jpg";
+
+    #[test]
+    fn running_copy_is_credited_to_its_group_winner() {
+        let games = vec![
+            ("steam:860510".into(), json!({ "shop": "steam", "objectId": "860510", "title": "LN2", "executablePath": r"C:\Steam\ln2.exe" })),
+            ("custom:gog-1".into(), json!({ "shop": "custom", "launcher": "gog", "iconUrl": LN2_ART, "title": "LN2", "executablePath": r"C:\GOG\ln2.exe" })),
+        ];
+        assert_eq!(keys(credited_keys(&games, &running(&[r"C:\GOG\ln2.exe"]))), ["steam:860510"]);
+    }
+
+    #[test]
+    fn split_copy_launched_last_gets_the_credit() {
+        let games = vec![
+            ("steam:860510".into(), json!({ "shop": "steam", "objectId": "860510", "title": "LN2", "executablePath": r"C:\GOG\ln2.exe", "lastLaunchedAt": "2026-10-01T00:00:00.000Z" })),
+            (
+                "custom:gog-1".into(),
+                json!({ "shop": "custom", "launcher": "gog", "iconUrl": LN2_ART, "title": "LN2", "executablePath": r"C:\GOG\ln2.exe", "dedupeExcluded": true, "lastLaunchedAt": "2026-10-31T00:00:00.000Z" }),
+            ),
+        ];
+        assert_eq!(keys(credited_keys(&games, &running(&[r"C:\GOG\ln2.exe"]))), ["custom:gog-1"]);
     }
 
     #[test]

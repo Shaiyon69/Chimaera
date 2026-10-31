@@ -161,6 +161,16 @@ fn spawn_detached(launch: &LaunchCommand, cwd: &Path) -> std::io::Result<()> {
     command.spawn().map(|_| ())
 }
 
+/// The record after launching `exe` for it. The exe is saved only when the record has none
+/// that still exists: playing another copy of a grouped game keeps this record's own install.
+/// `lastLaunchedAt` tells the playtime watcher which of several records sharing an exe ran it.
+pub fn record_launch(game: Value, exe: &str, launch_options: Option<&str>, own_exe_exists: bool) -> Value {
+    let mut game = if own_exe_exists { game } else { with_executable_path(game, Some(exe)) };
+    game["launchOptions"] = json!(launch_options);
+    game["lastLaunchedAt"] = json!(crate::library::iso_now());
+    game
+}
+
 /// `openGame`.
 // shortcut: Windows-native only. externalLaunch, bundled games (Bloodborne, Horizon), Steam protocol launch,
 // the common-redist preflight and Linux Wine/umu/Proton are not ported; each lands with its milestone.
@@ -174,9 +184,8 @@ pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_
     }
     let game = store.get("games", &key)?;
     if !game.is_null() {
-        let mut game = with_executable_path(game, Some(&parsed));
-        game["launchOptions"] = json!(launch_options);
-        store.put("games", &key, &game)?;
+        let own_exists = game["executablePath"].as_str().is_some_and(|own| !own.is_empty() && Path::new(&parse_executable_path(own)).exists());
+        store.put("games", &key, &record_launch(game, &parsed, launch_options, own_exists))?;
     }
 
     app.state::<LauncherStatuses>().clear(&key);
@@ -278,6 +287,22 @@ pub async fn image_data_url(url: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launching_another_copy_keeps_the_records_own_exe() {
+        let game = json!({ "executablePath": r"C:\Steam\ln2.exe" });
+        let after = record_launch(game, r"C:\GOG\ln2.exe", Some("-x"), true);
+        assert_eq!(after["executablePath"], r"C:\Steam\ln2.exe");
+        assert_eq!(after["launchOptions"], "-x");
+        assert!(after["lastLaunchedAt"].is_string());
+    }
+
+    #[test]
+    fn launching_saves_the_exe_when_the_record_has_none_or_it_is_gone() {
+        assert_eq!(record_launch(json!({}), r"C:\GOG\ln2.exe", None, false)["executablePath"], r"C:\GOG\ln2.exe");
+        let moved = json!({ "executablePath": r"C:\Old\ln2.exe" });
+        assert_eq!(record_launch(moved, r"C:\GOG\ln2.exe", None, false)["executablePath"], r"C:\GOG\ln2.exe");
+    }
 
     #[test]
     fn splits_like_string_argv() {

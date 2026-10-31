@@ -310,10 +310,10 @@ fn steam_cache_files(steam_path: &Path, object_id: &str) -> Vec<AchievementFile>
 }
 
 /// Every achievement file for a Steam-catalogue game (collectGameAchievementFiles).
-pub fn game_files(roots: &Roots, object_id: &str, executable: Option<&str>, steam_path: Option<&Path>) -> Vec<AchievementFile> {
+pub fn game_files(roots: &Roots, object_id: &str, executables: &[String], steam_path: Option<&Path>) -> Vec<AchievementFile> {
     let mut files = fixed_location_files(roots, object_id);
     files.extend(nested_goldberg_files(roots, object_id));
-    if let Some(exe) = executable.filter(|e| !e.is_empty()) {
+    for exe in executables.iter().filter(|e| !e.is_empty()) {
         files.extend(game_directory_files(Path::new(exe)));
     }
     if let Some(steam) = steam_path {
@@ -588,7 +588,7 @@ mod tests {
         fs::write(game.join("portal2.exe"), "").unwrap();
 
         let exe = game.join("portal2.exe");
-        let files = game_files(&roots, "620", Some(&exe.to_string_lossy()), None);
+        let files = game_files(&roots, "620", &[exe.to_string_lossy().into_owned()], None);
         let kinds: Vec<Cracker> = files.iter().map(|f| f.cracker).collect();
         assert_eq!(kinds, [Cracker::Codex, Cracker::Goldberg, Cracker::Goldberg], "{files:?}");
         assert!(files[2].path.ends_with(r"steam_settings\620\achievements.json"));

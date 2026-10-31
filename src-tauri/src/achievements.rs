@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::achievement_files::{self, AchievementFile, Roots, Unlock};
 use crate::achievement_popup;
 use crate::games::{game_key, update};
-use crate::library::now_ms;
+use crate::library::{group_winners, now_ms};
 use crate::store::Store;
 
 const INTERVAL: Duration = Duration::from_secs(2);
@@ -208,16 +208,32 @@ fn roots(app: &AppHandle) -> Roots {
     Roots::from_env(app.path().document_dir().unwrap_or_default())
 }
 
-/// Steam-catalogue games still in the library: (shop, objectId, executablePath).
-fn watched_games(store: &Store) -> Vec<(String, String, Option<String>)> {
-    store
-        .entries("games")
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(_, g)| g)
-        .filter(|g| !g["isDeleted"].as_bool().unwrap_or(false) && g["shop"] == "steam")
-        .filter_map(|g| Some(("steam".to_string(), g["objectId"].as_str()?.to_string(), g["executablePath"].as_str().map(str::to_string))))
+/// Steam-catalogue games still in the library: (shop, objectId, every install's exe).
+fn watched_games(store: &Store) -> Vec<(String, String, Vec<String>)> {
+    let live = live_games(store);
+    let winners = group_winners(&live);
+    live.iter()
+        .filter(|(_, g)| g["shop"] == "steam")
+        .filter_map(|(key, g)| Some(("steam".to_string(), g["objectId"].as_str()?.to_string(), group_executables(&live, &winners, key))))
         .collect()
+}
+
+fn live_games(store: &Store) -> Vec<(String, Value)> {
+    store.entries("games").unwrap_or_default().into_iter().filter(|(_, g)| !g["isDeleted"].as_bool().unwrap_or(false)).collect()
+}
+
+/// The exe of `key` and of every copy grouped with it; a copy played instead of the Steam
+/// record writes its achievement files next to its own exe.
+fn group_executables(live: &[(String, Value)], winners: &HashMap<String, String>, key: &str) -> Vec<String> {
+    let group = winners.get(key);
+    let own = live.iter().filter(|(k, _)| k == key);
+    let others = live.iter().filter(|(k, _)| k != key && group.is_some() && winners.get(k) == group);
+    own.chain(others).filter_map(|(_, g)| g["executablePath"].as_str().map(str::to_string)).collect()
+}
+
+fn executables_for(store: &Store, key: &str) -> Vec<String> {
+    let live = live_games(store);
+    group_executables(&live, &group_winners(&live), key)
 }
 
 fn mtime(path: &PathBuf) -> Option<SystemTime> {
@@ -225,13 +241,13 @@ fn mtime(path: &PathBuf) -> Option<SystemTime> {
 }
 
 impl AchievementWatcher {
-    fn files_for(&self, roots: &Roots, steam: Option<&std::path::Path>, object_id: &str, exe: Option<&str>) -> Vec<AchievementFile> {
+    fn files_for(&self, roots: &Roots, steam: Option<&std::path::Path>, object_id: &str, exes: &[String]) -> Vec<AchievementFile> {
         if let Some((at, files)) = lock(&self.files).get(object_id) {
             if at.elapsed() < DISCOVERY_TTL {
                 return files.clone();
             }
         }
-        let files = achievement_files::game_files(roots, object_id, exe, steam);
+        let files = achievement_files::game_files(roots, object_id, exes, steam);
         lock(&self.files).insert(object_id.to_string(), (Instant::now(), files.clone()));
         files
     }
@@ -277,8 +293,8 @@ pub fn spawn(app: AppHandle) {
                 let roots = roots(&scan_app);
                 games
                     .into_iter()
-                    .filter_map(|(shop, id, exe)| {
-                        let changed = watcher.changed(&watcher.files_for(&roots, steam.as_deref(), &id, exe.as_deref()));
+                    .filter_map(|(shop, id, exes)| {
+                        let changed = watcher.changed(&watcher.files_for(&roots, steam.as_deref(), &id, &exes));
                         (!changed.is_empty()).then(|| (shop, id, parse_all(&changed)))
                     })
                     .collect::<Vec<_>>()
@@ -320,12 +336,12 @@ pub async fn get_unlocked_achievements(app: &AppHandle, object_id: &str, shop: &
     let key = game_key(shop, object_id);
     let first_look = shop == "steam" && lock(&app.state::<AchievementWatcher>().synced).insert(key.clone());
     if first_look {
-        let exe = app.state::<Store>().get("games", &key)?["executablePath"].as_str().map(str::to_string);
+        let exes = executables_for(&app.state::<Store>(), &key);
         let (scan_app, id) = (app.clone(), object_id.to_string());
         let (steam_unlocks, other_unlocks) = tauri::async_runtime::spawn_blocking(move || {
             let store = scan_app.state::<Store>();
             let steam = preferences(&store)["enableSteamAchievements"].as_bool().unwrap_or(false).then(steam_path).flatten();
-            parse_all(&achievement_files::game_files(&roots(&scan_app), &id, exe.as_deref(), steam.as_deref()))
+            parse_all(&achievement_files::game_files(&roots(&scan_app), &id, &exes, steam.as_deref()))
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -368,8 +384,9 @@ pub async fn reset(app: &AppHandle, shop: &str, object_id: &str) -> Result<(), S
     if game.is_null() {
         return Ok(());
     }
-    let exe = game["executablePath"].as_str().map(str::to_string);
-    let files = achievement_files::game_files(&roots(app), object_id, exe.as_deref(), None);
+    // Every grouped copy: their unlocks merge into this record, so leftovers would come back.
+    let exes = executables_for(&app.state::<Store>(), &key);
+    let files = achievement_files::game_files(&roots(app), object_id, &exes, None);
     let watcher = app.state::<AchievementWatcher>();
     {
         let mut mtimes = lock(&watcher.mtimes);
@@ -425,6 +442,17 @@ mod tests {
         assert_eq!(names(&steam), ["S1"]);
         assert_eq!(names(&other), ["G1"]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn watches_every_install_of_a_grouped_game() {
+        let store = Store::memory().unwrap();
+        store.put("games", "steam:860510", &json!({ "shop": "steam", "objectId": "860510", "title": "LN2", "executablePath": r"C:\Steam\ln2.exe" })).unwrap();
+        let art = "https://shared.steamstatic.com/store_item_assets/steam/apps/860510/library_600x900_2x.jpg";
+        let gog = json!({ "shop": "custom", "objectId": "gog-1", "launcher": "gog", "iconUrl": art, "title": "LN2", "executablePath": r"C:\GOG\ln2.exe" });
+        store.put("games", "custom:gog-1", &gog).unwrap();
+        // Playing the GOG copy leaves the Steam record's exe alone, so its folder is scanned too.
+        assert_eq!(watched_games(&store), vec![("steam".to_string(), "860510".to_string(), vec![r"C:\Steam\ln2.exe".to_string(), r"C:\GOG\ln2.exe".to_string()])]);
     }
 
     #[test]

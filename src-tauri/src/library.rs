@@ -109,6 +109,27 @@ pub fn rank_better(candidate: &Value, current: &Value) -> bool {
 /// record, at the position of the group's first member. Nothing is written back: the
 /// winner only carries `linkedGames`, a borrowed exe and the group's summed playtime.
 pub fn dedupe_library(entries: Vec<(String, Value)>) -> Vec<(String, Value)> {
+    group_members(&entries).into_iter().map(|members| merge_group(&entries, &members)).collect()
+}
+
+/// Each record's key mapped to the key of the record that wins its group.
+pub fn group_winners(entries: &[(String, Value)]) -> HashMap<String, String> {
+    let mut winners = HashMap::new();
+    for members in group_members(entries) {
+        let winner = &entries[group_winner(entries, &members)].0;
+        for i in members {
+            winners.insert(entries[i].0.clone(), winner.clone());
+        }
+    }
+    winners
+}
+
+fn group_winner(entries: &[(String, Value)], members: &[usize]) -> usize {
+    members.iter().copied().fold(members[0], |best, i| if rank_better(&entries[i].1, &entries[best].1) { i } else { best })
+}
+
+/// Indices of the records in each group, in store order.
+fn group_members(entries: &[(String, Value)]) -> Vec<Vec<usize>> {
     let mut keys: Vec<Option<String>> = entries.iter().map(|(_, g)| dedupe_key(g)).collect();
     // A copy with no Steam art still joins the Steam record of the same title.
     let mut appid_by_title = HashMap::new();
@@ -136,11 +157,11 @@ pub fn dedupe_library(entries: Vec<(String, Value)>) -> Vec<(String, Value)> {
             }
         }
     }
-    groups.into_iter().map(|members| merge_group(&entries, &members)).collect()
+    groups
 }
 
 fn merge_group(entries: &[(String, Value)], members: &[usize]) -> (String, Value) {
-    let winner = members.iter().copied().fold(members[0], |best, i| if rank_better(&entries[i].1, &entries[best].1) { i } else { best });
+    let winner = group_winner(entries, members);
     let (key, game) = &entries[winner];
     let mut game = game.clone();
     let losers: Vec<&(String, Value)> = members.iter().filter(|&&i| i != winner).map(|&i| &entries[i]).collect();
