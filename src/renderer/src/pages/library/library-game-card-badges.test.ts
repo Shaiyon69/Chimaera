@@ -77,6 +77,7 @@ function renderCard(
       EMULATOR_ICONS: {},
     },
     "@renderer/logger": { logger: { warn: () => {} } },
+    "./linked-games": { linkedLauncherIds: () => [] },
     "react-i18next": { useTranslation: () => ({ t: (key: string) => key }) },
     "react-router-dom": { useNavigate: () => () => {} },
   };

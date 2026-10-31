@@ -1,4 +1,4 @@
-import type { GameShop } from "@types";
+import type { GameShop, LinkedGame } from "@types";
 
 export interface GameContextMenuGame {
   id?: string;
@@ -16,4 +16,6 @@ export interface GameContextMenuGame {
   selectedDiscPath?: string | null;
   dontAskDiscSelection?: boolean;
   launchOptions?: string | null;
+  dedupeExcluded?: boolean;
+  linkedGames?: LinkedGame[];
 }

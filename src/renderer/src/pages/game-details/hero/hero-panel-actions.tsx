@@ -33,6 +33,7 @@ import { DiscSelectionModal } from "../modals/disc-selection-modal";
 import "./hero-panel-actions.scss";
 import { useEffect } from "react";
 import { findBundledGame } from "@shared";
+import { linkedExecutables } from "@renderer/pages/library/linked-games";
 import {
   BUNDLED_GAME_CONFIGURED_EVENT,
   openBundledGameSetup,
@@ -506,6 +507,39 @@ export function HeroPanelActions() {
       game?.shop === "launchbox" && (game?.discs?.length ?? 0) > 0;
 
     if (bundled && !bundledConfigured) return bundledInstallButton;
+
+    // Copies of this game from other launchers: one Play button per install.
+    const executables = game ? linkedExecutables(game) : [];
+    if (executables.length > 1 && game) {
+      return (
+        <>
+          {executables.map(({ launcher, executablePath }) => (
+            <Button
+              key={executablePath}
+              onClick={() =>
+                window.electron.openGame(
+                  game.shop,
+                  game.objectId,
+                  executablePath,
+                  game.launchOptions
+                )
+              }
+              theme="outline"
+              disabled={deleting || isGameRunning}
+              className="hero-panel-actions__action"
+              title={executablePath}
+            >
+              <PlayIcon />
+              {launcher
+                ? t("play_with", {
+                    launcher: t(`launcher_${launcher}`, { ns: "library" }),
+                  })
+                : t("play")}
+            </Button>
+          ))}
+        </>
+      );
+    }
 
     if (game?.executablePath || isPlayableClassics || findBundledGame(game)) {
       return (

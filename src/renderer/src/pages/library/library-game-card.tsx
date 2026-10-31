@@ -30,6 +30,7 @@ import {
 } from "@renderer/pages/settings/emulation/emulator-icons";
 import "./library-game-card.scss";
 import { logger } from "@renderer/logger";
+import { linkedLauncherIds } from "./linked-games";
 
 interface LibraryGameCardProps {
   game: LibraryGame;
@@ -67,6 +68,9 @@ export const LibraryGameCard = memo(function LibraryGameCard({
     userPreferences?.autoplayAnimatedArtwork ?? false;
 
   const isInstalled = isGameReadyToPlay(game);
+  const linkedLaunchers = linkedLauncherIds(game)
+    .map((id) => t(`launcher_${id}`))
+    .join(" · ");
 
   const hasPickedCover = Boolean(game.selectedArtworkTypes?.includes("grid"));
 
@@ -268,6 +272,11 @@ export const LibraryGameCard = memo(function LibraryGameCard({
                     true
                   )}
                 </span>
+              </div>
+            )}
+            {!hideBadges && linkedLaunchers && (
+              <div className="library-game-card__playtime">
+                <span>{linkedLaunchers}</span>
               </div>
             )}
           </div>

@@ -35,6 +35,7 @@ import {
   RETROARCH_EMULATOR_ICON,
 } from "@renderer/pages/settings/emulation/emulator-icons";
 import "./library-game-card-large.scss";
+import { linkedLauncherIds } from "./linked-games";
 
 interface LibraryGameCardLargeProps {
   game: LibraryGame;
@@ -94,6 +95,9 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
     (state) => state.userPreferences.value
   );
   const hideBadges = userPreferences?.hideLibraryGameBadges ?? false;
+  const linkedLaunchers = linkedLauncherIds(game)
+    .map((id) => t(`launcher_${id}`))
+    .join(" · ");
   const hideReadySizeBadges =
     userPreferences?.hideLibraryReadySizeBadges ?? false;
   const hideClassicsBadges =
@@ -395,6 +399,14 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
                 )}
                 <span className="library-game-card-large__playtime-text">
                   {formatPlayTime(getDisplayedPlayTimeInMilliseconds(game))}
+                </span>
+              </div>
+            )}
+
+            {!hideBadges && linkedLaunchers && (
+              <div className="library-game-card-large__playtime">
+                <span className="library-game-card-large__playtime-text">
+                  {linkedLaunchers}
                 </span>
               </div>
             )}

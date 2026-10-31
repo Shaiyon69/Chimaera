@@ -20,6 +20,7 @@ import {
   PinSlashIcon,
   EyeClosedIcon,
   LockIcon,
+  DuplicateIcon,
 } from "@primer/octicons-react";
 import SteamLogo from "@renderer/assets/steam-logo.svg?react";
 import {
@@ -30,7 +31,13 @@ import {
   CreateCollectionModal,
   useGameActions,
 } from "..";
-import { useGameCollections, useToast, useUserDetails } from "@renderer/hooks";
+import {
+  useGameCollections,
+  useLibrary,
+  useToast,
+  useUserDetails,
+} from "@renderer/hooks";
+import { logger } from "@renderer/logger";
 import { useCollectionContextMenu } from "@renderer/context";
 import { getGameCollectionIds } from "@renderer/helpers";
 import { RemoveGameFromLibraryModal } from "@renderer/pages/game-details/modals/remove-from-library-modal";
@@ -62,6 +69,7 @@ export function GameContextMenu({
   const { t } = useTranslation("game_details");
   const { showSuccessToast, showErrorToast } = useToast();
   const { userDetails } = useUserDetails();
+  const { updateLibrary } = useLibrary();
   const [searchParams] = useSearchParams();
   const [showConfirmRemoveLibrary, setShowConfirmRemoveLibrary] =
     useState(false);
@@ -156,6 +164,34 @@ export function GameContextMenu({
       showErrorToast(t("failed_update_game_visibility"));
     } finally {
       setIsVisibilityPending(false);
+    }
+  };
+
+  // A grouped entry splits its copies apart; a split-off copy rejoins its group.
+  const handleToggleGrouping = async () => {
+    try {
+      if (game.linkedGames?.length) {
+        await Promise.all(
+          game.linkedGames.map((copy) =>
+            window.electron.setGameDedupeExcluded(
+              copy.shop,
+              copy.objectId,
+              true
+            )
+          )
+        );
+      } else {
+        await window.electron.setGameDedupeExcluded(
+          game.shop,
+          game.objectId,
+          false
+        );
+      }
+      await updateLibrary();
+      onClose();
+    } catch (error) {
+      logger.error("Failed to update library grouping", error);
+      showErrorToast(t("failed_update_game_grouping"));
     }
   };
 
@@ -380,6 +416,19 @@ export function GameContextMenu({
           onClick: onPinToggle ?? handleTogglePin,
           disabled: isDeleting,
         },
+        ...(game.linkedGames?.length || game.dedupeExcluded
+          ? [
+              {
+                id: "library-grouping",
+                label: game.linkedGames?.length
+                  ? t("show_copies_separately")
+                  : t("group_with_copies"),
+                icon: <DuplicateIcon size={16} />,
+                onClick: () => void handleToggleGrouping(),
+                disabled: isDeleting,
+              },
+            ]
+          : []),
         {
           id: "customize",
           label: t("customize_game"),
