@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::games::update;
 use crate::launch::{close_launcher_window, is_batch_file, LauncherStatuses};
-use crate::library::{iso_now, now_ms};
+use crate::library::{iso_now, now_ms, rank_better};
 use crate::store::Store;
 
 const INTERVAL: Duration = Duration::from_secs(2);
@@ -93,17 +93,35 @@ fn running_exes(system: &mut sysinfo::System) -> HashSet<String> {
     system.processes().values().filter_map(|p| p.exe()).map(|exe| path_key(&exe.to_string_lossy())).collect()
 }
 
+/// The running records that earn this tick's playtime. Copies of one game launched
+/// through a grouped tile share an exe; only the best-ranked copy counts it.
+pub fn credited_keys(games: &[(String, Value)], running: &HashSet<String>) -> HashSet<String> {
+    let mut by_exe: HashMap<String, &(String, Value)> = HashMap::new();
+    for entry in games.iter().filter(|(_, g)| !g["isDeleted"].as_bool().unwrap_or(false) && game_matches(g, running)) {
+        let exe = path_key(entry.1["executablePath"].as_str().unwrap_or_default());
+        match by_exe.get(&exe) {
+            Some(best) if !rank_better(&entry.1, &best.1) => {}
+            _ => {
+                by_exe.insert(exe, entry);
+            }
+        }
+    }
+    by_exe.into_values().map(|(key, _)| key.clone()).collect()
+}
+
 // shortcut: no Steam playtime policy, Hydra sync, achievement watcher, souvenir capture or Drive backup on exit;
 // local playtime always counts. Those hook in with Steam (F7), achievements (F6) and save backups (F5).
 fn tick(app: &AppHandle, running: &HashSet<String>, was_idle: &mut bool) -> Result<(), String> {
     let store = app.state::<Store>();
     let sessions = app.state::<Sessions>();
     let now = Instant::now();
-    for (key, game) in store.entries("games")? {
+    let games = store.entries("games")?;
+    let credited = credited_keys(&games, running);
+    for (key, game) in games {
         if game["isDeleted"].as_bool().unwrap_or(false) {
             continue;
         }
-        let matched = game_matches(&game, running);
+        let matched = credited.contains(&key);
         let mut all = sessions.lock();
         match (matched, all.get_mut(&key)) {
             (true, Some(session)) => {
@@ -161,6 +179,40 @@ mod tests {
 
     fn running(paths: &[&str]) -> HashSet<String> {
         paths.iter().map(|p| path_key(p)).collect()
+    }
+
+    fn keys(set: HashSet<String>) -> Vec<String> {
+        let mut keys: Vec<String> = set.into_iter().collect();
+        keys.sort();
+        keys
+    }
+
+    fn shared_pair() -> Vec<(String, Value)> {
+        vec![
+            ("steam:1".into(), json!({ "shop": "steam", "executablePath": r"C:\G\a.exe" })),
+            ("custom:gog-1".into(), json!({ "shop": "custom", "executablePath": "c:/g/A.exe" })),
+        ]
+    }
+
+    #[test]
+    fn shared_exe_credits_only_the_steam_record() {
+        assert_eq!(keys(credited_keys(&shared_pair(), &running(&[r"C:\G\a.exe"]))), ["steam:1"]);
+    }
+
+    #[test]
+    fn different_exes_are_both_credited() {
+        let games = vec![
+            ("steam:1".into(), json!({ "shop": "steam", "executablePath": r"C:\G\a.exe" })),
+            ("custom:x".into(), json!({ "shop": "custom", "executablePath": r"C:\H\b.exe" })),
+        ];
+        assert_eq!(keys(credited_keys(&games, &running(&[r"C:\G\a.exe", r"C:\H\b.exe"]))), ["custom:x", "steam:1"]);
+    }
+
+    #[test]
+    fn deleted_records_are_ignored() {
+        let mut games = shared_pair();
+        games[0].1["isDeleted"] = json!(true);
+        assert_eq!(keys(credited_keys(&games, &running(&[r"C:\G\a.exe"]))), ["custom:gog-1"]);
     }
 
     #[test]
