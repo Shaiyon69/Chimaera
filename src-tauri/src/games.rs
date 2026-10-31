@@ -84,6 +84,32 @@ pub fn add_to_library(store: &Store, shop: &str, object_id: &str, title: &str, p
     store.put("games", &key, &game)
 }
 
+/// Gives every launcher import with a known Steam appid a `steam:<appid>` record, so the
+/// grouped tile gets the Steam achievement catalogue. A key that exists at all, even
+/// removed by the user, is left alone. Returns how many records it created.
+pub fn backfill_steam_records(store: &Store) -> Result<usize, String> {
+    let mut created = 0;
+    for (_, game) in store.entries("games")? {
+        let is_import = game["shop"] == "custom" && game["launcher"].is_string() && !game["isDeleted"].as_bool().unwrap_or(false);
+        let Some(app_id) = is_import.then(|| crate::library::steam_app_id(&game)).flatten() else { continue };
+        let key = game_key("steam", &app_id);
+        if !store.get("games", &key)?.is_null() {
+            continue;
+        }
+        add_to_library(store, "steam", &app_id, game["title"].as_str().unwrap_or_default(), None)?;
+        // No shop assets are cached for a new appid yet; the import's art is already Steam's.
+        update(store, &key, |steam| {
+            for field in ["iconUrl", "libraryHeroImageUrl", "logoImageUrl"] {
+                if steam.get(field).is_none_or(Value::is_null) {
+                    steam.insert(field.into(), game[field].clone());
+                }
+            }
+        })?;
+        created += 1;
+    }
+    Ok(created)
+}
+
 /// `removeGameFromLibrary`: marks the game deleted, drops its custom art and artwork picks.
 pub fn remove_from_library(store: &Store, shop: &str, object_id: &str) -> Result<(), String> {
     let key = game_key(shop, object_id);
@@ -285,6 +311,49 @@ mod tests {
         let moved = with_executable_path(game.clone(), Some("C:\\b.exe"));
         assert_ne!(moved["executablePathUpdatedAt"], "old");
         assert_eq!(with_executable_path(game, None)["executablePathUpdatedAt"], Value::Null);
+    }
+
+    const LN2_ART: &str = "https://shared.steamstatic.com/store_item_assets/steam/apps/860510/library_600x900_2x.jpg";
+
+    fn gog_import(store: &Store) {
+        let game = json!({ "shop": "custom", "objectId": "gog-1", "launcher": "gog", "iconUrl": LN2_ART, "title": "Little Nightmares II", "isDeleted": false });
+        store.put("games", "custom:gog-1", &game).unwrap();
+    }
+
+    #[test]
+    fn creates_steam_record_for_launcher_import() {
+        let store = Store::memory().unwrap();
+        gog_import(&store);
+        assert_eq!(backfill_steam_records(&store).unwrap(), 1);
+        let steam = store.get("games", "steam:860510").unwrap();
+        assert_eq!((steam["shop"].as_str(), steam["objectId"].as_str(), steam["isDeleted"].as_bool()), (Some("steam"), Some("860510"), Some(false)));
+        assert_eq!(steam["title"], "Little Nightmares II");
+        assert_eq!(steam["iconUrl"], LN2_ART);
+    }
+
+    #[test]
+    fn leaves_a_removed_steam_record_alone() {
+        let store = Store::memory().unwrap();
+        gog_import(&store);
+        store.put("games", "steam:860510", &json!({ "shop": "steam", "objectId": "860510", "isDeleted": true })).unwrap();
+        assert_eq!(backfill_steam_records(&store).unwrap(), 0);
+        assert_eq!(store.get("games", "steam:860510").unwrap()["isDeleted"], true);
+    }
+
+    #[test]
+    fn skips_non_launcher_and_deleted_records() {
+        let store = Store::memory().unwrap();
+        store.put("games", "custom:mine", &json!({ "shop": "custom", "objectId": "mine", "iconUrl": LN2_ART, "title": "Mine" })).unwrap();
+        store.put("games", "custom:gog-2", &json!({ "shop": "custom", "objectId": "gog-2", "launcher": "gog", "iconUrl": LN2_ART, "isDeleted": true })).unwrap();
+        assert_eq!(backfill_steam_records(&store).unwrap(), 0);
+    }
+
+    #[test]
+    fn second_run_creates_nothing() {
+        let store = Store::memory().unwrap();
+        gog_import(&store);
+        backfill_steam_records(&store).unwrap();
+        assert_eq!(backfill_steam_records(&store).unwrap(), 0);
     }
 
     #[test]

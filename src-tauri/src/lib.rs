@@ -89,6 +89,12 @@ pub fn run() {
                 // Not fatal: the app starts empty and the import retries next launch.
                 Err(error) => eprintln!("[import] Electron data import failed: {error}"),
             }
+            // After the import, so imported launcher games get their Steam record on the first run too.
+            match games::backfill_steam_records(&store) {
+                Ok(0) => {}
+                Ok(count) => eprintln!("[library] added {count} steam records for launcher games"),
+                Err(error) => eprintln!("[library] steam backfill failed: {error}"),
+            }
             app.manage(store);
             app.manage(ipc::AppSession(uuid::Uuid::new_v4().to_string()));
             app.manage(launch::LauncherStatuses::default());
