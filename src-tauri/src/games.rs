@@ -97,8 +97,7 @@ pub fn remove_from_library(store: &Store, shop: &str, object_id: &str) -> Result
     } else {
         &["customIconUrl", "customLogoImageUrl", "customHeroImageUrl", "customCoverImageUrl"]
     };
-    let files: Vec<String> =
-        art_fields.iter().filter_map(|f| game[*f].as_str()?.strip_prefix("local:").map(String::from)).collect();
+    let files: Vec<String> = art_fields.iter().filter_map(|f| local_asset_file(&game[*f])).collect();
     let mut game = with_executable_path(game, None);
     game["isDeleted"] = json!(true);
     if shop != "custom" {
@@ -108,14 +107,60 @@ pub fn remove_from_library(store: &Store, shop: &str, object_id: &str) -> Result
     }
     store.put("games", &key, &game)?;
     store.del("artworkSelection", &key)?;
+    delete_asset_files(&files);
+    Ok(())
+}
+
+/// The file behind a `local:` asset URL.
+pub fn local_asset_file(url: &Value) -> Option<String> {
+    url.as_str()?.strip_prefix("local:").map(String::from)
+}
+
+/// Best effort, as in Electron: a leftover asset file only wastes disk.
+pub fn delete_asset_files(files: &[String]) {
     for file in files {
-        if let Err(error) = std::fs::remove_file(&file) {
+        if let Err(error) = std::fs::remove_file(file) {
             if error.kind() != std::io::ErrorKind::NotFound {
                 eprintln!("[games] failed to delete asset {file}: {error}");
             }
         }
     }
+}
+
+/// Plain field writes (gamemode, mangohud, playtime tracking); a missing game is a no-op.
+pub fn set_field(store: &Store, shop: &str, object_id: &str, field: &'static str, value: Value) -> Result<(), String> {
+    update(store, &game_key(shop, object_id), set(field, value)).map(|_| ())
+}
+
+/// `clearNewDownloadOptions`: Electron writes `undefined`, which drops the field.
+pub fn clear_new_download_options(store: &Store, shop: &str, object_id: &str) -> Result<(), String> {
+    update(store, &game_key(shop, object_id), |game| {
+        game.remove("newDownloadOptionsCount");
+    })
+    .map(|_| ())
+}
+
+/// `assignGameToCollection`: local write only; the Hydra collection sync is not used in local mode.
+pub fn assign_to_collection(store: &Store, shop: &str, object_id: &str, collection_ids: Value) -> Result<(), String> {
+    update(store, &game_key(shop, object_id), set("collectionIds", collection_ids))?.ok_or("game/not-found-local")?;
     Ok(())
+}
+
+/// getGameSaveFolderShellPath (open-game-save-folder-core.ts): Explorer cannot open `\\?\` paths.
+pub fn save_folder_shell_path(folder: &str) -> String {
+    if !cfg!(windows) {
+        return folder.into();
+    }
+    let path = folder.replace('/', r"\");
+    let lower = path.to_ascii_lowercase();
+    if lower.starts_with(r"\\?\unc\") {
+        return format!(r"\\{}", &path[8..]);
+    }
+    let drive = lower.as_bytes().get(4..7);
+    if lower.starts_with(r"\\?\") && drive.is_some_and(|d| d[0].is_ascii_lowercase() && d[1] == b':' && d[2] == b'\\') {
+        return path[4..].into();
+    }
+    folder.into()
 }
 
 pub fn set_favorite(store: &Store, shop: &str, object_id: &str, favorite: bool) -> Result<(), String> {
@@ -268,6 +313,24 @@ mod tests {
         assert!(set_visibility(&store, "custom", "x", "isHiddenFromOthers", true).is_err());
         assert_eq!(set_visibility(&store, "custom", "x", "isConcealed", true).unwrap(), json!({ "isHiddenFromOthers": false, "isConcealed": true }));
         assert!(set_visibility(&store, "steam", "missing", "isConcealed", true).is_err());
+    }
+
+    #[test]
+    fn collection_and_download_option_writes() {
+        let store = Store::memory().unwrap();
+        store.put("games", "steam:1", &json!({ "newDownloadOptionsCount": 3 })).unwrap();
+        clear_new_download_options(&store, "steam", "1").unwrap();
+        assign_to_collection(&store, "steam", "1", json!(["c1"])).unwrap();
+        assert_eq!(store.get("games", "steam:1").unwrap(), json!({ "collectionIds": ["c1"] }));
+        assert_eq!(assign_to_collection(&store, "steam", "2", json!([])).unwrap_err(), "game/not-found-local");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn save_folder_paths_drop_the_long_path_prefix() {
+        assert_eq!(save_folder_shell_path(r"\\?\C:\Saves"), r"C:\Saves");
+        assert_eq!(save_folder_shell_path(r"\\?\UNC\server\share"), r"\\server\share");
+        assert_eq!(save_folder_shell_path("C:/Saves"), "C:/Saves");
     }
 
     #[test]

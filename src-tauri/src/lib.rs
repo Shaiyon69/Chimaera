@@ -2,6 +2,7 @@
 //! unchanged (src/tauri/electron-shim.ts); every preload IPC call arrives at the
 //! single `ipc` command and is routed by channel name in `ipc.rs`.
 
+mod artwork;
 mod electron_import;
 mod games;
 mod hydra_api;

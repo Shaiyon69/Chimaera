@@ -9,7 +9,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{games, hydra_api, launch, library};
+use crate::{artwork, games, hydra_api, launch, library};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -144,7 +144,63 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             }
             Ok(Value::Null)
         }
-        "getPlaySessions" => games::play_sessions(&app.state::<Store>(), shop(args), object_id(args)),
+        "clearNewDownloadOptions" => games::clear_new_download_options(&app.state::<Store>(), shop(args), object_id(args)).map(|_| Value::Null),
+        "assignGameToCollection" => {
+            let ids = args.get(2).cloned().unwrap_or(json!([]));
+            games::assign_to_collection(&app.state::<Store>(), shop(args), object_id(args), ids).map(|_| Value::Null)
+        }
+        // The watcher always counts playtime here, so a running session needs no extra switch.
+        "setGameHydraPlaytimeEnabled" => {
+            let enabled = args.get(2).and_then(Value::as_bool).unwrap_or(false);
+            games::set_field(&app.state::<Store>(), shop(args), object_id(args), "enableHydraPlaytimeTracking", json!(enabled)).map(|_| Value::Null)
+        }
+        "toggleGameGamemode" => {
+            let on = args.get(2).and_then(Value::as_bool).unwrap_or(false);
+            games::set_field(&app.state::<Store>(), shop(args), object_id(args), "autoRunGamemode", json!(on)).map(|_| Value::Null)
+        }
+        "toggleGameMangohud" => {
+            let on = args.get(2).and_then(Value::as_bool).unwrap_or(false);
+            games::set_field(&app.state::<Store>(), shop(args), object_id(args), "autoRunMangohud", json!(on)).map(|_| Value::Null)
+        }
+        // shortcut: gamemode, MangoHud, winetricks and Proton are Linux-only and report their Windows answer;
+        // the Linux launch path (Wine/umu/Proton) ports them for real.
+        "isGamemodeAvailable" => Ok(json!(false)),
+        "isMangohudAvailable" => Ok(json!(false)),
+        "isWinetricksAvailable" => Ok(json!(false)),
+        "getInstalledProtonVersions" => Ok(json!([])),
+        "getGameLaunchProtonVersion" => Ok(Value::Null),
+        "getGameArtworkSelection" => app.state::<Store>().get("artworkSelection", &games::game_key(shop(args), object_id(args))),
+        "setGameArtworkSelection" => {
+            let record = artwork::set_artwork_selection(&app.state::<Store>(), args.first().unwrap_or(&Value::Null))?;
+            app.emit("on-library-batch-complete", ()).map_err(|e| e.to_string())?;
+            Ok(record)
+        }
+        "addCustomGameToLibrary" => {
+            let (title, exe) = (arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default());
+            artwork::add_custom_game(&app.state::<Store>(), title, exe, args.get(2), args.get(3), args.get(4))
+        }
+        "copyCustomGameAsset" => {
+            let assets = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Assets");
+            artwork::copy_custom_game_asset(&assets, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).map(|url| json!(url))
+        }
+        "updateCustomGame" => {
+            let game = artwork::update_custom_game(&app.state::<Store>(), args.first().unwrap_or(&Value::Null))?;
+            app.emit("on-library-batch-complete", ()).map_err(|e| e.to_string())?;
+            Ok(game)
+        }
+        "updateGameCustomAssets" => {
+            let game = artwork::update_game_custom_assets(&app.state::<Store>(), args.first().unwrap_or(&Value::Null))?;
+            app.emit("on-library-batch-complete", ()).map_err(|e| e.to_string())?;
+            Ok(game)
+        }
+        "openGameSaveFolder" => {
+            let folder = arg_str(args, 2).unwrap_or_default();
+            if folder.is_empty() || !std::path::Path::new(folder).exists() {
+                return Ok(json!(false));
+            }
+            Ok(json!(app.opener().open_path(games::save_folder_shell_path(folder), None::<&str>).is_ok()))
+        }
+        "getPlaySessions" =>games::play_sessions(&app.state::<Store>(), shop(args), object_id(args)),
         "getPlaytimeSummary" => games::playtime_summary(&app.state::<Store>()),
         "openGame" => {
             let (executable_path, launch_options) = (arg_str(args, 2).unwrap_or_default(), arg_str(args, 3));
