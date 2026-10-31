@@ -3,6 +3,7 @@
 //! single `ipc` command and is routed by channel name in `ipc.rs`.
 
 mod artwork;
+mod bundled_games;
 mod electron_import;
 mod file_system;
 mod games;

@@ -27,7 +27,7 @@ rusty-leveldb = "3"
 sha2 = "0.10"
 percent-encoding = "2"
 sysinfo = { version = "0.37", default-features = false, features = ["system", "disk"] }
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "macros"] }
 base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
