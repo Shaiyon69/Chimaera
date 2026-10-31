@@ -245,14 +245,16 @@ describe("Library and console filters", () => {
 
 describe("Profile library filter", () => {
   it("maps profile platforms to shops", () => {
-    assert.deepEqual(getProfileLibraryFilter("pc"), { shops: ["steam"] });
+    assert.deepEqual(getProfileLibraryFilter("pc"), {
+      shops: ["steam", "custom"],
+    });
     assert.deepEqual(getProfileLibraryFilter("classics"), {
       shops: ["launchbox"],
     });
 
     const params = new URLSearchParams();
     appendProfileLibraryFilterParams(params, getProfileLibraryFilter("all"));
-    assert.equal(params.toString(), "shop=steam&shop=launchbox");
+    assert.equal(params.toString(), "shop=steam&shop=custom&shop=launchbox");
   });
 });
 

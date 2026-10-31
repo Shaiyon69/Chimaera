@@ -172,11 +172,12 @@ export const getProfileLibraryFilter = (
     return { shops: ["launchbox"] };
   }
 
+  // Custom games stay local in Chimaera, so the profile lists them too.
   if (platform === "pc") {
-    return { shops: ["steam"] };
+    return { shops: ["steam", "custom"] };
   }
 
-  return { shops: ["steam", "launchbox"] };
+  return { shops: ["steam", "custom", "launchbox"] };
 };
 
 export const appendProfileLibraryFilterParams = (
