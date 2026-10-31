@@ -17,6 +17,7 @@ mod ipc;
 mod launch;
 mod launcher_import;
 mod library;
+mod scan;
 mod local_files;
 mod shop_details;
 mod shortcuts;

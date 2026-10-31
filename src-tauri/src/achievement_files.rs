@@ -214,7 +214,7 @@ fn emulator_dirs(exe: &Path) -> Vec<PathBuf> {
 }
 
 /// canonicalize without Windows' `\\?\` prefix, so paths read like the rest.
-fn real_path(path: &Path) -> Option<PathBuf> {
+pub(crate) fn real_path(path: &Path) -> Option<PathBuf> {
     let real = fs::canonicalize(path).ok()?;
     Some(real.to_string_lossy().strip_prefix(r"\\?\").map(PathBuf::from).unwrap_or(real))
 }

@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, file_system, games, hydra_api, installer, launch, launcher_import, library, shop_details, shortcuts, steam_shortcuts};
+use crate::{achievement_popup, achievements, artwork, bundled_games, file_system, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -308,6 +308,16 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let app = app.clone();
             tauri::async_runtime::spawn_blocking(move || launcher_import::detect_games(&app.state::<Store>())).await.map_err(|e| e.to_string())?
         }
+        "scanInstalledGames" => {
+            let extra = args.first().and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(std::path::PathBuf::from).collect();
+            let flag = |i: usize| args.get(i).and_then(Value::as_bool).unwrap_or(true);
+            scan::scan(app, extra, flag(1), flag(2), arg_str(args, 3).map(str::to_string)).await
+        }
+        "cancelScanInstalledGames" => {
+            scan::cancel(arg_str(args, 0).unwrap_or_default());
+            Ok(Value::Null)
+        }
+        "addScannedGames" => scan::add_scanned(app, args.first().unwrap_or(&Value::Null)).await,
         "importLauncherGames" => launcher_import::import_games(app, args.first().unwrap_or(&Value::Null)).await,
         "closeGame" => launch::close_game(&app.state::<Store>(), shop(args), object_id(args)),
         "getGameLauncherStatuses" => Ok(app.state::<LauncherStatuses>().get(&games::game_key(shop(args), object_id(args)))),

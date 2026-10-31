@@ -11,7 +11,7 @@ use crate::store::Store;
 
 const MAX_INSTALLER_DEPTH: usize = 2;
 
-const REDIST_DIRECTORIES: &[&str] = &[
+pub(crate) const REDIST_DIRECTORIES: &[&str] = &[
     "_commonredist", "commonredist", "steamworks shared", "redist", "redists", "_redist", "directx", "dotnet", "dotnetfx", "vcredist", "openal", "physx",
     "prerequisites", "prereq",
 ];
@@ -70,7 +70,7 @@ fn installer_priority(name: &str) -> Option<u8> {
     }
 }
 
-fn is_third_party_installer(relative: &Path) -> bool {
+pub(crate) fn is_third_party_installer(relative: &Path) -> bool {
     let segments: Vec<String> = relative.iter().map(|s| s.to_string_lossy().to_lowercase()).collect();
     let Some((basename, folders)) = segments.split_last() else { return false };
     REDIST_FILE_PREFIXES.iter().chain(SHARED_INSTALLER_PREFIXES).any(|p| basename.starts_with(p)) || folders.iter().any(|f| REDIST_DIRECTORIES.contains(&f.as_str()))
