@@ -193,17 +193,6 @@ pub fn user_achievements(catalogue: &[Value], unlocked: &[Value], preferences: &
     Value::Array(list)
 }
 
-#[cfg(windows)]
-fn steam_path() -> Option<PathBuf> {
-    let key = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).open_subkey(r"Software\Valve\Steam").ok()?;
-    key.get_value::<String, _>("SteamPath").ok().map(PathBuf::from)
-}
-
-#[cfg(not(windows))]
-fn steam_path() -> Option<PathBuf> {
-    None
-}
-
 fn roots(app: &AppHandle) -> Roots {
     Roots::from_env(app.path().document_dir().unwrap_or_default())
 }
@@ -283,7 +272,7 @@ pub fn spawn(app: AppHandle) {
         loop {
             let (games, steam) = {
                 let store = app.state::<Store>();
-                let steam = preferences(&store)["enableSteamAchievements"].as_bool().unwrap_or(false).then(steam_path).flatten();
+                let steam = preferences(&store)["enableSteamAchievements"].as_bool().unwrap_or(false).then(crate::steam_shortcuts::steam_path).flatten();
                 (watched_games(&store), steam)
             };
             let scan_app = app.clone();
@@ -340,7 +329,7 @@ pub async fn get_unlocked_achievements(app: &AppHandle, object_id: &str, shop: &
         let (scan_app, id) = (app.clone(), object_id.to_string());
         let (steam_unlocks, other_unlocks) = tauri::async_runtime::spawn_blocking(move || {
             let store = scan_app.state::<Store>();
-            let steam = preferences(&store)["enableSteamAchievements"].as_bool().unwrap_or(false).then(steam_path).flatten();
+            let steam = preferences(&store)["enableSteamAchievements"].as_bool().unwrap_or(false).then(crate::steam_shortcuts::steam_path).flatten();
             parse_all(&achievement_files::game_files(&roots(&scan_app), &id, &exes, steam.as_deref()))
         })
         .await

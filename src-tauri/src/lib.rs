@@ -18,6 +18,8 @@ mod launch;
 mod library;
 mod local_files;
 mod shop_details;
+mod shortcuts;
+mod steam_shortcuts;
 mod store;
 mod watcher;
 
@@ -56,6 +58,9 @@ async fn ipc(app: tauri::AppHandle, window: tauri::WebviewWindow, channel: Strin
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // First plugin, so a second launch exits before anything else starts; its
+        // arguments (a chimaera:// link from a shortcut) go to the running app.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| shortcuts::handle_second_instance(app, &args)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -113,6 +118,11 @@ pub fn run() {
                 .decorations(false)
                 .initialization_script(&process_script())
                 .build()?;
+            let args: Vec<String> = std::env::args().collect();
+            if let Some((shop, object_id)) = shortcuts::deep_link_arg(&args).and_then(shortcuts::run_target) {
+                let app = app.handle().clone();
+                tauri::async_runtime::spawn(async move { shortcuts::run_game(&app, &shop, &object_id).await });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

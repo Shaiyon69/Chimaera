@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, file_system, games, hydra_api, installer, launch, library, shop_details};
+use crate::{achievement_popup, achievements, artwork, bundled_games, file_system, games, hydra_api, installer, launch, library, shop_details, shortcuts, steam_shortcuts};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -187,6 +187,55 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
                 app.opener().reveal_item_in_dir(std::path::Path::new(root).join(folder)).map_err(|e| e.to_string())?;
             }
             Ok(Value::Null)
+        }
+        "deleteGameFolder" => {
+            let (app, key) = (app.clone(), games::game_key(shop(args), object_id(args)));
+            let delete_archive = args.get(2).and_then(|o| o["deleteSourceArchive"].as_bool()).unwrap_or(false);
+            let default = app.path().download_dir().map_err(|e| e.to_string())?;
+            tauri::async_runtime::spawn_blocking(move || installer::delete_game_folder(&app.state::<Store>(), &default, &key, delete_archive))
+                .await
+                .map_err(|e| e.to_string())?
+                .map(|_| Value::Null)
+        }
+        "deleteArchive" => {
+            let default = app.path().download_dir().map_err(|e| e.to_string())?;
+            installer::delete_archive(&app.state::<Store>(), &default, arg_str(args, 0).unwrap_or_default()).map(|ok| json!(ok))
+        }
+        "createGameShortcut" => shortcuts::create_game_shortcut(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or("desktop")).await.map(|ok| json!(ok)),
+        "checkSteamShortcut" => {
+            let (app, key) = (app.clone(), games::game_key(shop(args), object_id(args)));
+            tauri::async_runtime::spawn_blocking(move || steam_shortcuts::check(&app.state::<Store>(), steam_shortcuts::steam_path().as_deref(), &key))
+                .await
+                .map_err(|e| e.to_string())?
+                .map(|found| json!(found))
+        }
+        "createSteamShortcut" => {
+            let (shop, object_id) = (shop(args).to_string(), object_id(args).to_string());
+            let open_vr = args.get(2).and_then(|o| o["openVr"].as_bool()).unwrap_or(false);
+            let game = app.state::<Store>().get("games", &games::game_key(&shop, &object_id))?;
+            let version = app.package_info().version.to_string();
+            let assets = library::get_game_assets(&app.state::<Store>(), &version, &object_id, &shop, false).await.unwrap_or(Value::Null);
+            let mut sources: [Option<Vec<u8>>; 5] = Default::default();
+            for (source, url) in sources.iter_mut().zip(steam_shortcuts::asset_urls(&game, &assets)) {
+                if let Some(url) = url {
+                    *source = steam_shortcuts::fetch_asset(&url).await;
+                }
+            }
+            let assets_dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Assets");
+            let (app, key) = (app.clone(), games::game_key(&shop, &object_id));
+            tauri::async_runtime::spawn_blocking(move || {
+                steam_shortcuts::create(&app.state::<Store>(), steam_shortcuts::steam_path().as_deref(), &assets_dir, &key, sources, open_vr)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|_| Value::Null)
+        }
+        "deleteSteamShortcut" => {
+            let (app, key) = (app.clone(), games::game_key(shop(args), object_id(args)));
+            tauri::async_runtime::spawn_blocking(move || steam_shortcuts::delete(&app.state::<Store>(), steam_shortcuts::steam_path().as_deref(), &key))
+                .await
+                .map_err(|e| e.to_string())?
+                .map(|done| json!(done))
         }
         "getAvailableDrives" => tauri::async_runtime::spawn_blocking(file_system::available_drives).await.map_err(|e| e.to_string()),
         "clearNewDownloadOptions" => games::clear_new_download_options(&app.state::<Store>(), shop(args), object_id(args)).map(|_| Value::Null),
