@@ -14,6 +14,7 @@ mod decky;
 mod download_sources;
 mod downloads;
 mod electron_import;
+mod emulators;
 mod extraction;
 mod file_system;
 mod game_installer;

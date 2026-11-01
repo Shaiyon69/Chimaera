@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, misc, notifications, processed_image, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, emulators, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, misc, notifications, processed_image, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -593,8 +593,45 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "getRemoteLibrarySyncState" => Ok(json!(false)),
         "getActiveClassicsImport" => Ok(Value::Null),
         "getActiveRetroArchImport" => Ok(Value::Null),
-        // Returns whether auto-install is on; the Tauri updater arrives with milestone F1.
-        "checkForUpdates" => Ok(json!(false)),
+        "openGameWinetricks" => {
+            let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+            emulators::open_winetricks(&app.state::<Store>(), &app_data, shop(args), object_id(args)).map(Value::from)
+        }
+        "getEmulatorConfigs" => emulators::all_configs(&app.state::<Store>()),
+        "getEmulatorRomExtensions" => {
+            let k = emulators::known(arg_str(args, 0).unwrap_or_default())?;
+            Ok(json!(k.rom_extensions.iter().map(|e| e.trim_start_matches('.')).collect::<Vec<_>>()))
+        }
+        "checkEmulatorExecutable" => {
+            let config = emulators::get_config(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default())?;
+            Ok(json!({ "exists": config["executablePath"].as_str().is_some_and(|p| std::path::Path::new(p).exists()) }))
+        }
+        "setEmulatorBiosPath" => emulators::set_bios_path(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default(), arg_str(args, 1)),
+        "removeEmulator" => emulators::remove(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default()),
+        "setEmulatorExecutablePath" | "previewEmulatorExecutable" | "detectEmulator" | "detectEmulators" => {
+            // Version probes and folder walks block for seconds.
+            let (app, channel, args) = (app.clone(), channel.to_string(), args.to_vec());
+            tauri::async_runtime::spawn_blocking(move || -> Result<Value, String> {
+                let store = app.state::<Store>();
+                let default_downloads = app.path().download_dir().map_err(|e| e.to_string())?;
+                let dirs = emulators::download_dirs(&store, &default_downloads);
+                if channel == "detectEmulators" {
+                    let mut map = serde_json::Map::new();
+                    for k in &emulators::KNOWN {
+                        map.insert(k.system.into(), emulators::apply_detection(&store, k, emulators::detect(k, &dirs, false))?);
+                    }
+                    return Ok(Value::Object(map));
+                }
+                let k = emulators::known(arg_str(&args, 0).unwrap_or_default())?;
+                match channel.as_str() {
+                    "setEmulatorExecutablePath" => emulators::set_executable_path(&store, k, arg_str(&args, 1)),
+                    "previewEmulatorExecutable" => Ok(emulators::preview(k, arg_str(&args, 1), &dirs)),
+                    _ => emulators::apply_detection(&store, k, emulators::detect(k, &dirs, true)),
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
         "checkForUpdates" => Ok(updater::check(app)),
         "restartAndInstallUpdate" => updater::restart_and_install(app),
         "getRandomGame" => library::random_steam250_game().await,
