@@ -11,6 +11,13 @@
     margin-bottom: calc(globals.$spacing-unit * 2);
   }
 
+  &__toolbar-end {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(globals.$spacing-unit);
+  }
+
   &__segments {
     @include globals.segmented;
   }

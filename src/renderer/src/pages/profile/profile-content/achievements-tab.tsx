@@ -12,6 +12,10 @@ import { Link } from "@renderer/components";
 import { useFillScrollTarget, useFormat } from "@renderer/hooks";
 import { buildGameAchievementPath, isGameCompleted } from "@renderer/helpers";
 import { ClassicsIcon } from "@renderer/pages/library/category-filter";
+import {
+  hasSteamLibraryGames,
+  isSteamLibraryGame,
+} from "@renderer/pages/library/library-category";
 import { cachedImage } from "@shared";
 import type { UserGame } from "@types";
 import { FilterDropdown, type FilterDropdownOption } from "./filter-dropdown";
@@ -50,6 +54,7 @@ export function AchievementsTab({
   const { numberFormatter } = useFormat();
   const { userProfile } = useContext(userProfileContext);
   const [filter, setFilter] = useState<CompletionFilter>("all");
+  const [steamOnly, setSteamOnly] = useState(false);
 
   useFillScrollTarget(
     "scrollableDiv",
@@ -58,11 +63,21 @@ export function AchievementsTab({
     onLoadMore
   );
 
+  const withAchievements = useMemo(
+    () =>
+      uniqueGames([...pinnedGames, ...libraryGames]).filter(
+        (game) => game.achievementCount > 0
+      ),
+    [pinnedGames, libraryGames]
+  );
+  const hasSteamGames = hasSteamLibraryGames(withAchievements);
+  const isSteamOnly = steamOnly && hasSteamGames;
+
   // Most complete first, so the list reads as a progress board, not a library.
   const games = useMemo(
     () =>
-      uniqueGames([...pinnedGames, ...libraryGames])
-        .filter((game) => game.achievementCount > 0)
+      withAchievements
+        .filter((game) => !isSteamOnly || isSteamLibraryGame(game))
         .map((game) => ({
           game,
           ratio: Math.min(
@@ -79,7 +94,7 @@ export function AchievementsTab({
             b.ratio - a.ratio ||
             b.game.unlockedAchievementCount - a.game.unlockedAchievementCount
         ),
-    [pinnedGames, libraryGames]
+    [withAchievements, isSteamOnly]
   );
 
   const completedCount = games.filter((entry) => entry.completed).length;
@@ -119,12 +134,26 @@ export function AchievementsTab({
             </button>
           ))}
         </div>
-        <FilterDropdown
-          placeholder={t("platform")}
-          value={platform}
-          options={platformOptions}
-          onChange={onPlatformChange}
-        />
+        <div className="achievements-tab__toolbar-end">
+          {hasSteamGames && (
+            <div className="achievements-tab__segments">
+              <button
+                type="button"
+                aria-pressed={isSteamOnly}
+                className={`achievements-tab__segment${isSteamOnly ? " achievements-tab__segment--active" : ""}`}
+                onClick={() => setSteamOnly((value) => !value)}
+              >
+                {t("achievements_filter_steam")}
+              </button>
+            </div>
+          )}
+          <FilterDropdown
+            placeholder={t("platform")}
+            value={platform}
+            options={platformOptions}
+            onChange={onPlatformChange}
+          />
+        </div>
       </div>
 
       {isAwaitingInitialLibrary && (

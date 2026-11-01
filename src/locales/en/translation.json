@@ -2004,6 +2004,7 @@
     "achievements_filter_all": "All",
     "achievements_filter_in_progress": "In progress",
     "achievements_filter_completed": "Completed",
+    "achievements_filter_steam": "Steam only",
     "achievement_count": "{{unlocked}} of {{total}} achievements",
     "completed_badge": "Completed",
     "games_completed": "Games completed",
