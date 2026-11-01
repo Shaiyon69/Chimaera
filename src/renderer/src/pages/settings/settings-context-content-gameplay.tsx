@@ -22,7 +22,7 @@ const buildForm = (preferences: UserPreferences | null) => ({
   disableNsfwAlert: preferences?.disableNsfwAlert ?? false,
   showHiddenAchievementsDescription:
     preferences?.showHiddenAchievementsDescription ?? false,
-  enableSteamAchievements: preferences?.enableSteamAchievements ?? false,
+  enableSteamAchievements: preferences?.enableSteamAchievements ?? true,
   enableAchievementSouvenirs: isAchievementSouvenirsEnabled(
     preferences?.enableAchievementSouvenirs,
     window.electron.platform
@@ -40,6 +40,9 @@ const buildForm = (preferences: UserPreferences | null) => ({
   autoplayAnimatedArtwork: preferences?.autoplayAnimatedArtwork ?? false,
   persistFiltersAndSorting: preferences?.persistFiltersAndSorting ?? false,
 });
+
+// Souvenirs are hidden for now; flip to bring the setting back.
+const SHOW_SOUVENIR_SETTING = false;
 
 export function SettingsContextContentGameplay() {
   const { t } = useTranslation("settings");
@@ -213,22 +216,23 @@ export function SettingsContextContentGameplay() {
           }
         />
 
-        {hasActiveSubscription ? (
-          <CheckboxField
-            id="achievement-souvenirs"
-            label={t("enable_achievement_souvenirs")}
-            checked={form.enableAchievementSouvenirs}
-            onChange={handleAchievementSouvenirsChange}
-          />
-        ) : (
-          <CheckboxField
-            id="achievement-souvenirs"
-            label={t("enable_achievement_souvenirs")}
-            checked={false}
-            disabled
-            readOnly
-          />
-        )}
+        {SHOW_SOUVENIR_SETTING &&
+          (hasActiveSubscription ? (
+            <CheckboxField
+              id="achievement-souvenirs"
+              label={t("enable_achievement_souvenirs")}
+              checked={form.enableAchievementSouvenirs}
+              onChange={handleAchievementSouvenirsChange}
+            />
+          ) : (
+            <CheckboxField
+              id="achievement-souvenirs"
+              label={t("enable_achievement_souvenirs")}
+              checked={false}
+              disabled
+              readOnly
+            />
+          ))}
 
         <div className="settings-behavior__screenshots-directory">
           <TextField

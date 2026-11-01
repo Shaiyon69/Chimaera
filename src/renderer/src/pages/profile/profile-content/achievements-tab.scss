@@ -1,0 +1,164 @@
+@use "../../../scss/globals.scss";
+
+.achievements-tab {
+  &__toolbar {
+    margin-top: calc(globals.$spacing-unit * 3);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(globals.$spacing-unit);
+    margin-bottom: calc(globals.$spacing-unit * 2);
+  }
+
+  &__segments {
+    @include globals.segmented;
+  }
+
+  &__segment {
+    @include globals.segment;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+
+    &--active {
+      @include globals.segment-active;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+  }
+
+  &__segment-count {
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+    gap: calc(globals.$spacing-unit * 1.5);
+  }
+
+  &__skeleton {
+    height: 96px;
+    border-radius: var(--radius);
+  }
+
+  &__row {
+    @include globals.surface;
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 18px 20px;
+    color: var(--text);
+    transition:
+      transform 0.18s var(--ease),
+      box-shadow 0.18s var(--ease);
+
+    &:hover {
+      text-decoration: none;
+      transform: translateY(-2px);
+      box-shadow: inset 0 0 0 1px var(--line-strong);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    &--completed {
+      box-shadow: inset 0 0 0 1px
+        color-mix(in srgb, globals.$platinum-cyan 40%, transparent);
+
+      &:hover {
+        box-shadow: inset 0 0 0 1px globals.$platinum-cyan;
+      }
+    }
+  }
+
+  // Game art fills the right side, fading into the row toward the text.
+  &__row-art {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: -1;
+    width: 50%;
+    height: 100%;
+    object-fit: cover;
+    mask-image: linear-gradient(90deg, transparent 0%, black 55%);
+  }
+
+  &__row-body {
+    flex: 1;
+    min-width: 0;
+    max-width: 62%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__row-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  &__row-title {
+    font-size: 15px;
+    font-weight: 600;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  &__percent {
+    flex-shrink: 0;
+    font-size: 15px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__badge {
+    @include globals.chip;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    color: globals.$platinum-cyan;
+  }
+
+  &__row-count {
+    font-size: 13px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__bar {
+    @include globals.progress-track;
+    display: block;
+    height: 6px;
+    margin-top: 4px;
+  }
+
+  &__bar-fill {
+    @include globals.progress-fill;
+    display: block;
+  }
+
+  &__row--completed &__bar-fill {
+    @include globals.platinum-gradient;
+  }
+}

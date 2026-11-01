@@ -23,27 +23,30 @@ import { setHeaderTitle } from "@renderer/features";
 import { useTranslation } from "react-i18next";
 import {
   findSouvenirByNotificationTarget,
-  isAchievementSouvenirsEnabled,
   useSouvenirContentWarning,
 } from "@shared";
 import { LockedProfile } from "./locked-profile";
 import { ReportProfile } from "../report-profile/report-profile";
-import { BadgesBox } from "./badges-box";
 import { RecentGamesBox } from "./recent-games-box";
-import { UserStatsBox } from "./user-stats-box";
-import { ProfileSection } from "../profile-section/profile-section";
 import { ProfileTabs, type ProfileTabType } from "./profile-tabs";
 import { LibraryTab } from "./library-tab";
-import { SouvenirsTab } from "./souvenirs-tab";
+import { AchievementsTab } from "./achievements-tab";
 import { SouvenirLightbox } from "./souvenir-lightbox";
 import { useSouvenirActions } from "./use-souvenir-actions";
 import type { ProfilePlatform } from "./library-tab";
 import { AnimatePresence } from "framer-motion";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { TelescopeIcon } from "@primer/octicons-react";
+import { useSearchParams } from "react-router-dom";
 import { ConfirmationModal } from "@renderer/components";
 import "./profile-content.scss";
 
 type SortOption = "playtime" | "achievementCount" | "playedRecently";
+
+// Stats now live in the achievements tab, so old `tab=stats` links land there.
+const toProfileTab = (tab: string | null): ProfileTabType => {
+  if (tab === "stats") return "achievements";
+  return tab === "activity" || tab === "achievements" ? tab : "library";
+};
 
 export function ProfileContent() {
   const {
@@ -59,29 +62,18 @@ export function ProfileContent() {
     hasMoreLibraryGames,
     isLoadingLibraryGames,
     souvenirs,
-    souvenirsTotal,
-    hasReachedSouvenirLimit,
-    souvenirsHiddenReason,
     hasMoreSouvenirs,
     isLoadingSouvenirs,
-    getUserSouvenirs,
     loadMoreSouvenirs,
     updateSouvenir,
     removeSouvenir,
     loadedLibrarySortBy,
   } = useContext(userProfileContext);
   const { userDetails } = useUserDetails();
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get("tab");
   const requestedSouvenir = searchParams.get("souvenir");
   const attemptedDeepLinkPagesRef = useRef(new Set<string>());
-  const souvenirsEnabled = useAppSelector((state) =>
-    isAchievementSouvenirsEnabled(
-      state.userPreferences.value?.enableAchievementSouvenirs,
-      window.electron.platform
-    )
-  );
   const disableNsfwAlert = useAppSelector(
     (state) => state.userPreferences.value?.disableNsfwAlert === true
   );
@@ -117,8 +109,8 @@ export function ProfileContent() {
     [platform]
   );
 
-  const [activeTab, setActiveTab] = useState<ProfileTabType>(
-    requestedTab === "souvenirs" ? "souvenirs" : "library"
+  const [activeTab, setActiveTab] = useState<ProfileTabType>(() =>
+    toProfileTab(requestedTab)
   );
 
   const dispatch = useAppDispatch();
@@ -169,7 +161,6 @@ export function ProfileContent() {
   useEffect(() => {
     if (!requestedSouvenir || !userProfile?.id) return;
 
-    setActiveTab("souvenirs");
     const normalizedTarget = requestedSouvenir.toLowerCase();
     const match = findSouvenirByNotificationTarget(
       souvenirs,
@@ -224,7 +215,7 @@ export function ProfileContent() {
 
   const handleLoadMore = useCallback(() => {
     if (
-      activeTab === "library" &&
+      (activeTab === "library" || activeTab === "achievements") &&
       hasMoreLibraryGames &&
       !isLoadingLibraryGames
     ) {
@@ -263,7 +254,7 @@ export function ProfileContent() {
 
   // Reset tab when switching users
   useEffect(() => {
-    setActiveTab(requestedTab === "souvenirs" ? "souvenirs" : "library");
+    setActiveTab(toProfileTab(requestedTab));
     setPlatform(readStoredProfilePlatform());
   }, [requestedTab, userProfile?.id]);
 
@@ -282,21 +273,10 @@ export function ProfileContent() {
       return <LockedProfile />;
     }
 
-    const hasGames = libraryGames.length > 0;
-    const hasPinnedGames = pinnedGames.length > 0;
-    const hasAnyGames = hasGames || hasPinnedGames;
-
-    const shouldShowRightContent =
-      hasAnyGames || userProfile.friends.length > 0 || isMe;
-
     return (
       <section className="profile-content__section">
         <div className="profile-content__main">
-          <ProfileTabs
-            activeTab={activeTab}
-            souvenirsCount={souvenirsTotal}
-            onTabChange={setActiveTab}
-          />
+          <ProfileTabs activeTab={activeTab} onTabChange={setActiveTab} />
 
           <div className="profile-content__tab-panels">
             <AnimatePresence mode="wait">
@@ -319,62 +299,38 @@ export function ProfileContent() {
                 />
               )}
 
-              {activeTab === "souvenirs" && (
-                <SouvenirsTab
-                  achievements={souvenirs}
-                  hasReachedLimit={hasReachedSouvenirLimit}
-                  hiddenReason={souvenirsHiddenReason}
-                  canLike={Boolean(userDetails)}
-                  hasMore={hasMoreSouvenirs}
-                  isLoading={isLoadingSouvenirs}
-                  isEnabled={souvenirsEnabled}
-                  isMe={isMe}
-                  userId={userProfile.id}
-                  visibility={userProfile.souvenirsVisibility}
-                  hasActiveSubscription={Boolean(
-                    userProfile.hasActiveSubscription
-                  )}
-                  disableNsfwAlert={disableNsfwAlert}
-                  likingKeys={likingKeys}
-                  onSouvenirClick={requestOpenSouvenir}
-                  onLikeClick={(item) => void likeSouvenir(item)}
-                  onReload={getUserSouvenirs}
-                  onLoadMore={loadMoreSouvenirs}
-                  onOpenSettings={() =>
-                    navigate(
-                      "/settings?tab=content_gameplay#achievement-souvenirs"
-                    )
-                  }
+              {activeTab === "achievements" && (
+                <AchievementsTab
+                  platform={platform}
+                  onPlatformChange={handlePlatformChange}
+                  pinnedGames={pinnedGames}
+                  libraryGames={libraryGames}
+                  hasMoreLibraryGames={hasMoreLibraryGames}
+                  isAwaitingInitialLibrary={isCorrectingPrefetchedSort}
+                  onLoadMore={handleLoadMore}
                 />
+              )}
+
+              {activeTab === "activity" && (
+                <div key="activity" className="profile-content__tab-panel">
+                  {userProfile.recentGames.length > 0 ? (
+                    <RecentGamesBox />
+                  ) : (
+                    <div className="profile-content__no-games">
+                      <div className="profile-content__telescope-icon">
+                        <TelescopeIcon size={24} />
+                      </div>
+                      <h2>{t("no_recent_activity_title")}</h2>
+                      {isMe && <p>{t("no_recent_activity_description")}</p>}
+                    </div>
+                  )}
+                </div>
               )}
             </AnimatePresence>
           </div>
-        </div>
 
-        {shouldShowRightContent && (
-          <div className="profile-content__right-content">
-            {userStats && (
-              <ProfileSection title={t("stats")} defaultOpen={true}>
-                <UserStatsBox />
-              </ProfileSection>
-            )}
-            {userProfile?.badges.length > 0 && (
-              <ProfileSection
-                title={t("badges")}
-                count={userProfile.badges.length}
-                defaultOpen={true}
-              >
-                <BadgesBox />
-              </ProfileSection>
-            )}
-            {userProfile?.recentGames.length > 0 && (
-              <ProfileSection title={t("activity")} defaultOpen={true}>
-                <RecentGamesBox />
-              </ProfileSection>
-            )}
-            <ReportProfile />
-          </div>
-        )}
+          <ReportProfile />
+        </div>
       </section>
     );
   })();

@@ -710,27 +710,9 @@
     padding: 0;
     display: grid;
     gap: calc(globals.$spacing-unit * 2);
-    grid-template-columns: repeat(2, 1fr);
-
-    @container #{globals.$app-container} (min-width: 900px) {
-      grid-template-columns: repeat(4, 1fr);
-    }
-
-    @container #{globals.$app-container} (min-width: 1300px) {
-      grid-template-columns: repeat(5, 1fr);
-    }
-
-    @container #{globals.$app-container} (min-width: 2000px) {
-      grid-template-columns: repeat(6, 1fr);
-    }
-
-    @container #{globals.$app-container} (min-width: 2600px) {
-      grid-template-columns: repeat(8, 1fr);
-    }
-
-    @container #{globals.$app-container} (min-width: 3000px) {
-      grid-template-columns: repeat(12, 1fr);
-    }
+    // Columns follow the panel width (the badges column takes part of the
+    // app width), so cards never leave a ragged gap on the right.
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 
     &--drag-over {
       background: var(--bg-2);

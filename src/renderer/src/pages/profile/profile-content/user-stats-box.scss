@@ -1,90 +1,302 @@
 @use "../../../scss/globals.scss";
 
 .user-stats {
-  &__box {
-    padding: calc(globals.$spacing-unit * 2);
+  display: flex;
+  flex-direction: column;
+  gap: calc(globals.$spacing-unit * 2);
+
+  // Wrapping flex with grow, so the last row always stretches to the edge.
+  &__tiles {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: calc(globals.$spacing-unit * 1.5);
   }
 
-  &__list {
+  &__tile {
+    @include globals.panel;
+    flex: 1 1 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding: 22px 24px;
+  }
+
+  &__tile-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-bottom: 6px;
+    border-radius: 12px;
+    color: var(--accent-text);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+
+  // Per-stat tint on the icon, so the tiles don't read as four copies.
+  &__tile--playtime &__tile-icon {
+    color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 16%, transparent);
+  }
+
+  &__tile--achievements &__tile-icon,
+  &__tile--completed &__tile-icon {
+    color: globals.$platinum-cyan;
+    background: color-mix(in srgb, globals.$platinum-cyan 14%, transparent);
+  }
+
+  &__tile--friends &__tile-icon {
+    color: var(--good);
+    background: color-mix(in srgb, var(--good) 16%, transparent);
+  }
+
+  &__tile-value {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  &__tile-label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  &__chip {
+    @include globals.chip;
+    padding: 1px 8px;
+    font-size: 11px;
+    color: var(--accent-text);
+  }
+
+  &__panels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: calc(globals.$spacing-unit * 1.5);
+  }
+
+  &__panel {
+    @include globals.panel;
+    flex: 1 1 380px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 22px 24px;
+
+    &--wide {
+      flex-basis: 100%;
+    }
+
+    &--badges {
+      // Badges own their spacing; lay them out as a wrapping row here.
+      .badges-box__box {
+        padding: 0;
+      }
+
+      .badges-box__list {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: calc(globals.$spacing-unit * 1.5);
+      }
+
+      .badges-box__item {
+        flex: 1 1 260px;
+        min-width: 0;
+      }
+    }
+  }
+
+  &__panel-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  &__count {
+    @include globals.count;
+    font-weight: 600;
+  }
+
+  &__rows {
     list-style: none;
     margin: 0;
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: calc(globals.$spacing-unit * 2);
+    gap: 2px;
   }
 
-  &__list-item {
+  &__row {
     display: flex;
-    flex-direction: column;
-    transition: all ease 0.1s;
-    color: globals.$muted-color;
-    width: 100%;
-    overflow: hidden;
-    border-radius: 4px;
-    padding: globals.$spacing-unit;
-    gap: globals.$spacing-unit;
+    align-items: center;
+    gap: 14px;
+    padding: 10px;
+    margin: 0 -10px;
+    border-radius: 12px;
+    color: var(--text);
+    transition: background-color 0.18s var(--ease);
 
     &:hover {
       background-color: var(--fill-hover);
       text-decoration: none;
     }
 
-    &--wrapped {
-      &:hover {
-        background-color: transparent;
-      }
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
     }
   }
 
-  &__list-title {
-    font-size: 0.8rem;
+  &__rank {
+    flex-shrink: 0;
+    width: 18px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  li:first-child > &__row &__rank {
+    color: var(--accent-text);
+  }
+
+  &__covers {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: calc(globals.$spacing-unit * 1.5);
+  }
+
+  &__cover {
+    position: relative;
+    display: block;
+    aspect-ratio: 2 / 3;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--fill);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, globals.$platinum-cyan 35%, transparent);
+    transition: transform 0.18s var(--ease);
+
+    &:hover {
+      transform: translateY(-3px);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  }
+
+  &__cover-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 8px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  &__cover-badge {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #06231d;
+    @include globals.platinum-gradient;
+  }
+
+  &__row-icon {
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    object-fit: cover;
+    background: var(--fill);
+
+    &--empty {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: var(--muted);
+    }
+  }
+
+  &__row-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__row-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  &__row-title {
+    font-size: 15px;
     font-weight: 600;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
   }
 
-  &__list-description {
-    font-size: 0.75rem;
-    display: flex;
-    align-items: center;
-    gap: globals.$spacing-unit;
+  &__row-value {
+    flex-shrink: 0;
+    font-size: 13px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
 
-  &__stats-row {
-    display: flex;
-    justify-content: space-between;
+  &__bar {
+    @include globals.progress-track;
+    display: block;
+    height: 6px;
   }
 
-  &__link {
-    text-align: start;
-    color: globals.$body-color;
-
-    &--warning {
-      color: globals.$warning-color;
-    }
-
-    &:hover {
-      text-decoration: underline;
-      cursor: pointer;
-    }
-  }
-
-  &__karma-info-text {
-    color: globals.$muted-color;
-    font-size: 0.75rem;
-    line-height: 1.4;
-  }
-
-  &__wrapped-link {
-    background: none;
-    border: none;
-    padding: 0;
-    text-align: start;
-    color: globals.$body-color;
-    font-size: 0.875rem;
-    cursor: pointer;
-    text-decoration: underline;
+  &__bar-fill {
+    @include globals.progress-fill;
+    display: block;
   }
 }

@@ -7,10 +7,17 @@ import {
   HistoryIcon,
   StackIcon,
   DeviceDesktopIcon,
+  TagIcon,
 } from "@primer/octicons-react";
-import InfiniteScroll from "react-infinite-scroll-component";
 import { useCallback, useMemo, useState } from "react";
-import { useFormat, useLibrary, useToast } from "@renderer/hooks";
+import {
+  gameGenreKey,
+  useFillScrollTarget,
+  useFormat,
+  useGameGenres,
+  useLibrary,
+  useToast,
+} from "@renderer/hooks";
 import { logger } from "@renderer/logger";
 import type { LibraryGame, UserGame } from "@types";
 import { useCollectionContextMenu } from "@renderer/context";
@@ -23,6 +30,8 @@ import { UserLibraryGameCard } from "./user-library-game-card";
 import "./profile-content.scss";
 
 type SortOption = "playtime" | "achievementCount" | "playedRecently";
+
+const ALL_GENRES = "__all__";
 export type ProfilePlatform = ProfilePlatformFilter;
 
 interface LibraryTabProps {
@@ -38,9 +47,6 @@ interface LibraryTabProps {
   onLoadMore: () => void;
   isMe: boolean;
   hasActiveSubscription: boolean;
-  titleKey?: string;
-  panelKey?: string;
-  count?: number | null;
 }
 
 export function LibraryTab({
@@ -56,15 +62,40 @@ export function LibraryTab({
   onLoadMore,
   isMe,
   hasActiveSubscription,
-  titleKey = "library",
-  panelKey = "library",
-  count,
 }: Readonly<LibraryTabProps>) {
   const { t } = useTranslation(["user_profile", "library"]);
   const { numberFormatter } = useFormat();
   const { library } = useLibrary();
   const { openCollectionContextMenu } = useCollectionContextMenu();
   const { showSuccessToast, showErrorToast } = useToast();
+  // Filters only the pages already loaded; the fill hook below keeps loading
+  // while the filtered grid is too short to scroll.
+  const [genre, setGenre] = useState(ALL_GENRES);
+  const allGames = useMemo(
+    () => [...pinnedGames, ...libraryGames],
+    [pinnedGames, libraryGames]
+  );
+  const { genresByGame, genres } = useGameGenres(allGames);
+  const matchesGenre = useCallback(
+    (game: UserGame) =>
+      genre === ALL_GENRES ||
+      (genresByGame[gameGenreKey(game)] ?? []).includes(genre),
+    [genre, genresByGame]
+  );
+  const visiblePinnedGames = useMemo(
+    () => pinnedGames.filter(matchesGenre),
+    [pinnedGames, matchesGenre]
+  );
+  const visibleLibraryGames = useMemo(
+    () => libraryGames.filter(matchesGenre),
+    [libraryGames, matchesGenre]
+  );
+  useFillScrollTarget(
+    "scrollableDiv",
+    libraryGames.length,
+    hasMoreLibraryGames,
+    onLoadMore
+  );
   const [contextMenu, setContextMenu] = useState<{
     game: UserGame | null;
     visible: boolean;
@@ -150,6 +181,15 @@ export function LibraryTab({
     { value: "classics", label: t("platform_classics"), icon: ClassicsIcon },
   ];
 
+  const genreOptions: FilterDropdownOption<string>[] = [
+    {
+      value: ALL_GENRES,
+      label: t("all_genres", { ns: "library" }),
+      icon: StackIcon,
+    },
+    ...genres.map((name) => ({ value: name, label: name, icon: TagIcon })),
+  ];
+
   const sortOptions: FilterDropdownOption<SortOption>[] = [
     ...(hasActiveSubscription
       ? [
@@ -164,16 +204,15 @@ export function LibraryTab({
     { value: "playtime", label: t("playtime"), icon: ClockIcon },
   ];
 
-  const hasGames = libraryGames.length > 0;
-  const hasPinnedGames = pinnedGames.length > 0;
+  const hasGames = visibleLibraryGames.length > 0;
+  const hasPinnedGames = visiblePinnedGames.length > 0;
   const hasAnyGames = hasGames || hasPinnedGames;
 
-  const resolvedCount =
-    count !== undefined ? count : (userStats?.libraryCount ?? null);
+  const resolvedCount = userStats?.libraryCount ?? null;
 
   return (
     <div
-      key={panelKey}
+      key="library"
       className="profile-content__tab-panel"
       aria-hidden={false}
     >
@@ -184,6 +223,14 @@ export function LibraryTab({
           options={platformOptions}
           onChange={onPlatformChange}
         />
+        {genres.length > 0 && (
+          <FilterDropdown
+            placeholder={t("genre")}
+            value={genre}
+            options={genreOptions}
+            onChange={setGenre}
+          />
+        )}
         {hasAnyGames && (
           <FilterDropdown
             placeholder={t("sort_by")}
@@ -222,13 +269,13 @@ export function LibraryTab({
                 <div className="profile-content__section-title-group">
                   <h2>{t("pinned")}</h2>
                   <span className="profile-content__section-badge">
-                    {pinnedGames.length}
+                    {visiblePinnedGames.length}
                   </span>
                 </div>
               </div>
 
               <ul className="profile-content__games-grid">
-                {pinnedGames?.map((game) => (
+                {visiblePinnedGames.map((game) => (
                   <li key={game.objectId} style={{ listStyle: "none" }}>
                     <UserLibraryGameCard
                       game={game}
@@ -244,7 +291,7 @@ export function LibraryTab({
             <div>
               <div className="profile-content__section-header">
                 <div className="profile-content__section-title-group">
-                  <h2>{t(titleKey)}</h2>
+                  <h2>{t("library")}</h2>
                   {resolvedCount !== null && (
                     <span className="profile-content__section-badge">
                       {numberFormatter.format(resolvedCount)}
@@ -253,31 +300,21 @@ export function LibraryTab({
                 </div>
               </div>
 
-              <InfiniteScroll
-                dataLength={libraryGames.length}
-                next={onLoadMore}
-                hasMore={hasMoreLibraryGames}
-                loader={null}
-                scrollThreshold={0.9}
-                style={{ overflow: "visible" }}
-                scrollableTarget="scrollableDiv"
-              >
-                <ul className="profile-content__games-grid">
-                  {libraryGames?.map((game) => {
-                    return (
-                      <li
-                        key={`${sortBy}-${game.objectId}`}
-                        style={{ listStyle: "none" }}
-                      >
-                        <UserLibraryGameCard
-                          game={game}
-                          onContextMenu={handleOpenContextMenu}
-                        />
-                      </li>
-                    );
-                  })}
-                </ul>
-              </InfiniteScroll>
+              <ul className="profile-content__games-grid">
+                {visibleLibraryGames.map((game) => {
+                  return (
+                    <li
+                      key={`${sortBy}-${game.objectId}`}
+                      style={{ listStyle: "none" }}
+                    >
+                      <UserLibraryGameCard
+                        game={game}
+                        onContextMenu={handleOpenContextMenu}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           )}
         </div>

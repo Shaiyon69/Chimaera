@@ -29,7 +29,7 @@ import type {
   SouvenirsHiddenReason,
   SouvenirSort,
 } from "@types";
-import { useDate, useToast } from "@renderer/hooks";
+import { useDate, useFillScrollTarget, useToast } from "@renderer/hooks";
 import {
   getPrimarySouvenirAchievement,
   getSouvenirKey,
@@ -37,7 +37,6 @@ import {
   getSouvenirVisualVariant,
   shouldShowSouvenirContentWarning,
 } from "@shared";
-import InfiniteScroll from "react-infinite-scroll-component";
 import { Button, Link } from "@renderer/components";
 import {
   buildGameDetailsPath,
@@ -499,6 +498,13 @@ export function SouvenirsTab({
   >([]);
   const [isCleanupModalVisible, setIsCleanupModalVisible] = useState(false);
   const { showErrorToast, showSuccessToast } = useToast();
+  useFillScrollTarget(
+    "scrollableDiv",
+    achievements.length,
+    hasMore,
+    () => onLoadMore(sortBy),
+    isLoading
+  );
   const privacyNotices = {
     PRIVATE: {
       icon: LockIcon,
@@ -825,50 +831,41 @@ export function SouvenirsTab({
             />
           </div>
 
-          <InfiniteScroll
-            dataLength={achievements.length}
-            next={() => onLoadMore(sortBy)}
-            hasMore={hasMore}
-            loader={
-              <p className="profile-content__souvenirs-loading">
-                {t("loading_souvenirs")}
-              </p>
-            }
-            scrollThreshold={0.9}
-            style={{ overflow: "visible" }}
-            scrollableTarget="scrollableDiv"
-          >
-            {grouping === "game" ? (
-              Object.entries(groupedAchievements).map(
-                ([gameId, groupAchievements]) => (
-                  <SouvenirGameGroup
-                    key={gameId}
-                    achievements={groupAchievements}
-                    canLike={canLike}
-                    disableNsfwAlert={disableNsfwAlert}
-                    likingKeys={likingKeys}
-                    onSouvenirClick={onSouvenirClick}
-                    onLikeClick={onLikeClick}
-                  />
-                )
+          {grouping === "game" ? (
+            Object.entries(groupedAchievements).map(
+              ([gameId, groupAchievements]) => (
+                <SouvenirGameGroup
+                  key={gameId}
+                  achievements={groupAchievements}
+                  canLike={canLike}
+                  disableNsfwAlert={disableNsfwAlert}
+                  likingKeys={likingKeys}
+                  onSouvenirClick={onSouvenirClick}
+                  onLikeClick={onLikeClick}
+                />
               )
-            ) : (
-              <ul className="profile-content__souvenirs-grid">
-                {sortedAchievements.map((achievement) => (
-                  <SouvenirCard
-                    key={souvenirKey(achievement)}
-                    achievement={achievement}
-                    canLike={canLike}
-                    disableNsfwAlert={disableNsfwAlert}
-                    isLiking={likingKeys.has(souvenirKey(achievement))}
-                    showGame
-                    onSouvenirClick={onSouvenirClick}
-                    onLikeClick={onLikeClick}
-                  />
-                ))}
-              </ul>
-            )}
-          </InfiniteScroll>
+            )
+          ) : (
+            <ul className="profile-content__souvenirs-grid">
+              {sortedAchievements.map((achievement) => (
+                <SouvenirCard
+                  key={souvenirKey(achievement)}
+                  achievement={achievement}
+                  canLike={canLike}
+                  disableNsfwAlert={disableNsfwAlert}
+                  isLiking={likingKeys.has(souvenirKey(achievement))}
+                  showGame
+                  onSouvenirClick={onSouvenirClick}
+                  onLikeClick={onLikeClick}
+                />
+              ))}
+            </ul>
+          )}
+          {hasMore && isLoading && (
+            <p className="profile-content__souvenirs-loading">
+              {t("loading_souvenirs")}
+            </p>
+          )}
         </>
       )}
     </motion.div>

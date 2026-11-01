@@ -1,22 +1,11 @@
 import { useNavigate } from "react-router-dom";
-import {
-  BellIcon,
-  ChevronDownIcon,
-  GearIcon,
-  PersonIcon,
-} from "@primer/octicons-react";
 import { useAppSelector, useUserDetails } from "@renderer/hooks";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import SteamLogo from "@renderer/assets/steam-logo.svg?react";
 import { Avatar } from "../avatar/avatar";
 
 import { platformToSystem } from "@renderer/helpers";
-import { logger } from "@renderer/logger";
-import type {
-  NotificationCountResponse,
-  NotificationsChangedDetail,
-} from "@types";
 
 import "./sidebar-profile.scss";
 
@@ -120,137 +109,9 @@ export function SidebarProfile() {
     return platformToSystem(runningGame?.platform) !== null;
   }, [gameRunning, library]);
 
-  const [notificationCount, setNotificationCount] = useState(0);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [isDropdownClosing, setIsDropdownClosing] = useState(false);
-
-  const apiNotificationCountRef = useRef(0);
-  const hasFetchedInitialCount = useRef(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const fetchLocalNotificationCount = useCallback(async () => {
-    try {
-      const localCount = await window.electron.getLocalNotificationsCount();
-      setNotificationCount(localCount + apiNotificationCountRef.current);
-    } catch (error) {
-      logger.error("Failed to fetch local notification count", error);
-    }
-  }, []);
-
-  const fetchApiNotificationCount = useCallback(async () => {
-    try {
-      const response =
-        await window.electron.hydraApi.get<NotificationCountResponse>(
-          "/profile/notifications/count",
-          { needsAuth: true }
-        );
-      apiNotificationCountRef.current = response.count;
-    } catch {
-      // Ignore API errors
-    }
-    fetchLocalNotificationCount();
-  }, [fetchLocalNotificationCount]);
-
-  useEffect(() => {
-    fetchLocalNotificationCount();
-  }, [fetchLocalNotificationCount]);
-
-  useEffect(() => {
-    if (userDetails && !hasFetchedInitialCount.current) {
-      hasFetchedInitialCount.current = true;
-      fetchApiNotificationCount();
-    } else if (!userDetails) {
-      hasFetchedInitialCount.current = false;
-      apiNotificationCountRef.current = 0;
-      fetchLocalNotificationCount();
-    }
-  }, [userDetails, fetchApiNotificationCount, fetchLocalNotificationCount]);
-
-  useEffect(() => {
-    const unsubscribe = window.electron.onLocalNotificationCreated(() => {
-      fetchLocalNotificationCount();
-    });
-    return () => unsubscribe();
-  }, [fetchLocalNotificationCount]);
-
-  useEffect(() => {
-    const handleNotificationsChange = (event: Event) => {
-      const detail = (event as CustomEvent<NotificationsChangedDetail>).detail;
-
-      if (detail?.resetApiUnread) {
-        apiNotificationCountRef.current = 0;
-      } else if (typeof detail?.apiUnreadDelta === "number") {
-        apiNotificationCountRef.current = Math.max(
-          0,
-          apiNotificationCountRef.current + detail.apiUnreadDelta
-        );
-      }
-
-      fetchLocalNotificationCount();
-    };
-    window.addEventListener("notificationsChanged", handleNotificationsChange);
-    return () => {
-      window.removeEventListener(
-        "notificationsChanged",
-        handleNotificationsChange
-      );
-    };
-  }, [fetchLocalNotificationCount]);
-
-  useEffect(() => {
-    const unsubscribe = window.electron.onSyncNotificationCount(
-      (notification) => {
-        apiNotificationCountRef.current = notification.notificationCount;
-        fetchLocalNotificationCount();
-      }
-    );
-    return () => unsubscribe();
-  }, [fetchLocalNotificationCount]);
-
-  useEffect(() => {
-    if (!dropdownOpen) return;
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        closeDropdown();
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [dropdownOpen]);
-
-  const closeDropdown = () => {
-    setIsDropdownClosing(true);
-    setTimeout(() => {
-      setDropdownOpen(false);
-      setIsDropdownClosing(false);
-    }, 150);
-  };
-
+  // Signed out, the Friends page holds the sign-in form.
   const handleProfileClick = () => {
-    if (dropdownOpen) {
-      closeDropdown();
-    } else {
-      setDropdownOpen(true);
-    }
-  };
-
-  const handleViewProfile = () => {
-    if (!userDetails) return;
-    closeDropdown();
-    navigate(`/profile/${userDetails.id}`);
-  };
-
-  const handleNotificationsClick = () => {
-    closeDropdown();
-    navigate("/notifications");
-  };
-
-  const handleSettingsClick = () => {
-    closeDropdown();
-    navigate("/settings");
+    navigate(userDetails ? `/profile/${userDetails.id}` : "/friends");
   };
 
   const gameRunningDetails = () => {
@@ -280,11 +141,12 @@ export function SidebarProfile() {
   };
 
   return (
-    <div className="sidebar-profile" ref={containerRef}>
+    <div className="sidebar-profile">
       <button
         type="button"
-        className={`sidebar-profile__button${dropdownOpen ? " sidebar-profile__button--active" : ""}`}
+        className="sidebar-profile__button"
         onClick={handleProfileClick}
+        aria-label={userDetails ? t("user_profile:see_profile") : t("sign_in")}
       >
         <div className="sidebar-profile__button-content">
           <Avatar
@@ -306,53 +168,8 @@ export function SidebarProfile() {
           </div>
 
           {gameRunningDetails()}
-
-          <ChevronDownIcon
-            size={12}
-            className={`sidebar-profile__chevron${dropdownOpen ? " sidebar-profile__chevron--open" : ""}`}
-          />
         </div>
       </button>
-
-      {dropdownOpen && (
-        <div
-          className={`sidebar-profile__dropdown${isDropdownClosing ? " sidebar-profile__dropdown--closing" : ""}`}
-        >
-          {userDetails && (
-            <button
-              type="button"
-              className="sidebar-profile__dropdown-item"
-              onClick={handleViewProfile}
-            >
-              <PersonIcon size={16} />
-              <span>{t("user_profile:see_profile")}</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            className="sidebar-profile__dropdown-item"
-            onClick={handleNotificationsClick}
-          >
-            <BellIcon size={16} />
-            <span>{t("notifications")}</span>
-            {notificationCount > 0 && (
-              <small className="sidebar-profile__dropdown-badge">
-                {notificationCount > 99 ? "99+" : notificationCount}
-              </small>
-            )}
-          </button>
-
-          <button
-            type="button"
-            className="sidebar-profile__dropdown-item"
-            onClick={handleSettingsClick}
-          >
-            <GearIcon size={16} />
-            <span>{t("settings")}</span>
-          </button>
-        </div>
-      )}
     </div>
   );
 }

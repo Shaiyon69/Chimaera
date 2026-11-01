@@ -3,7 +3,6 @@ import { useFormat } from "@renderer/hooks";
 import { useNavigate } from "react-router-dom";
 import { useCallback, useContext } from "react";
 import {
-  buildGameAchievementPath,
   buildGameDetailsPath,
   formatDownloadProgress,
   isGameCompleted,
@@ -26,7 +25,7 @@ export function UserLibraryGameCard({
   game,
   onContextMenu,
 }: UserLibraryGameCardProps) {
-  const { userProfile, isMe } = useContext(userProfileContext);
+  const { isMe } = useContext(userProfileContext);
   const { t } = useTranslation("user_profile");
   const { numberFormatter } = useFormat();
   const navigate = useNavigate();
@@ -39,26 +38,6 @@ export function UserLibraryGameCard({
   );
 
   const hasAchievementProgress = (game.achievementCount ?? 0) > 0;
-
-  const buildUserGameDetailsPath = useCallback(
-    (game: UserGame) => {
-      if (game.achievementCount === 0) {
-        return buildGameDetailsPath({
-          ...game,
-          objectId: game.objectId,
-        });
-      }
-
-      const userParams = userProfile
-        ? {
-            userId: userProfile.id,
-          }
-        : undefined;
-
-      return buildGameAchievementPath({ ...game }, userParams);
-    },
-    [userProfile]
-  );
 
   const formatPlayTime = useCallback(
     (playTimeInSeconds = 0, isShort = false) => {
@@ -100,7 +79,7 @@ export function UserLibraryGameCard({
             game.shop === "launchbox" && !game.customLibraryImageUrl
           }
           showTitleTooltip={false}
-          onClick={() => navigate(buildUserGameDetailsPath(game))}
+          onClick={() => navigate(buildGameDetailsPath(game))}
           onContextMenu={handleContextMenu}
         >
           <div
