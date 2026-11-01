@@ -6,6 +6,13 @@ fn main() {
             if let Some(url) = line.strip_prefix("MAIN_VITE_API_URL=") {
                 println!("cargo:rustc-env=CHIMAERA_API_URL={}", url.trim());
             }
+            // Desktop OAuth client for Drive save backups; Google treats its secret as public.
+            if let Some(id) = line.strip_prefix("MAIN_VITE_GOOGLE_CLIENT_ID=") {
+                println!("cargo:rustc-env=CHIMAERA_GOOGLE_CLIENT_ID={}", id.trim());
+            }
+            if let Some(secret) = line.strip_prefix("MAIN_VITE_GOOGLE_CLIENT_SECRET=") {
+                println!("cargo:rustc-env=CHIMAERA_GOOGLE_CLIENT_SECRET={}", secret.trim());
+            }
         }
     }
     link_torrent_bridge();

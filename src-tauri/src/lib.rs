@@ -14,6 +14,7 @@ mod electron_import;
 mod file_system;
 mod game_installer;
 mod games;
+mod google_drive;
 mod hosters;
 mod http_download;
 mod hydra_api;

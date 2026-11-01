@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, debrid, download_sources, downloads, file_system, game_installer, games, hydra_api, installer, launch, launcher_import, library, save_backups, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
+use crate::{achievement_popup, achievements, artwork, bundled_games, debrid, download_sources, downloads, file_system, game_installer, games, google_drive, hydra_api, installer, launch, launcher_import, library, save_backups, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -467,6 +467,20 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
                 }
                 None => Ok(Value::Null),
             }
+        }
+        "connectGoogleDrive" => google_drive::connect(app).await,
+        "disconnectGoogleDrive" => {
+            google_drive::disconnect().await;
+            Ok(Value::Null)
+        }
+        "getGoogleDriveStatus" => Ok(google_drive::status()),
+        "listDriveSaveBackups" => google_drive::list(shop(args), object_id(args)).await.map(|list| json!(list)),
+        "uploadSaveBackupToDrive" => google_drive::upload(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()).await.map(|_| Value::Null),
+        "downloadDriveSaveBackup" => google_drive::download(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()).await.map(|_| Value::Null),
+        "deleteDriveSaveBackup" => google_drive::delete(arg_str(args, 0).unwrap_or_default()).await.map(|_| Value::Null),
+        "setAutomaticCloudSync" => {
+            let on = args.get(2).and_then(Value::as_bool).unwrap_or(false);
+            games::set_field(&app.state::<Store>(), shop(args), object_id(args), "automaticCloudSync", json!(on)).map(|_| Value::Null)
         }
         "getUserPreferences" => app.state::<Store>().get("", "userPreferences"),
         "updateUserPreferences" => {

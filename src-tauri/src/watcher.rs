@@ -42,7 +42,7 @@ impl Sessions {
 }
 
 /// Windows paths are case-insensitive and may mix separators.
-fn path_key(path: &str) -> String {
+pub(crate) fn path_key(path: &str) -> String {
     path.replace('/', "\\").to_lowercase()
 }
 
@@ -116,8 +116,8 @@ pub fn credited_keys(games: &[(String, Value)], running: &HashSet<String>) -> Ha
     by_exe.into_values().map(|(key, _)| winners.get(key).cloned().unwrap_or_else(|| key.clone())).collect()
 }
 
-// shortcut: no Steam playtime policy, Hydra sync, achievement watcher, souvenir capture or Drive backup on exit;
-// local playtime always counts. Those hook in with Steam (F7), achievements (F6) and save backups (F5).
+// shortcut: no Steam playtime policy, Hydra sync, achievement watcher or souvenir capture on exit;
+// local playtime always counts. Those hook in with Steam (F7) and achievements (F6).
 fn tick(app: &AppHandle, running: &HashSet<String>, was_idle: &mut bool) -> Result<(), String> {
     let store = app.state::<Store>();
     let sessions = app.state::<Sessions>();
@@ -152,6 +152,14 @@ fn tick(app: &AppHandle, running: &HashSet<String>, was_idle: &mut bool) -> Resu
                 let session = all.remove(&key).unwrap();
                 drop(all);
                 close_session(&store, &key, session, now)?;
+                if game["automaticCloudSync"].as_bool().unwrap_or(false) {
+                    let (app, shop, object_id) = (app.clone(), game["shop"].as_str().unwrap_or_default().to_string(), game["objectId"].as_str().unwrap_or_default().to_string());
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = crate::google_drive::auto_backup(&app, &shop, &object_id).await {
+                            eprintln!("[google-drive] auto backup of {shop}:{object_id} failed: {e}");
+                        }
+                    });
+                }
             }
             (false, None) => {}
         }
