@@ -21,8 +21,8 @@ const INTERVAL: Duration = Duration::from_secs(2);
 /// Folder discovery walks every emulator location and the game folder, so reuse it between ticks.
 const DISCOVERY_TTL: Duration = Duration::from_secs(30);
 const CATALOGUE_TTL_MS: u64 = 60 * 60 * 1000;
-const UNLOCKED: &str = "unlockedAchievements";
-const CATALOGUE: &str = "achievementCatalogue";
+pub(crate) const UNLOCKED: &str = "unlockedAchievements";
+pub(crate) const CATALOGUE: &str = "achievementCatalogue";
 
 #[derive(Default)]
 pub struct AchievementWatcher {
@@ -106,7 +106,7 @@ pub fn unlocked_count(unlocked: &[Value], catalogue: &[Value]) -> usize {
 }
 
 /// The library, profile and game cards read these counts off the game record.
-fn store_counts(store: &Store, key: &str, unlocked: &[Value], catalogue: &[Value]) -> Result<(), String> {
+pub(crate) fn store_counts(store: &Store, key: &str, unlocked: &[Value], catalogue: &[Value]) -> Result<(), String> {
     let count = unlocked_count(unlocked, catalogue);
     update(store, key, |game| {
         if !catalogue.is_empty() {
@@ -141,12 +141,33 @@ pub async fn merge(app: &AppHandle, shop: &str, object_id: &str, found: &[Unlock
         let preferences = preferences(&store);
         let list = user_achievements(&catalogue, &all, &preferences);
         app.emit(&format!("on-update-achievements-{object_id}-{shop}"), [list]).map_err(|e| e.to_string())?;
+        if crate::screenshots::enabled(&preferences) {
+            capture_souvenir(app, &store.get("games", &key)?, &fresh[0], &catalogue);
+        }
         if popup && achievement_popup::enabled(&preferences) {
             let infos = achievement_popup::notification_infos(&fresh, previously_unlocked, &catalogue);
-            achievement_popup::show_achievements(app, &achievement_popup::position(&preferences), infos);
+            if achievement_popup::custom_enabled(&preferences) {
+                achievement_popup::show_achievements(app, &achievement_popup::position(&preferences), infos);
+            } else {
+                let game = store.get("games", &key)?;
+                achievement_popup::show_toast(app, game["title"].as_str().unwrap_or_default(), &infos);
+            }
         }
     }
     Ok(fresh.len())
+}
+
+/// captureAchievementSouvenirs: a capture of the game's window for this batch, off the caller's path.
+fn capture_souvenir(app: &AppHandle, game: &Value, first: &Value, catalogue: &[Value]) {
+    if !game.is_object() {
+        return;
+    }
+    let name = catalogue.iter().find(|a| upper(a) == upper(first)).and_then(|a| a["displayName"].as_str()).or(first["name"].as_str()).unwrap_or_default().to_string();
+    let (app, game) = (app.clone(), game.clone());
+    tauri::async_runtime::spawn_blocking(move || match crate::screenshots::capture(&app, &game, &name) {
+        Ok(path) => eprintln!("[achievements] souvenir saved to {}", path.display()),
+        Err(error) => eprintln!("[achievements] no souvenir for {}: {error}", game["title"].as_str().unwrap_or_default()),
+    });
 }
 
 /// The game page's list: catalogue entries marked unlocked, newest unlock first,
@@ -311,7 +332,11 @@ pub fn spawn(app: AppHandle) {
                 let preferences = preferences(&app.state::<Store>());
                 if achievement_popup::enabled(&preferences) {
                     tokio::time::sleep(Duration::from_secs(4)).await;
-                    achievement_popup::show_combined(&app, &achievement_popup::position(&preferences), games_with_new, total_new);
+                    if achievement_popup::custom_enabled(&preferences) {
+                        achievement_popup::show_combined(&app, &achievement_popup::position(&preferences), games_with_new, total_new);
+                    } else {
+                        achievement_popup::show_combined_toast(&app, games_with_new, total_new);
+                    }
                 }
             }
             first = false;

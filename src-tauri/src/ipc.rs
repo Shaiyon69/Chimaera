@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, debrid, download_sources, downloads, file_system, game_installer, games, google_drive, hydra_api, installer, launch, launcher_import, library, save_backups, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
+use crate::{achievement_popup, achievements, artwork, bundled_games, debrid, download_sources, downloads, file_system, game_installer, games, google_drive, hydra_api, installer, launch, launcher_import, library, notifications, save_backups, scan, screenshots, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -497,9 +497,24 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             app.emit("on-user-preferences-updated", [&updated]).map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }
-        "getLocalNotificationsCount" => {
-            let entries = app.state::<Store>().entries("localNotifications")?;
-            Ok(json!(entries.iter().filter(|(_, n)| !n["isRead"].as_bool().unwrap_or(false)).count()))
+        "getLocalNotificationsCount" => notifications::unread_count(&app.state::<Store>()).map(|n| json!(n)),
+        "getLocalNotifications" => notifications::list(&app.state::<Store>()),
+        "markLocalNotificationRead" => notifications::set_read(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default(), true).map(|_| Value::Null),
+        "markLocalNotificationUnread" => notifications::set_read(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default(), false).map(|_| Value::Null),
+        "markAllLocalNotificationsRead" => notifications::mark_all_read(&app.state::<Store>()).map(|_| Value::Null),
+        "deleteLocalNotification" => notifications::delete(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null),
+        "clearAllLocalNotifications" => notifications::clear_all(&app.state::<Store>()).map(|_| Value::Null),
+        "getScreenshotsPath" => screenshots::dir(app).map(|dir| json!(dir)),
+        // Souvenirs stay on disk (no Hydra sign-in), so nothing is ever waiting to sync.
+        "getAchievementSouvenirSyncStatus" => Ok(screenshots::idle_status()),
+        "getAchievementSouvenirSyncDetails" => Ok(json!({ "status": screenshots::idle_status(), "items": [] })),
+        "retryAchievementSouvenirSync" => Ok(json!({ "status": screenshots::idle_status(), "attemptedCount": 0, "syncedCount": 0, "missingScreenshotCount": 0 })),
+        "cleanupAchievementSouvenirSync" => Ok(json!({ "status": screenshots::idle_status(), "deletedCount": 0, "failedFilePaths": [] })),
+        // Souvenir ids exist only on the Hydra server, which this build does not reach.
+        "deleteAchievementSouvenir" => Ok(Value::Null),
+        "publishNewRepacksNotification" => {
+            notifications::new_repacks(app, args.first().and_then(Value::as_i64).unwrap_or(0));
+            Ok(Value::Null)
         }
         // No remote library sync, classics import or RetroArch import exists in this
         // build yet, so these report their real idle state.

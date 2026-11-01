@@ -16,8 +16,39 @@ fn main() {
         }
     }
     link_torrent_bridge();
+    native_strings();
     tauri_build::build()
 }
+
+/// The renderer strings Rust shows itself (toasts, local notifications, backup labels),
+/// per language, into OUT_DIR/strings.json for src/i18n.rs.
+fn native_strings() {
+    use serde_json::{Map, Value};
+    // (namespace, keys); None takes the whole namespace.
+    const WANTED: &[(&str, Option<&[&str]>)] =
+        &[("notifications", None), ("achievement", None), ("game_details", Some(&["backup_from", "automatic_backup_from"]))];
+    println!("cargo:rerun-if-changed=../src/locales");
+    let mut all = Map::new();
+    for entry in std::fs::read_dir("../src/locales").expect("src/locales").flatten() {
+        let file = entry.path().join("translation.json");
+        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        println!("cargo:rerun-if-changed={}", file.display());
+        let full: Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        let mut picked = Map::new();
+        for (ns, keys) in WANTED {
+            let Some(Value::Object(strings)) = full.get(*ns) else { continue };
+            let strings = match keys {
+                None => strings.clone(),
+                Some(keys) => strings.iter().filter(|(k, _)| keys.iter().any(|w| k.as_str() == *w || k.starts_with(&format!("{w}_")))).map(|(k, v)| (k.clone(), v.clone())).collect(),
+            };
+            picked.insert(ns.to_string(), Value::Object(strings));
+        }
+        all.insert(entry.file_name().to_string_lossy().into_owned(), Value::Object(picked));
+    }
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("strings.json");
+    std::fs::write(out, Value::Object(all).to_string()).expect("write strings.json");
+}
+
 /// Links the prebuilt libtorrent bridge (native/torrent-bridge) and puts the shared
 /// library next to the dev and test binaries. HYDRA_TORRENT_LIB_DIR overrides the folder.
 fn link_torrent_bridge() {

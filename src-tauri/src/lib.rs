@@ -18,6 +18,7 @@ mod google_drive;
 mod hosters;
 mod http_download;
 mod hydra_api;
+mod i18n;
 mod image_cache;
 mod installer;
 mod ipc;
@@ -26,7 +27,9 @@ mod launcher_import;
 mod library;
 mod save_backups;
 mod scan;
+mod screenshots;
 mod local_files;
+mod notifications;
 mod shop_details;
 mod shortcuts;
 mod steam_shortcuts;
@@ -77,6 +80,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![ipc])
         .register_asynchronous_uri_scheme_protocol("local", |_ctx, request, responder| {
             let path = request.uri().path().to_string();

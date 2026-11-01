@@ -256,10 +256,40 @@ pub fn notification_infos(new: &[Value], previously_unlocked: usize, catalogue: 
         .collect()
 }
 
-/// Whether the user wants the custom pop-up; Electron falls back to an OS toast when it is off.
-// shortcut: no OS toast fallback yet (needs tauri-plugin-notification); with the pop-up off, unlocks are silent.
+/// Whether unlocks are announced at all.
 pub fn enabled(preferences: &Value) -> bool {
-    preferences["achievementNotificationsEnabled"].as_bool() != Some(false) && preferences["achievementCustomNotificationsEnabled"].as_bool() != Some(false)
+    preferences["achievementNotificationsEnabled"].as_bool() != Some(false)
+}
+
+/// Whether the custom pop-up shows them; otherwise an OS toast does (publishNewAchievementNotification).
+pub fn custom_enabled(preferences: &Value) -> bool {
+    preferences["achievementCustomNotificationsEnabled"].as_bool() != Some(false)
+}
+
+/// publishCombinedNewAchievementNotification: the startup summary as an OS toast.
+pub fn show_combined_toast(app: &AppHandle, game_count: usize, achievement_count: usize) {
+    let store = app.state::<crate::store::Store>();
+    let (games, achievements) = (game_count.to_string(), achievement_count.to_string());
+    let title = crate::i18n::t(&store, "achievement", "achievement_unlocked", &[]);
+    let body = crate::i18n::t(&store, "achievement", "new_achievements_unlocked", &[("gameCount", &games), ("achievementCount", &achievements)]);
+    crate::notifications::toast(app, &title, &body);
+}
+
+/// publishNewAchievementNotification: one OS toast for this batch of unlocks.
+// shortcut: no icon or progress bar on the toast (the plugin builder takes neither from a URL).
+pub fn show_toast(app: &AppHandle, game_title: &str, infos: &[Value]) {
+    let store = app.state::<crate::store::Store>();
+    let names: Vec<&str> = infos.iter().filter_map(|i| i["title"].as_str()).collect();
+    let (title, body) = match names.as_slice() {
+        [] => return,
+        [one] => (crate::i18n::t(&store, "achievement", "achievement_unlocked", &[]), one.to_string()),
+        many => {
+            let count = many.len().to_string();
+            let title = crate::i18n::t(&store, "achievement", "achievements_unlocked_for_game", &[("gameTitle", game_title), ("achievementCount", &count)]);
+            (title, many.join(", "))
+        }
+    };
+    crate::notifications::toast(app, &title, &body);
 }
 
 pub fn position(preferences: &Value) -> String {
@@ -269,10 +299,12 @@ pub fn position(preferences: &Value) -> String {
 /// `showAchievementTestNotification`: three samples (plain, rare + hidden, platinum).
 pub fn show_test(app: &AppHandle, preferences: &Value) {
     let icon = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(include_bytes!("../icons/128x128.png")));
-    // shortcut: English text; the renderer's i18n strings are not loaded in Rust.
+    let store = app.state::<crate::store::Store>();
+    let title = crate::i18n::t(&store, "notifications", "test_achievement_notification_title", &[]);
+    let description = crate::i18n::t(&store, "notifications", "test_achievement_notification_description", &[]);
     let sample = |rare: bool, hidden: bool, platinum: bool| {
         json!({
-            "title": "This is a test notification", "description": "Pretty cool, huh?", "iconUrl": icon,
+            "title": title, "description": description, "iconUrl": icon,
             "points": 2440, "isHidden": hidden, "isRare": rare, "isPlatinum": platinum,
         })
     };

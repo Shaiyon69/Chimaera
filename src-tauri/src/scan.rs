@@ -43,7 +43,7 @@ pub struct Catalogue {
 }
 
 impl Catalogue {
-    fn get(&self, id: &str) -> Option<&[Known]> {
+    pub(crate) fn get(&self, id: &str) -> Option<&[Known]> {
         self.map.get(id).map(Vec::as_slice)
     }
 
@@ -80,7 +80,7 @@ pub fn normalize_catalogue(raw: &Value, windows: bool) -> Catalogue {
 static CATALOGUE: Mutex<Option<Arc<Catalogue>>> = Mutex::new(None);
 
 /// GameExecutables.ensureLoaded(true): fetched once, refetched while it fails or is empty.
-async fn catalogue(store: &Store, version: &str) -> Option<Arc<Catalogue>> {
+pub(crate) async fn catalogue(store: &Store, version: &str) -> Option<Arc<Catalogue>> {
     if let Some(loaded) = CATALOGUE.lock().unwrap().clone() {
         return Some(loaded);
     }
@@ -299,6 +299,34 @@ pub fn installed_apps(libraries: &[PathBuf]) -> Vec<(String, PathBuf)> {
     apps
 }
 
+/// findSteamAppInstallDirectories for one app: its folder in the first library that lists it, installed or not.
+pub fn app_install_dir(libraries: &[PathBuf], app_id: &str) -> Option<PathBuf> {
+    if app_id.is_empty() || !app_id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    libraries.iter().find_map(|library| {
+        let content = fs::read_to_string(library.join("steamapps").join(format!("appmanifest_{app_id}.acf"))).ok()?;
+        if manifest_value(&content, "appid").as_deref() != Some(app_id) {
+            return None;
+        }
+        let dir = manifest_value(&content, "installdir").filter(|d| !d.is_empty())?;
+        Path::new(&dir).components().all(|c| matches!(c, Component::Normal(_))).then(|| library.join("steamapps").join("common").join(dir))
+    })
+}
+
+/// isSteamAppExecutable: `executable` lives in the app's install folder, symlinks resolved.
+pub fn is_app_executable(libraries: &[PathBuf], app_id: &str, executable: &str) -> bool {
+    let Some(dir) = app_install_dir(libraries, app_id) else { return false };
+    let path = Path::new(executable);
+    if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) || !inside(executable, &dir) {
+        return false;
+    }
+    match (real_path(path), real_path(&dir)) {
+        (Some(exe), Some(dir)) => inside(&exe.to_string_lossy(), &dir),
+        _ => true,
+    }
+}
+
 // ---- Missing executables (services/clear-missing-executables.ts) ----
 
 fn inside(path: &str, dir: &Path) -> bool {
@@ -340,7 +368,7 @@ fn executable_gone(executable: &str, libraries: &[PathBuf]) -> bool {
 }
 
 /// clearMissingExecutables: drops executable paths whose file is gone from storage that is present.
-fn clear_missing_executables(store: &Store, games: &mut [(String, Value)], libraries: &[PathBuf]) -> Result<(), String> {
+pub(crate) fn clear_missing_executables(store: &Store, games: &mut [(String, Value)], libraries: &[PathBuf]) -> Result<(), String> {
     for (key, game) in games.iter_mut() {
         if matches!(game["shop"].as_str(), Some("custom" | "launchbox")) || game["isDeleted"].as_bool() == Some(true) {
             continue;
@@ -394,6 +422,14 @@ fn walk(root: &Path, current: &Path, cancel: &AtomicBool, out: &mut Vec<String>)
             }
         }
     }
+}
+
+/// The catalogue's best executable for Steam app `id` inside its install folder.
+pub(crate) fn catalogue_executable(catalogue: &Catalogue, id: &str, folder: &Path, cancel: &AtomicBool) -> Option<String> {
+    let executables = catalogue.get(id)?;
+    // rank_executable reads only `files`; the by-name index is unused here.
+    let scanned = scan_directory(folder, &HashSet::new(), cancel);
+    rank_executable(&scanned.files, executables).map(|r| folder.join(r).to_string_lossy().into_owned())
 }
 
 fn scan_directory(dir: &Path, names: &HashSet<String>, cancel: &AtomicBool) -> Scanned {
@@ -752,11 +788,7 @@ fn file_pass(app: &AppHandle, catalogue: &Catalogue, extra: Vec<PathBuf>, includ
             if folder.file_name().is_some_and(|n| is_redist_dir(&n.to_string_lossy())) {
                 continue;
             }
-            let pick = catalogue.get(&id).and_then(|executables| {
-                let scanned = scan_directory(&folder, &names, cancel);
-                rank_executable(&scanned.files, executables).map(|r| folder.join(r).to_string_lossy().into_owned())
-            });
-            match pick {
+            match catalogue_executable(catalogue, &id, &folder, cancel) {
                 Some(path) => {
                     steam_executables.insert(id, path);
                 }
@@ -818,6 +850,29 @@ fn file_pass(app: &AppHandle, catalogue: &Catalogue, extra: Vec<PathBuf>, includ
 }
 
 /// `scanInstalledGames(additionalDirectories, includeDefaultDirectories, addGamesToLibrary, requestId)`.
+/// publishScanNotification: the SCAN_GAMES_COMPLETE entry in the in-app list.
+fn scan_notification(app: &AppHandle, added: usize, linked: usize, pending: usize) {
+    let (title, description) = scan_notification_keys(added, linked, pending);
+    let store = app.state::<Store>();
+    let (added, linked, pending) = (added.to_string(), linked.to_string(), pending.to_string());
+    let vars = [("added", added.as_str()), ("linked", linked.as_str()), ("pending", pending.as_str())];
+    let title = crate::i18n::t(&store, "notifications", title, &[]);
+    let description = crate::i18n::t(&store, "notifications", description, &vars);
+    if let Err(error) = crate::notifications::create(app, "SCAN_GAMES_COMPLETE", &title, &description, None, Some("/library?openScanModal=true")) {
+        eprintln!("[scan] could not store the scan notification: {error}");
+    }
+}
+
+fn scan_notification_keys(added: usize, linked: usize, pending: usize) -> (&'static str, &'static str) {
+    match (added, linked, pending) {
+        (1.., 1.., _) => ("scan_games_complete_title", "scan_games_complete_added_and_linked_description"),
+        (1.., 0, _) => ("scan_games_complete_title", "scan_games_complete_added_description"),
+        (0, 1.., _) => ("scan_games_complete_title", "scan_games_complete_linked_description"),
+        (0, 0, 1..) => ("scan_games_complete_title", "scan_games_complete_pending_description"),
+        _ => ("scan_games_no_results_title", "scan_games_no_results_description"),
+    }
+}
+
 pub async fn scan(app: &AppHandle, extra: Vec<PathBuf>, include_defaults: bool, add_to_library: bool, request_id: Option<String>) -> Result<Value, String> {
     let signal = Arc::new(AtomicBool::new(false));
     if let Some(id) = &request_id {
@@ -862,8 +917,9 @@ async fn run_scan(app: &AppHandle, extra: Vec<PathBuf>, include_defaults: bool, 
     let added = if signal.load(Ordering::Relaxed) { Vec::new() } else { add_games(app, &version, &picks).await };
     eprintln!("[scan] linked {} of {} library games, added {} new ones, {} need a choice", pass.linked.len(), pass.total, added.len(), found.ambiguous.len());
     app.emit("on-library-batch-complete", ()).map_err(|e| e.to_string())?;
-    // shortcut: the SCAN_GAMES_COMPLETE local notification is not created; the scan modal shows the
-    // result, and local notifications move here with the notifications milestone.
+    if !signal.load(Ordering::Relaxed) {
+        scan_notification(app, added.len(), pass.linked.len(), found.ambiguous.len());
+    }
     let ambiguous: Vec<Value> = found
         .ambiguous
         .iter()
@@ -895,12 +951,37 @@ pub async fn add_scanned(app: &AppHandle, picks: &Value) -> Result<Value, String
 mod tests {
     use super::*;
 
+    #[test]
+    fn scan_notification_picks_keys_like_electron() {
+        assert_eq!(scan_notification_keys(2, 1, 0).1, "scan_games_complete_added_and_linked_description");
+        assert_eq!(scan_notification_keys(2, 0, 5).1, "scan_games_complete_added_description");
+        assert_eq!(scan_notification_keys(0, 3, 0).1, "scan_games_complete_linked_description");
+        assert_eq!(scan_notification_keys(0, 0, 1).1, "scan_games_complete_pending_description");
+        assert_eq!(scan_notification_keys(0, 0, 0), ("scan_games_no_results_title", "scan_games_no_results_description"));
+    }
+
     fn known(names: &[&str]) -> Vec<Known> {
         normalize_catalogue(&json!({ "1": names.iter().map(|n| json!({ "name": n, "os": "win32" })).collect::<Vec<_>>() }), false).map.remove("1").unwrap()
     }
 
     fn files(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn steam_app_executables_stay_inside_the_install_folder() {
+        let library = std::env::temp_dir().join(format!("chimaera-steam-exe-{}", std::process::id()));
+        let game = library.join("steamapps").join("common").join("Game");
+        fs::create_dir_all(&game).unwrap();
+        fs::write(library.join("steamapps").join("appmanifest_10.acf"), "\"AppState\" { \"appid\" \"10\" \"installdir\" \"Game\" }").unwrap();
+        let libraries = [library.clone()];
+        let exe = game.join("game.exe").to_string_lossy().into_owned();
+        assert!(is_app_executable(&libraries, "10", &exe));
+        assert!(!is_app_executable(&libraries, "11", &exe));
+        assert!(!is_app_executable(&libraries, "10", &library.join("other.exe").to_string_lossy()));
+        assert!(!is_app_executable(&libraries, "10", &game.join("..").join("..").join("x.exe").to_string_lossy()));
+        assert!(!is_app_executable(&libraries, "10", "game.exe"));
+        fs::remove_dir_all(&library).unwrap();
     }
 
     #[test]
