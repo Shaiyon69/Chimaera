@@ -23,6 +23,7 @@ mod file_saves;
 mod file_system;
 mod game_installer;
 mod games;
+mod genres;
 mod google_drive;
 mod hosters;
 mod http_download;

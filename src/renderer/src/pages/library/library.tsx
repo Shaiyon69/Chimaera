@@ -14,6 +14,9 @@ import {
   useAppSelector,
   useGameCollections,
   useUserDetails,
+  useScrollRestoration,
+  useGameGenres,
+  gameGenreKey,
 } from "@renderer/hooks";
 import { selectIsLibraryLoading, setHeaderTitle } from "@renderer/features";
 import {
@@ -46,6 +49,7 @@ import { FilterOptions, SortOption } from "./filter-options";
 import { CategoryFilter, LibraryCategory } from "./category-filter";
 import { InstalledFilter } from "./installed-filter";
 import { PlatformFilter } from "./platform-filter";
+import { GenreFilter } from "./genre-filter";
 import { SourceFilter } from "./source-filter";
 import { CollectionsFilter } from "./collections-filter";
 import { LibraryGamesSkeleton } from "./library-games-skeleton";
@@ -209,6 +213,7 @@ export default function Library() {
   );
   const [selectedPlatforms, setSelectedPlatforms] =
     useState<string[]>(readStoredPlatforms);
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [showInstalledOnly, setShowInstalledOnly] = useState<boolean>(
     () => localStorage.getItem(LIBRARY_INSTALLED_ONLY_STORAGE_KEY) === "true"
   );
@@ -338,6 +343,11 @@ export default function Library() {
   );
 
   const location = useLocation();
+  // Kept alive while hidden; the offset comes back on return from game details.
+  useScrollRestoration(
+    gamesScrollRef,
+    location.pathname === "/library" ? "/library" : null
+  );
 
   // Library stays mounted while hidden, so re-apply the saved collection each
   // time the dock navigates back to "/library" (which drops the query string).
@@ -502,6 +512,9 @@ export default function Library() {
     [library, hiddenGames, selectedCollectionId]
   );
   const hasPlatforms = uniquePlatforms.length > 0;
+  const { genresByGame, genres: uniqueGenres } = useGameGenres(
+    selectedCollectionId === HIDDEN_COLLECTION_ID ? hiddenGames : library
+  );
   const showSourceFilter =
     categoryShowsSources(effectiveCategory) && hasSteamGames;
   const showPlatformFilter =
@@ -537,6 +550,14 @@ export default function Library() {
       filtered = filtered.filter(isGameInstalled);
     }
 
+    if (selectedGenres.length > 0) {
+      filtered = filtered.filter((game) =>
+        (genresByGame[gameGenreKey(game)] ?? []).some((genre) =>
+          selectedGenres.includes(genre)
+        )
+      );
+    }
+
     const queryLower = removeDiacritics(deferredSearchQuery).toLowerCase();
 
     if (!queryLower.trim()) return filtered;
@@ -570,6 +591,8 @@ export default function Library() {
     hasPlatforms,
     selectedPlatforms,
     showInstalledOnly,
+    selectedGenres,
+    genresByGame,
   ]);
 
   useEffect(() => {
@@ -675,6 +698,7 @@ export default function Library() {
     effectiveCategory,
     selectedSources,
     selectedPlatforms,
+    selectedGenres,
     showInstalledOnly,
     sortBy,
     selectedCollectionId,
@@ -752,6 +776,13 @@ export default function Library() {
                   selectedPlatforms={selectedPlatforms}
                   platforms={uniquePlatforms}
                   onPlatformsChange={handlePlatformsChange}
+                />
+              )}
+              {uniqueGenres.length > 0 && (
+                <GenreFilter
+                  selectedGenres={selectedGenres}
+                  genres={uniqueGenres}
+                  onGenresChange={setSelectedGenres}
                 />
               )}
               <InstalledFilter

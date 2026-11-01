@@ -64,6 +64,8 @@ function renderCard(
     },
     "@renderer/components": {
       SteamLibraryBadge: () => React.createElement("span", null, "Steam"),
+      AchievementProgress: () => null,
+      ArtFallback: () => null,
       VerticalCoverCard: ({ children }: { children: React.ReactNode }) =>
         React.createElement("div", null, children),
     },

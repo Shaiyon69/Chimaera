@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, genres, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -89,7 +89,12 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         }
         "hydraApiCall" => {
             let version = app.package_info().version.to_string();
-            hydra_api::call(&app.state::<Store>(), &version, args.first().unwrap_or(&Value::Null)).await
+            let payload = args.first().unwrap_or(&Value::Null);
+            let result = hydra_api::call(&app.state::<Store>(), &version, payload).await;
+            if let Err(error) = &result {
+                eprintln!("[hydra-api] {} {} failed: {error}", payload["method"].as_str().unwrap_or("get"), payload["url"].as_str().unwrap_or("/"));
+            }
+            result
         }
         // getUserData: Chimaera's profile is local, so this is LocalApi's `/profile/me`.
         "getMe" => {
@@ -436,6 +441,10 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "getGameShopDetails" => {
             let (object_id, shop, language) = (arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default(), arg_str(args, 2).unwrap_or("en"));
             shop_details::get_game_shop_details(app, object_id, shop, language).await
+        }
+        "getGameGenres" => {
+            let version = app.package_info().version.to_string();
+            genres::get(&app.state::<Store>(), &version, args.first().unwrap_or(&Value::Null), arg_str(args, 1).unwrap_or("en")).await
         }
         "getGameStats" => {
             let version = app.package_info().version.to_string();

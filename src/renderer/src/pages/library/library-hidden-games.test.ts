@@ -136,6 +136,10 @@ async function renderLibrary(
     "@renderer/hooks": {
       useLibrary: () => ({ library, updateLibrary }),
       useUserDetails: () => ({ userDetails }),
+      useScrollRestoration: noop,
+      useGameGenres: () => ({ genresByGame: {}, genres: [] }),
+      gameGenreKey: (game: { shop: string; objectId: string }) =>
+        `${game.shop}:${game.objectId}`,
       useAppDispatch: () => noop,
       useAppSelector: (select: (state: unknown) => unknown) =>
         select({ library: { searchQuery: "" } }),
@@ -189,6 +193,7 @@ async function renderLibrary(
     "./category-filter": { CategoryFilter: () => null },
     "./installed-filter": { InstalledFilter: () => null },
     "./platform-filter": { PlatformFilter: () => null },
+    "./genre-filter": { GenreFilter: () => null },
     "./source-filter": { SourceFilter: () => null },
     "./collections-filter": { CollectionsFilter: () => null },
     "./library-games-skeleton": { LibraryGamesSkeleton: () => null },
