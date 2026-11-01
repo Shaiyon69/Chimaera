@@ -34,6 +34,7 @@ base64 = "0.22"
 unicode-normalization = "0.1"
 crc32fast = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico", "webp", "gif"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 lnk = "0.6"
