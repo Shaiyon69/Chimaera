@@ -252,18 +252,6 @@ pub async fn get_game_assets(store: &Store, version: &str, object_id: &str, shop
     composed_assets_for(store, &key)
 }
 
-/// `getDownloadLayoutState`: queue and paused order of downloads.
-// shortcut: returns the stored order as-is; normalizing it against live download
-// states (normalizeDownloadLayoutState) moves here with downloads (F4).
-pub fn download_layout_state(store: &Store) -> Result<Value, String> {
-    let empty = json!({ "version": 1, "queueOrder": [], "pausedOrder": [] });
-    if store.entries("downloads")?.is_empty() {
-        return Ok(empty);
-    }
-    let stored = store.get("downloadLayoutState", "layout")?;
-    Ok(if stored.is_null() { empty } else { stored })
-}
-
 /// (year, month, day) for days since 1970-01-01, without a date crate (Howard Hinnant's civil_from_days).
 fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let z = days + 719_468;

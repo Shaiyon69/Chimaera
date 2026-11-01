@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, download_sources, file_system, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
+use crate::{achievement_popup, achievements, artwork, download_sources, downloads, file_system, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -112,7 +112,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         }
         // Electron merges /profile/games from Hydra, which local mode blocks, so it fails there too.
         "refreshLibraryAssets" => Err("library/refresh-failed".into()),
-        "getDownloadLayoutState" => library::download_layout_state(&app.state::<Store>()),
+        "getDownloadLayoutState" => downloads::layout_state(&app.state::<Store>()),
         "getGamesRunning" => Ok(app.state::<Sessions>().running()),
         "getGameByObjectId" => {
             let store = app.state::<Store>();
@@ -378,6 +378,31 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let (manual, append_manual, append_url) = (args.first().unwrap_or(&Value::Null), args.get(2).and_then(Value::as_bool).unwrap_or(false), args.get(3).and_then(Value::as_bool).unwrap_or(false));
             trackers::save(&app.state::<Store>(), manual, arg_str(args, 1), append_manual, append_url).map(|_| Value::Null)
         }
+        "startGameDownload" => Ok(downloads::start_game_download(app, args.first().unwrap_or(&Value::Null)).await),
+        "addGameToQueue" => Ok(downloads::add_game_to_queue(app, args.first().unwrap_or(&Value::Null)).await),
+        "cancelGameDownload" => downloads::cancel_by_id(app, shop(args), object_id(args)).await.map(|ok| json!(ok)),
+        // `confirmed` (args[2]) only matters for TorBox zip transfers, which arrive with debrid.
+        "pauseGameDownload" => downloads::pause_by_id(app, shop(args), object_id(args)).await.map(|ok| json!(ok)),
+        "getDownloadPauseWarning" => Ok(json!(false)),
+        "resumeGameDownload" => {
+            let strategy = arg_str(args, 2).unwrap_or("interruptActive");
+            downloads::resume(app, shop(args), object_id(args), strategy).await.map(|ok| json!(ok))
+        }
+        "pauseGameSeed" => downloads::set_seeding(app, shop(args), object_id(args), false).await.map(|_| Value::Null),
+        "resumeGameSeed" => downloads::set_seeding(app, shop(args), object_id(args), true).await.map(|_| Value::Null),
+        "setDownloadQueuePosition" => {
+            let index = args.get(2).and_then(Value::as_i64).unwrap_or(0);
+            downloads::set_position(app, shop(args), object_id(args), index, true).map(|ok| json!(ok))
+        }
+        "setPausedDownloadPosition" => {
+            let index = args.get(2).and_then(Value::as_i64).unwrap_or(0);
+            downloads::set_position(app, shop(args), object_id(args), index, false).map(|ok| json!(ok))
+        }
+        "updateDownloadQueuePosition" => downloads::step_position(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()).map(|ok| json!(ok)),
+        "moveDownloadPlacement" => {
+            let index = args.get(3).and_then(Value::as_i64);
+            downloads::move_placement(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default(), index).await.map(|ok| json!(ok))
+        }
         "getBundledGameSetup" => bundled_games::setup(app, arg_str(args, 0).unwrap_or_default()),
         "getUnlockedAchievements" => achievements::get_unlocked_achievements(app, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).await,
         "resetGameAchievements" => achievements::reset(app, shop(args), object_id(args)).await.map(|_| Value::Null),
@@ -405,8 +430,9 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
                 store.put("", "language", &json!(language))?;
             }
             store.put("", "userPreferences", &updated)?;
-            // shortcut: Wine prefix pinning, souvenir capture and download speed limits react to these
-            // preferences in Electron; each moves here with its milestone (F4, F6, F8).
+            if let Some(limit) = patch.get("maxDownloadSpeedBytesPerSecond") {
+                downloads::apply_speed_limit(app, limit).await;
+            }
             app.emit("on-user-preferences-updated", [&updated]).map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }

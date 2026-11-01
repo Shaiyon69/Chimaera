@@ -8,9 +8,12 @@ mod achievements;
 mod artwork;
 mod bundled_games;
 mod download_sources;
+mod downloads;
 mod electron_import;
 mod file_system;
 mod games;
+mod hosters;
+mod http_download;
 mod hydra_api;
 mod image_cache;
 mod installer;
@@ -94,6 +97,7 @@ pub fn run() {
             std::thread::spawn(move || image_cache::prune(&image_dir));
             let store = store::Store::open(&data_dir.join("chimaera.db"))?;
             let user_data = electron_import::electron_user_data(&app.path().config_dir()?);
+            http_download::adopt_electron_ranges(&user_data.join("DownloadRanges"), &data_dir.join("DownloadRanges"));
             let scratch = app.path().app_cache_dir()?.join("electron-import");
             match electron_import::run_once(&store, &user_data, &scratch) {
                 Ok(Some(result)) => eprintln!("[import] Electron data: {result}"),
@@ -115,6 +119,8 @@ pub fn run() {
             app.manage(achievements::AchievementWatcher::default());
             app.manage(achievement_popup::Popup::default());
             achievements::spawn(app.handle().clone());
+            app.manage(downloads::Downloads::default());
+            downloads::spawn(app.handle().clone());
             // Same size and chrome as WindowManager.createMainWindow: the renderer
             // draws its own title bar and window buttons.
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("tauri.html".into()))
