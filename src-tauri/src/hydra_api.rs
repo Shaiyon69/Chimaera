@@ -95,16 +95,11 @@ fn query_get<'a>(query: &'a [(String, String)], key: &str) -> Option<&'a str> {
 
 fn time_ms(v: &Value) -> i64 {
     match v {
-        Value::String(s) => iso_digits(s),
-        Value::Number(n) => n.as_i64().unwrap_or(0),
+        // Parsed, not compared by digits: stamps with and without millis must share one scale.
+        Value::String(s) => crate::steam::parse_iso_ms(s).map_or(0, |ms| ms as i64),
+        Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)).unwrap_or(0),
         _ => 0,
     }
-}
-
-/// ISO-8601 UTC timestamps compare correctly by their digits alone
-/// (YYYYMMDDhhmmssSSS), which is all "most recent first" needs.
-fn iso_digits(s: &str) -> i64 {
-    s.chars().filter(char::is_ascii_digit).take(17).collect::<String>().parse().unwrap_or(0)
 }
 
 fn to_user_game(g: &Value) -> Value {
@@ -116,6 +111,7 @@ fn to_user_game(g: &Value) -> Value {
         "unlockedAchievementCount": g["unlockedAchievementCount"].as_i64().unwrap_or(0),
         "achievementCount": g["achievementCount"].as_i64().unwrap_or(0),
         "achievementsPointsEarnedSum": 0, "hasManuallyUpdatedPlaytime": false,
+        "hasActiveSteamImport": g["hasActiveSteamImport"].as_bool().unwrap_or(false),
         "isFavorite": g["favorite"].as_bool().unwrap_or(false),
         "isHiddenFromOthers": g["isHiddenFromOthers"].as_bool().unwrap_or(false),
         "isPinned": g["isPinned"].as_bool().unwrap_or(false),
@@ -147,12 +143,16 @@ fn shops(query: &[(String, String)]) -> Vec<&str> {
 pub fn build_library(games: &[Value], query: &[(String, String)]) -> Value {
     let mut list = visible(games, &shops(query));
     let num = |g: &Value, k: &str| g[k].as_f64().unwrap_or(0.0);
+    let title = |a: &Value, b: &Value| a["title"].as_str().cmp(&b["title"].as_str());
+    // The profile page sends playtime / achievementCount / playedRecently; the others are older names.
     match query_get(query, "sortBy").unwrap_or("recently_played") {
-        "title_asc" => list.sort_by(|a, b| a["title"].as_str().cmp(&b["title"].as_str())),
-        "title_desc" => list.sort_by(|a, b| b["title"].as_str().cmp(&a["title"].as_str())),
-        "most_played" => list.sort_by(|a, b| crate::games::total_play_ms(b).total_cmp(&crate::games::total_play_ms(a))),
-        "achievements" => list.sort_by(|a, b| num(b, "unlockedAchievementCount").total_cmp(&num(a, "unlockedAchievementCount"))),
-        _ => list.sort_by_key(|g| std::cmp::Reverse(time_ms(&g["lastTimePlayed"]))),
+        "title_asc" => list.sort_by(|a, b| title(a, b)),
+        "title_desc" => list.sort_by(|a, b| title(b, a)),
+        "most_played" | "playtime" => list.sort_by(|a, b| crate::games::total_play_ms(b).total_cmp(&crate::games::total_play_ms(a)).then_with(|| title(a, b))),
+        "achievements" | "achievementCount" => list.sort_by(|a, b| {
+            num(b, "unlockedAchievementCount").total_cmp(&num(a, "unlockedAchievementCount")).then_with(|| title(a, b))
+        }),
+        _ => list.sort_by(|a, b| time_ms(&b["lastTimePlayed"]).cmp(&time_ms(&a["lastTimePlayed"])).then_with(|| title(a, b))),
     }
     let take = query_get(query, "take").and_then(|t| t.parse().ok()).filter(|t| *t > 0).unwrap_or(list.len());
     let skip = query_get(query, "skip").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -454,6 +454,22 @@ mod tests {
         assert_eq!(recent["library"][1]["playTimeInSeconds"], 5);
         let played = build_library(&games, &[("sortBy".into(), "most_played".into())]);
         assert_eq!((played["library"][0]["objectId"].as_str(), played["library"][0]["playTimeInSeconds"].as_i64()), (Some("2"), Some(10)));
+        for name in ["playtime", "most_played"] {
+            let played = build_library(&games, &[("sortBy".into(), name.into())]);
+            assert_eq!(played["library"][0]["objectId"], "2", "{name}");
+        }
+    }
+
+    #[test]
+    fn recent_sort_mixes_iso_with_and_without_millis() {
+        let games = vec![
+            json!({ "objectId": "old", "shop": "steam", "title": "Old", "lastTimePlayed": "2026-01-01T00:00:00.500Z" }),
+            json!({ "objectId": "new", "shop": "steam", "title": "New", "lastTimePlayed": "2026-06-01T00:00:00Z" }),
+            json!({ "objectId": "never", "shop": "steam", "title": "Never", "lastTimePlayed": null }),
+        ];
+        let lib = build_library(&games, &[("sortBy".into(), "playedRecently".into())]);
+        let ids: Vec<_> = lib["library"].as_array().unwrap().iter().map(|g| g["objectId"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["new", "old", "never"]);
     }
 
     #[test]

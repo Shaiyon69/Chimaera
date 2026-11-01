@@ -874,7 +874,7 @@ fn later_iso(local: &Value, remote: Option<u64>) -> Value {
 }
 
 /// The millisecond time of an ISO-8601 UTC date like 2024-05-01T10:20:30.000Z.
-fn parse_iso_ms(iso: &str) -> Option<u64> {
+pub(crate) fn parse_iso_ms(iso: &str) -> Option<u64> {
     let (date, time) = iso.split_once('T')?;
     let mut d = date.split('-').map(|p| p.parse::<i64>());
     let (y, m, day) = (d.next()?.ok()?, d.next()?.ok()?, d.next()?.ok()?);
