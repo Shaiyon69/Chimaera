@@ -1,7 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Button, CheckboxField, TextField } from "@renderer/components";
+import { Button, TextField } from "@renderer/components";
 import { settingsContext } from "@renderer/context";
 import { useAppSelector } from "@renderer/hooks";
 
@@ -85,15 +85,39 @@ export function SettingsContextOptiscaler() {
   return (
     <div className="settings-optiscaler">
       <section className="settings-optiscaler__card">
-        <CheckboxField
-          label={t("optiscaler_nightly")}
-          checked={prefs?.optiscalerNightly ?? false}
-          onChange={() =>
-            void updateUserPreferences({
-              optiscalerNightly: !(prefs?.optiscalerNightly ?? false),
-            })
-          }
-        />
+        <div className="settings-optiscaler__card-header">
+          <h3 className="settings-optiscaler__card-title">
+            {t("optiscaler_channel_title")}
+          </h3>
+          <p className="settings-optiscaler__hint">
+            {t("optiscaler_channel_hint")}
+          </p>
+        </div>
+        <div className="settings-optiscaler__variant" role="radiogroup">
+          {([false, true] as const).map((nightly) => {
+            const active = (prefs?.optiscalerNightly ?? false) === nightly;
+            return (
+              <button
+                key={String(nightly)}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                className={`settings-optiscaler__variant-option${
+                  active ? " settings-optiscaler__variant-option--active" : ""
+                }`}
+                onClick={() =>
+                  void updateUserPreferences({ optiscalerNightly: nightly })
+                }
+              >
+                {t(
+                  nightly
+                    ? "optiscaler_channel_nightly"
+                    : "optiscaler_channel_stable"
+                )}
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       <section className="settings-optiscaler__card">
