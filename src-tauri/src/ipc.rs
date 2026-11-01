@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, emulators, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, misc, notifications, processed_image, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, emulators, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, messapp_keys, misc, notifications, processed_image, profile, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -96,6 +96,15 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let version = app.package_info().version.to_string();
             hydra_api::call(&app.state::<Store>(), &version, &json!({ "method": "get", "url": "/profile/me" })).await
         }
+        "updateProfile" => profile::update_profile(app, args.first().unwrap_or(&Value::Null)).await,
+        "getProfileImageMetadata" => Ok(profile::image_metadata(arg_str(args, 0).unwrap_or_default())),
+        "processProfileImage" => profile::process_profile_image(arg_str(args, 0).unwrap_or_default()),
+        "cropProfileImage" => profile::crop_profile_image(arg_str(args, 0).unwrap_or_default(), args.get(1).unwrap_or(&Value::Null)),
+        "saveMessappKey" => messapp_keys::save(arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).await.map(Value::Bool),
+        "loadMessappKey" => messapp_keys::load(arg_str(args, 0).unwrap_or_default()).await.map(|k| json!(k)),
+        "clearMessappKey" => messapp_keys::clear(arg_str(args, 0).unwrap_or_default()).await.map(|_| Value::Null),
+        // The compare route is another user's Hydra data, which local mode always blocks (same error as Electron).
+        "getComparedUnlockedAchievements" => Err("user not logged in".into()),
         // Electron tells the download orchestrator and souvenir worker; neither exists here yet (F4, F6).
         "updateNetworkStatus" => Ok(Value::Null),
         "getLibrary" => {

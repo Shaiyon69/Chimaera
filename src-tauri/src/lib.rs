@@ -31,6 +31,8 @@ mod ipc;
 mod launch;
 mod launcher_import;
 mod library;
+mod messapp_keys;
+mod profile;
 mod save_backups;
 mod scan;
 mod screenshots;
