@@ -53,7 +53,7 @@ pub enum Node {
     Fixed(u8, Vec<u8>),
 }
 
-type Entries = Vec<(String, Node)>;
+pub(crate) type Entries = Vec<(String, Node)>;
 
 fn read_cstr(buf: &[u8], pos: &mut usize) -> Result<String, String> {
     let rest = buf.get(*pos..).ok_or("shortcuts.vdf: truncated")?;
@@ -62,7 +62,7 @@ fn read_cstr(buf: &[u8], pos: &mut usize) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&rest[..end]).into_owned())
 }
 
-fn parse_map(buf: &[u8], pos: &mut usize) -> Result<Entries, String> {
+pub(crate) fn parse_map(buf: &[u8], pos: &mut usize) -> Result<Entries, String> {
     let mut entries = Vec::new();
     loop {
         let kind = *buf.get(*pos).ok_or("shortcuts.vdf: truncated")?;

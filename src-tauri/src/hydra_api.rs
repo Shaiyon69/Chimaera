@@ -108,7 +108,7 @@ fn iso_digits(s: &str) -> i64 {
 }
 
 fn to_user_game(g: &Value) -> Value {
-    let ms = g["playTimeInMilliseconds"].as_f64().unwrap_or(0.0);
+    let ms = crate::games::total_play_ms(g);
     json!({
         "objectId": g["objectId"], "shop": g["shop"], "title": g["title"],
         "playTimeInSeconds": (ms / 1000.0).floor() as i64,
@@ -150,7 +150,7 @@ pub fn build_library(games: &[Value], query: &[(String, String)]) -> Value {
     match query_get(query, "sortBy").unwrap_or("recently_played") {
         "title_asc" => list.sort_by(|a, b| a["title"].as_str().cmp(&b["title"].as_str())),
         "title_desc" => list.sort_by(|a, b| b["title"].as_str().cmp(&a["title"].as_str())),
-        "most_played" => list.sort_by(|a, b| num(b, "playTimeInMilliseconds").total_cmp(&num(a, "playTimeInMilliseconds"))),
+        "most_played" => list.sort_by(|a, b| crate::games::total_play_ms(b).total_cmp(&crate::games::total_play_ms(a))),
         "achievements" => list.sort_by(|a, b| num(b, "unlockedAchievementCount").total_cmp(&num(a, "unlockedAchievementCount"))),
         _ => list.sort_by_key(|g| std::cmp::Reverse(time_ms(&g["lastTimePlayed"]))),
     }
@@ -348,7 +348,8 @@ fn query_pairs(params: &Value) -> Vec<(String, String)> {
     };
     map.iter()
         .flat_map(|(k, v)| match v {
-            Value::Array(items) => items.iter().filter_map(scalar).map(|s| (k.clone(), s)).collect::<Vec<_>>(),
+            // Axios sends arrays as `key[]=a&key[]=b`; the API ignores repeated plain keys (download options came back empty).
+            Value::Array(items) => items.iter().filter_map(scalar).map(|s| (format!("{k}[]"), s)).collect::<Vec<_>>(),
             v => scalar(v).map(|s| vec![(k.clone(), s)]).unwrap_or_default(),
         })
         .collect()
@@ -432,10 +433,16 @@ mod tests {
     }
 
     #[test]
+    fn arrays_use_axios_brackets() {
+        let pairs = query_pairs(&json!({ "take": 100, "ids": ["a", "b"], "skip": null }));
+        assert_eq!(pairs, vec![("ids[]".into(), "a".into()), ("ids[]".into(), "b".into()), ("take".into(), "100".into())]);
+    }
+
+    #[test]
     fn library_sorts_pages_and_skips_deleted() {
         let games = vec![
             json!({ "objectId": "1", "shop": "steam", "title": "B", "playTimeInMilliseconds": 5000, "lastTimePlayed": "2026-01-01T00:00:00Z", "isDeleted": false, "isPinned": true }),
-            json!({ "objectId": "2", "shop": "steam", "title": "A", "playTimeInMilliseconds": 1000, "lastTimePlayed": "2026-06-01T00:00:00Z", "isDeleted": false }),
+            json!({ "objectId": "2", "shop": "steam", "title": "A", "playTimeInMilliseconds": 1000, "steamPlayTimeInMilliseconds": 9000, "lastTimePlayed": "2026-06-01T00:00:00Z", "isDeleted": false }),
             json!({ "objectId": "3", "shop": "steam", "title": "C", "isDeleted": true }),
         ];
         let lib = build_library(&games, &[("sortBy".into(), "title_asc".into()), ("take".into(), "1".into())]);
@@ -445,6 +452,8 @@ mod tests {
         let recent = build_library(&games, &[]);
         assert_eq!(recent["library"][0]["objectId"], "2");
         assert_eq!(recent["library"][1]["playTimeInSeconds"], 5);
+        let played = build_library(&games, &[("sortBy".into(), "most_played".into())]);
+        assert_eq!((played["library"][0]["objectId"].as_str(), played["library"][0]["playTimeInSeconds"].as_i64()), (Some("2"), Some(10)));
     }
 
     #[test]

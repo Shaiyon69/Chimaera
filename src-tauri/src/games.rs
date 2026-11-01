@@ -333,11 +333,17 @@ pub fn play_sessions(store: &Store, shop: &str, object_id: &str) -> Result<Value
     Ok(Value::Array(sessions))
 }
 
+/// Chimaera's own playtime plus what Steam reports, as `getDisplayedPlayTimeInMilliseconds` shows it.
+pub fn total_play_ms(g: &Value) -> f64 {
+    let part = |k: &str| g[k].as_f64().unwrap_or(0.0).max(0.0);
+    part("playTimeInMilliseconds") + part("steamPlayTimeInMilliseconds")
+}
+
 /// `getPlaytimeSummary`: library-wide totals and the top 5; deleted games do not count.
 pub fn playtime_summary(store: &Store) -> Result<Value, String> {
     let games: Vec<Value> =
         store.entries("games")?.into_iter().map(|(_, g)| g).filter(|g| !g["isDeleted"].as_bool().unwrap_or(false)).collect();
-    let ms = |g: &Value| g["playTimeInMilliseconds"].as_f64().unwrap_or(0.0).trunc() as i64;
+    let ms = |g: &Value| total_play_ms(g).trunc() as i64;
     let mut played: Vec<&Value> = games.iter().filter(|g| ms(g) > 0).collect();
     played.sort_by_key(|g| std::cmp::Reverse(ms(g)));
     Ok(json!({
@@ -493,12 +499,14 @@ mod tests {
         let store = Store::memory().unwrap();
         store.put("games", "steam:1", &json!({ "shop": "steam", "objectId": "1", "title": "A", "playTimeInMilliseconds": 5000.7 })).unwrap();
         store.put("games", "steam:2", &json!({ "shop": "steam", "objectId": "2", "isDeleted": true, "playTimeInMilliseconds": 9 })).unwrap();
+        store.put("games", "steam:3", &json!({ "shop": "steam", "objectId": "3", "title": "B", "steamPlayTimeInMilliseconds": 1000 })).unwrap();
         store.put("playSessions", "000000000001", &json!({ "gameKey": "steam:1", "startedAt": 10 })).unwrap();
         store.put("playSessions", "1793404800000", &json!({ "gameKey": "steam:1", "startedAt": 20 })).unwrap();
         let sessions = play_sessions(&store, "steam", "1").unwrap();
         assert_eq!(sessions[0]["startedAt"], 20);
         let summary = playtime_summary(&store).unwrap();
-        assert_eq!((summary["totalPlayTimeInMilliseconds"].as_i64(), summary["gameCount"].as_u64()), (Some(5000), Some(1)));
+        assert_eq!((summary["totalPlayTimeInMilliseconds"].as_i64(), summary["gameCount"].as_u64()), (Some(6000), Some(2)));
         assert_eq!(summary["mostPlayed"][0]["title"], "A");
+        assert_eq!(summary["mostPlayed"][1]["playTimeInMilliseconds"], 1000);
     }
 }

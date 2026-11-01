@@ -299,14 +299,62 @@ fn game_directory_files(exe: &Path) -> Vec<AchievementFile> {
     files
 }
 
-/// The real Steam client's cache of the user's unlocks (findAchievementFileInSteamPath).
+/// The real Steam client's caches of the user's unlocks (findAchievementFileInSteamPath).
+/// `librarycache/<appid>.json` lists at most 12 unlocks, so the full per-account stats in
+/// `appcache/stats/UserGameStats_<account>_<appid>.bin` are read too.
 fn steam_cache_files(steam_path: &Path, object_id: &str) -> Vec<AchievementFile> {
+    let stats = steam_path.join(r"appcache\stats");
     subdirs(&steam_path.join("userdata"))
         .into_iter()
-        .map(|user| user.join(r"config\librarycache").join(format!("{object_id}.json")))
+        .flat_map(|user| {
+            let account = user.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            [user.join(r"config\librarycache").join(format!("{object_id}.json")), stats.join(format!("UserGameStats_{account}_{object_id}.bin"))]
+        })
         .filter(|p| p.is_file())
         .map(|path| AchievementFile { cracker: Cracker::Steam, path })
         .collect()
+}
+
+/// UserGameStats_<account>_<appid>.bin: binary VDF `cache/<statId>/data` is a bitmask whose
+/// bit n is the achievement at `stats/<statId>/bits/<n>/name` in UserGameStatsSchema_<appid>.bin,
+/// with its unlock time at `cache/<statId>/AchievementTimes/<n>`.
+fn process_steam_stats(path: &Path) -> Vec<Unlock> {
+    use crate::steam_shortcuts::{parse_map, Entries, Node};
+    fn read(path: &Path) -> Option<Entries> {
+        parse_map(&fs::read(path).ok()?, &mut 0).ok()
+    }
+    fn get<'a>(map: &'a Entries, key: &str) -> Option<&'a Entries> {
+        map.iter().find(|(k, _)| k == key).and_then(|(_, v)| if let Node::Map(m) = v { Some(m) } else { None })
+    }
+    fn int(map: &Entries, key: &str) -> Option<i64> {
+        map.iter().find(|(k, _)| k == key).and_then(|(_, v)| match v {
+            Node::Fixed(0x02, b) => Some(i32::from_le_bytes(b[..4].try_into().ok()?) as i64),
+            _ => None,
+        })
+    }
+    let Some(app_id) = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.rsplit('_').next()) else { return Vec::new() };
+    let (Some(user), Some(schema)) = (read(path), path.parent().and_then(|dir| read(&dir.join(format!("UserGameStatsSchema_{app_id}.bin"))))) else {
+        return Vec::new();
+    };
+    let (Some(cache), Some((_, Node::Map(root)))) = (get(&user, "cache"), schema.first()) else { return Vec::new() };
+    let Some(stats) = get(root, "stats") else { return Vec::new() };
+    let mut unlocks = Vec::new();
+    for (stat_id, stat) in stats {
+        let (Node::Map(stat), Some(own)) = (stat, get(cache, stat_id)) else { continue };
+        let mask = int(own, "data").unwrap_or(0) as u32;
+        let times = get(own, "AchievementTimes");
+        for (key, bit) in get(stat, "bits").into_iter().flatten() {
+            let Node::Map(bit) = bit else { continue };
+            let n = int(bit, "bit").or_else(|| key.parse().ok()).unwrap_or(-1);
+            let name = bit.iter().find(|(k, _)| k == "name").and_then(|(_, v)| if let Node::Str(s) = v { Some(s.as_str()) } else { None });
+            if let (Some(name), 0..=31) = (name, n) {
+                if mask >> n & 1 == 1 {
+                    unlocks.push(unlock(name, times.and_then(|t| int(t, &n.to_string())).unwrap_or(0) * 1000));
+                }
+            }
+        }
+    }
+    unlocks
 }
 
 /// Every achievement file for a Steam-catalogue game (collectGameAchievementFiles).
@@ -506,6 +554,7 @@ pub fn parse_file(file: &AchievementFile) -> Vec<Unlock> {
         UserStats => process_user_stats(&parse_ini(&text)),
         Goldberg | Empress => process_goldberg(&json()),
         Razor1911 => process_razor1911(&text),
+        Steam if file.path.extension().is_some_and(|e| e == "bin") => process_steam_stats(&file.path),
         Steam => process_steam_cache(&json()),
         // Electron finds these files but has no parser for them either.
         SmartSteamEmu => Vec::new(),
@@ -551,6 +600,30 @@ mod tests {
         assert_eq!(names(&process_rld(&rld)), [("WIN", 100_000)]);
         let three = parse_ini("[State]\nX=0101\nY=0000\n[Time]\nX=64000000\nY=64000000");
         assert_eq!(names(&process_3dm(&three)), [("X", 100_000)]);
+    }
+
+    #[test]
+    fn parses_steam_client_stats_bitmask() {
+        // Binary VDF: 0x00 map, 0x01 string, 0x02 int32, 0x08 end.
+        fn map(name: &str, body: &[u8]) -> Vec<u8> {
+            [&[0u8][..], name.as_bytes(), &[0], body, &[8]].concat()
+        }
+        fn s(name: &str, v: &str) -> Vec<u8> {
+            [&[1u8][..], name.as_bytes(), &[0], v.as_bytes(), &[0]].concat()
+        }
+        fn i(name: &str, v: i32) -> Vec<u8> {
+            [&[2u8][..], name.as_bytes(), &[0], &v.to_le_bytes()].concat()
+        }
+        let dir = std::env::temp_dir().join(format!("chimaera-stats-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let bits = [map("0", &s("name", "A")), map("1", &[s("name", "B"), i("bit", 1)].concat()), map("2", &s("name", "C"))].concat();
+        let schema = map("620", &map("stats", &map("1", &map("bits", &bits))));
+        fs::write(dir.join("UserGameStatsSchema_620.bin"), [schema, vec![8]].concat()).unwrap();
+        let own = map("1", &[i("data", 0b101), map("AchievementTimes", &[i("0", 7), i("2", 9)].concat())].concat());
+        fs::write(dir.join("UserGameStats_42_620.bin"), [map("cache", &own), vec![8]].concat()).unwrap();
+        let file = AchievementFile { cracker: Cracker::Steam, path: dir.join("UserGameStats_42_620.bin") };
+        assert_eq!(names(&parse_file(&file)), [("A", 7_000), ("C", 9_000)]);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

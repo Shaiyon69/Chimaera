@@ -107,7 +107,7 @@ fn check(cancel: &AtomicBool) -> Result<(), Error> {
 
 // ---- Session (steam-store-session.ts) ----
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Session {
     steam_id: String,
     token: String,
@@ -886,14 +886,68 @@ fn parse_iso_ms(iso: &str) -> Option<u64> {
     u64::try_from(ms).ok()
 }
 
+/// Real library art URLs from the store. Newer apps keep their art under hashed folders,
+/// so the fixed `<id>/library_600x900_2x.jpg` path 404s for them.
+#[derive(Debug, Default, PartialEq)]
+struct StoreArt {
+    cover: Option<String>,
+    hero: Option<String>,
+}
+
+fn parse_store_art(payload: &Value) -> HashMap<String, StoreArt> {
+    let mut out = HashMap::new();
+    for item in named_array(payload, "store_items") {
+        let (Some(id), Some(format)) = (item["appid"].as_u64(), item["assets"]["asset_url_format"].as_str()) else { continue };
+        let url = |fields: &[&str]| {
+            fields.iter().find_map(|f| item["assets"][*f].as_str()).map(|file| format!("https://shared.steamstatic.com/store_item_assets/{}", format.replace("${FILENAME}", file)))
+        };
+        out.insert(id.to_string(), StoreArt { cover: url(&["library_capsule_2x", "library_capsule"]), hero: url(&["library_hero_2x", "library_hero", "header_2x", "header"]) });
+    }
+    out
+}
+
+/// Best effort: a failed batch keeps the cached or fixed-path art. The endpoint is public,
+/// so it runs without a Steam session (an empty token is accepted).
+async fn fetch_store_art(cancel: &AtomicBool, app_ids: &[String]) -> Result<HashMap<String, StoreArt>, Error> {
+    let session = Session::default();
+    let session = &session;
+    let mut art = HashMap::new();
+    for chunk in app_ids.chunks(50) {
+        let ids: Vec<Value> = chunk.iter().filter_map(|id| id.parse::<u64>().ok()).map(|id| json!({ "appid": id })).collect();
+        let input = json!({ "ids": ids, "context": { "language": "english", "country_code": "US" }, "data_request": { "include_assets": true } }).to_string();
+        // Network errors are retried too: a lost batch leaves its games on fixed paths that 404.
+        for attempt in 1..=3u64 {
+            match with_retry("store art", cancel, || api_get(session, "IStoreBrowseService/GetItems/v1/", vec![("input_json", input.clone())], false)).await {
+                Ok(payload) => {
+                    art.extend(parse_store_art(&payload));
+                    break;
+                }
+                Err(e) if e.is_abort() => return Err(e),
+                Err(e) => {
+                    eprintln!("[steam] store art attempt {attempt} failed: {}", e.message());
+                    if attempt < 3 {
+                        sleep(attempt * 2000, cancel).await?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(art)
+}
+
 /// mergeProfileGamesIntoLibrary for Steam's library: playtime goes to `steamPlayTimeInMilliseconds`,
 /// everything the user set locally stays. Returns how many games were new or revived.
-fn merge_library(store: &Store, games: &[LibraryGame]) -> Result<usize, String> {
+fn merge_library(store: &Store, games: &[LibraryGame], art: &HashMap<String, StoreArt>) -> Result<usize, String> {
     let mut added = 0;
     for game in games {
         let key = game_key("steam", &game.app_id);
         let local = store.get("games", &key)?;
         let steam_ms = game.play_seconds * 1000;
+        let found = art.get(&game.app_id);
+        let cover = found.and_then(|a| a.cover.clone());
+        let hero = found.and_then(|a| a.hero.clone());
+        let fixed_cover = format!("{STEAM_ASSETS}/{}/library_600x900_2x.jpg", game.app_id);
+        let fixed_hero = format!("{STEAM_ASSETS}/{}/library_hero.jpg", game.app_id);
         let merged = match local {
             Value::Object(mut fields) => {
                 if fields.get("isDeleted").and_then(Value::as_bool) == Some(true) {
@@ -920,8 +974,8 @@ fn merge_library(store: &Store, games: &[LibraryGame]) -> Result<usize, String> 
                     "title": game.name,
                     "remoteId": null,
                     "shop": "steam",
-                    "iconUrl": format!("{STEAM_ASSETS}/{}/library_600x900_2x.jpg", game.app_id),
-                    "libraryHeroImageUrl": format!("{STEAM_ASSETS}/{}/library_hero.jpg", game.app_id),
+                    "iconUrl": cover.clone().unwrap_or_else(|| fixed_cover.clone()),
+                    "libraryHeroImageUrl": hero.clone().unwrap_or_else(|| fixed_hero.clone()),
                     "logoImageUrl": format!("{STEAM_ASSETS}/{}/logo.png", game.app_id),
                     "addedToLibraryAt": null,
                     "lastTimePlayed": game.last_played.map(iso_from_ms),
@@ -953,21 +1007,64 @@ fn merge_library(store: &Store, games: &[LibraryGame]) -> Result<usize, String> 
             Value::Object(a) => a,
             _ => Default::default(),
         };
-        for (field, value) in [
-            ("updatedAt", json!(now_ms())),
-            ("shop", json!("steam")),
-            ("objectId", json!(game.app_id)),
-            ("title", json!(title)),
-            ("coverImageUrl", json!(format!("{STEAM_ASSETS}/{}/library_600x900_2x.jpg", game.app_id))),
-            ("libraryHeroImageUrl", json!(format!("{STEAM_ASSETS}/{}/library_hero.jpg", game.app_id))),
-            ("logoImageUrl", json!(format!("{STEAM_ASSETS}/{}/logo.png", game.app_id))),
-            ("iconUrl", json!(format!("{STEAM_ASSETS}/{}/library_600x900_2x.jpg", game.app_id))),
-        ] {
+        for (field, value) in [("updatedAt", json!(now_ms())), ("shop", json!("steam")), ("objectId", json!(game.app_id)), ("title", json!(title))] {
             assets.insert(field.into(), value);
         }
+        put_art(&mut assets, &game.app_id, found);
         store.put("gameShopAssets", &key, &Value::Object(assets))?;
     }
     Ok(added)
+}
+
+/// Store art wins; without it, art the cache already has stays and the fixed path only fills gaps.
+fn put_art(assets: &mut serde_json::Map<String, Value>, app_id: &str, art: Option<&StoreArt>) {
+    let cover = art.and_then(|a| a.cover.clone());
+    let hero = art.and_then(|a| a.hero.clone());
+    for (field, real, fixed) in [
+        ("coverImageUrl", &cover, format!("{STEAM_ASSETS}/{app_id}/library_600x900_2x.jpg")),
+        ("iconUrl", &cover, format!("{STEAM_ASSETS}/{app_id}/library_600x900_2x.jpg")),
+        ("libraryHeroImageUrl", &hero, format!("{STEAM_ASSETS}/{app_id}/library_hero.jpg")),
+        ("logoImageUrl", &None, format!("{STEAM_ASSETS}/{app_id}/logo.png")),
+    ] {
+        match real {
+            Some(url) => _ = assets.insert(field.into(), json!(url)),
+            None => _ = assets.entry(field).or_insert_with(|| json!(fixed)),
+        }
+    }
+}
+
+/// Steam games whose cached cover is still the fixed-path guess older syncs wrote.
+fn guessed_art_ids(store: &Store) -> Result<Vec<String>, String> {
+    Ok(store
+        .entries("gameShopAssets")?
+        .into_iter()
+        .filter_map(|(key, assets)| {
+            let id = key.strip_prefix("steam:")?.to_string();
+            let guess = format!("{STEAM_ASSETS}/{id}/library_600x900_2x.jpg");
+            (assets["coverImageUrl"].as_str() == Some(guess.as_str())).then_some(id)
+        })
+        .collect())
+}
+
+/// Replaces fixed-path art with store art without waiting for a full sync.
+async fn repair_art(app: &AppHandle) {
+    let store = app.state::<Store>();
+    let ids = match guessed_art_ids(&store) {
+        Ok(ids) if !ids.is_empty() => ids,
+        _ => return,
+    };
+    let Ok(art) = fetch_store_art(&AtomicBool::new(false), &ids).await else { return };
+    let mut fixed = 0;
+    for (id, found) in &art {
+        let key = game_key("steam", id);
+        let Ok(Value::Object(mut assets)) = store.get("gameShopAssets", &key) else { continue };
+        put_art(&mut assets, id, Some(found));
+        fixed += usize::from(store.put("gameShopAssets", &key, &Value::Object(assets)).is_ok());
+    }
+    eprintln!("[steam] repaired art for {fixed} of {} games", ids.len());
+    if fixed > 0 {
+        let _ = app.emit("on-library-batch-complete", ());
+    }
 }
 
 /// hideGamesRemovedFromSteamImport: an imported game Steam no longer lists is hidden.
@@ -1106,6 +1203,8 @@ pub fn start(app: &AppHandle, origin: &'static str) -> Value {
         let finished = match result {
             Ok(status) => {
                 eprintln!("[steam] sync succeeded");
+                // Picks up any art batch the sync could not fetch.
+                repair_art(&app).await;
                 sync.set_state(&app, json!({ "status": "idle" }));
                 json!({ "ok": true, "status": status, "origin": origin })
             }
@@ -1283,12 +1382,14 @@ async fn run(app: &AppHandle, run_id: &str, cancel: &Arc<AtomicBool>) -> Result<
     }
     let games = fetch_library(&session, cancel).await?;
     check(cancel)?;
+    let ids: Vec<String> = games.iter().map(|g| g.app_id.clone()).collect();
+    let art = fetch_store_art(cancel, &ids).await?;
 
     // Merged before achievements so their counts land on records that exist.
     sync.progress(app, run_id, "merging", games.len(), 0);
     {
         let store = app.state::<Store>();
-        merge_library(&store, &games).map_err(Error::Transport)?;
+        merge_library(&store, &games, &art).map_err(Error::Transport)?;
         // An empty library is far likelier a bad response than a cleared account.
         if !games.is_empty() {
             hide_removed(&store, &games.iter().map(|g| game_key("steam", &g.app_id)).collect()).map_err(Error::Transport)?;
@@ -1332,6 +1433,9 @@ pub fn start_on_launch(app: &AppHandle) {
     let stale = last["lastSyncedAt"].as_str().and_then(parse_iso_ms).is_none_or(|at| now_ms().saturating_sub(at) > STARTUP_MIN_AGE_MS);
     if stale {
         start(app, "startup");
+    } else {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move { repair_art(&app).await });
     }
 }
 
@@ -1612,6 +1716,35 @@ mod tests {
     }
 
     #[test]
+    fn store_art_uses_hashed_paths() {
+        let payload = json!({ "response": { "store_items": [
+            { "appid": 3527290, "assets": { "asset_url_format": "steam/apps/3527290/${FILENAME}?t=1", "library_capsule": "h1/library_600x900.jpg", "library_capsule_2x": "h1/library_600x900_2x.jpg", "library_hero": "h2/library_hero.jpg" } },
+            { "appid": 460960, "assets": { "asset_url_format": "steam/apps/460960/${FILENAME}?t=2", "library_capsule": "portrait.png" } },
+            { "appid": 360, "assets": { "asset_url_format": "steam/apps/360/${FILENAME}?t=3", "header": "header.jpg" } },
+            { "id": 367540, "success": 15 },
+        ] } });
+        let art = parse_store_art(&payload);
+        assert_eq!(art.len(), 3);
+        assert_eq!(art["360"].hero.as_deref(), Some("https://shared.steamstatic.com/store_item_assets/steam/apps/360/header.jpg?t=3"));
+        assert_eq!(art["3527290"].cover.as_deref(), Some("https://shared.steamstatic.com/store_item_assets/steam/apps/3527290/h1/library_600x900_2x.jpg?t=1"));
+        assert_eq!(art["3527290"].hero.as_deref(), Some("https://shared.steamstatic.com/store_item_assets/steam/apps/3527290/h2/library_hero.jpg?t=1"));
+        assert_eq!(art["460960"], StoreArt { cover: Some("https://shared.steamstatic.com/store_item_assets/steam/apps/460960/portrait.png?t=2".into()), hero: None });
+    }
+
+    #[test]
+    fn guessed_art_is_found_and_replaced() {
+        let store = Store::memory().unwrap();
+        let mut guessed = serde_json::Map::new();
+        put_art(&mut guessed, "30", None);
+        store.put("gameShopAssets", "steam:30", &Value::Object(guessed.clone())).unwrap();
+        store.put("gameShopAssets", "steam:40", &json!({ "coverImageUrl": "catalogue-cover" })).unwrap();
+        assert_eq!(guessed_art_ids(&store).unwrap(), vec!["30".to_string()]);
+        put_art(&mut guessed, "30", Some(&StoreArt { cover: Some("hashed".into()), hero: None }));
+        assert_eq!((guessed["coverImageUrl"].as_str(), guessed["iconUrl"].as_str()), (Some("hashed"), Some("hashed")));
+        assert_eq!(guessed["libraryHeroImageUrl"], format!("{STEAM_ASSETS}/30/library_hero.jpg"));
+    }
+
+    #[test]
     fn library_merge_keeps_local_fields_and_hides_removed_imports() {
         let store = Store::memory().unwrap();
         store.put("games", "steam:10", &json!({ "shop": "steam", "objectId": "10", "title": "Local", "favorite": true, "playTimeInMilliseconds": 5000, "source": "hydra", "isDeleted": false, "lastTimePlayed": "2030-01-01T00:00:00.000Z" })).unwrap();
@@ -1620,7 +1753,14 @@ mod tests {
             LibraryGame { app_id: "10".into(), name: "Remote".into(), play_seconds: 60, last_played: Some(1_000) },
             LibraryGame { app_id: "20".into(), name: "New".into(), play_seconds: 0, last_played: None },
         ];
-        assert_eq!(merge_library(&store, &games).unwrap(), 1);
+        store.put("gameShopAssets", "steam:10", &json!({ "coverImageUrl": "catalogue-cover", "libraryHeroImageUrl": "catalogue-hero" })).unwrap();
+        let art = HashMap::from([("20".to_string(), StoreArt { cover: Some("hashed-cover".into()), hero: None })]);
+        assert_eq!(merge_library(&store, &games, &art).unwrap(), 1);
+        let kept = store.get("gameShopAssets", "steam:10").unwrap();
+        assert_eq!((kept["coverImageUrl"].as_str(), kept["libraryHeroImageUrl"].as_str()), (Some("catalogue-cover"), Some("catalogue-hero")));
+        let fresh = store.get("gameShopAssets", "steam:20").unwrap();
+        assert_eq!((fresh["coverImageUrl"].as_str(), fresh["iconUrl"].as_str()), (Some("hashed-cover"), Some("hashed-cover")));
+        assert_eq!(fresh["libraryHeroImageUrl"], format!("{STEAM_ASSETS}/20/library_hero.jpg"));
         hide_removed(&store, &games.iter().map(|g| game_key("steam", &g.app_id)).collect()).unwrap();
         let local = store.get("games", "steam:10").unwrap();
         assert_eq!((local["title"].as_str(), local["favorite"].as_bool(), local["source"].as_str()), (Some("Local"), Some(true), Some("hydra")));
@@ -1670,3 +1810,4 @@ mod tests {
         assert_eq!(icon_hash("short.jpg"), None);
     }
 }
+

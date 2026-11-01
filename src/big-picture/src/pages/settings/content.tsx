@@ -52,7 +52,7 @@ const DEFAULT_FORM: ContentForm = {
   autoplayGameTrailers: true,
   disableNsfwAlert: false,
   showHiddenAchievementsDescription: false,
-  enableSteamAchievements: false,
+  enableSteamAchievements: true,
   enableAchievementSouvenirs: isAchievementSouvenirsEnabled(
     undefined,
     globalThis.window.electron.platform
@@ -68,7 +68,7 @@ const buildForm = (preferences: UserPreferences | null): ContentForm =>
         disableNsfwAlert: preferences.disableNsfwAlert ?? false,
         showHiddenAchievementsDescription:
           preferences.showHiddenAchievementsDescription ?? false,
-        enableSteamAchievements: preferences.enableSteamAchievements ?? false,
+        enableSteamAchievements: preferences.enableSteamAchievements ?? true,
         enableAchievementSouvenirs: isAchievementSouvenirsEnabled(
           preferences.enableAchievementSouvenirs,
           globalThis.window.electron.platform

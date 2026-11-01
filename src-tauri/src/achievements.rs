@@ -45,6 +45,11 @@ fn preferences(store: &Store) -> Value {
     store.get("", "userPreferences").unwrap_or(Value::Null)
 }
 
+/// The Steam install whose caches hold the user's real unlocks; on unless turned off in settings.
+fn steam_client(store: &Store) -> Option<PathBuf> {
+    preferences(store)["enableSteamAchievements"].as_bool().unwrap_or(true).then(crate::steam_shortcuts::steam_path).flatten()
+}
+
 /// The game's achievement list from Hydra, cached per language. `fresh` asks for a
 /// refetch once the cache is an hour old; a failed fetch falls back to the cache.
 pub async fn catalogue(app: &AppHandle, shop: &str, object_id: &str, fresh: bool) -> Vec<Value> {
@@ -81,8 +86,22 @@ pub async fn catalogue(app: &AppHandle, shop: &str, object_id: &str, fresh: bool
     }
 }
 
+/// Stored unlocks, first entry per name. Earlier builds could store each unlock twice.
 pub fn unlocked(store: &Store, key: &str) -> Vec<Value> {
-    store.get(UNLOCKED, key).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default()
+    let list = store.get(UNLOCKED, key).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    let mut seen = HashSet::new();
+    list.into_iter().filter(|u| seen.insert(upper(u))).collect()
+}
+
+/// Rewrites every game's stored counts from its deduplicated unlocks and cached catalogue.
+fn recount_all(store: &Store) -> Result<(), String> {
+    for (key, _) in store.entries(UNLOCKED)? {
+        let catalogue = store.get(CATALOGUE, &key).ok().and_then(|c| c["achievements"].as_array().cloned()).unwrap_or_default();
+        if !catalogue.is_empty() {
+            store_counts(store, &key, &unlocked(store, &key), &catalogue)?;
+        }
+    }
+    Ok(())
 }
 
 fn upper(v: &Value) -> String {
@@ -132,6 +151,11 @@ pub async fn merge(app: &AppHandle, shop: &str, object_id: &str, found: &[Unlock
     let catalogue = catalogue(app, shop, object_id, false).await;
     let store = app.state::<Store>();
     let mut all = unlocked(&store, &key);
+    // Another merge may have stored the same unlocks during the catalogue fetch.
+    let fresh = new_unlocks(&all, found);
+    if fresh.is_empty() {
+        return Ok(0);
+    }
     let previously_unlocked = all.len();
     all.extend(fresh.iter().cloned());
     store.put(UNLOCKED, &key, &Value::Array(all.clone()))?;
@@ -289,11 +313,14 @@ fn parse_all(files: &[AchievementFile]) -> (Vec<Unlock>, Vec<Unlock>) {
 /// every 2 s merges the files that changed.
 pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        if let Err(err) = recount_all(&app.state::<Store>()) {
+            eprintln!("[achievements] recount failed: {err}");
+        }
         let mut first = true;
         loop {
             let (games, steam) = {
                 let store = app.state::<Store>();
-                let steam = preferences(&store)["enableSteamAchievements"].as_bool().unwrap_or(false).then(crate::steam_shortcuts::steam_path).flatten();
+                let steam = steam_client(&store);
                 (watched_games(&store), steam)
             };
             let scan_app = app.clone();
@@ -354,7 +381,7 @@ pub async fn get_unlocked_achievements(app: &AppHandle, object_id: &str, shop: &
         let (scan_app, id) = (app.clone(), object_id.to_string());
         let (steam_unlocks, other_unlocks) = tauri::async_runtime::spawn_blocking(move || {
             let store = scan_app.state::<Store>();
-            let steam = preferences(&store)["enableSteamAchievements"].as_bool().unwrap_or(false).then(crate::steam_shortcuts::steam_path).flatten();
+            let steam = steam_client(&store);
             parse_all(&achievement_files::game_files(&roots(&scan_app), &id, &exes, steam.as_deref()))
         })
         .await
@@ -427,6 +454,19 @@ mod tests {
 
     fn u(name: &str, t: i64) -> Unlock {
         Unlock { name: name.into(), unlock_time: t }
+    }
+
+    #[test]
+    fn recount_heals_doubled_unlocks() {
+        let store = Store::memory().unwrap();
+        store.put("games", "steam:1", &json!({ "achievementCount": 3, "unlockedAchievementCount": 4 })).unwrap();
+        store.put(CATALOGUE, "steam:1", &json!({ "achievements": [{ "name": "A" }, { "name": "B" }, { "name": "C" }] })).unwrap();
+        let doubled = json!([{ "name": "A", "unlockTime": 1 }, { "name": "B", "unlockTime": 2 }, { "name": "A", "unlockTime": 1 }, { "name": "b", "unlockTime": 2 }]);
+        store.put(UNLOCKED, "steam:1", &doubled).unwrap();
+        assert_eq!(unlocked(&store, "steam:1").len(), 2);
+        recount_all(&store).unwrap();
+        let game = store.get("games", "steam:1").unwrap();
+        assert_eq!((game["unlockedAchievementCount"].as_i64(), game["achievementCount"].as_i64()), (Some(2), Some(3)));
     }
 
     #[test]
