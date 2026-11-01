@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, file_system, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts};
+use crate::{achievement_popup, achievements, artwork, download_sources, file_system, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -353,6 +353,26 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let version = app.package_info().version.to_string();
             shop_details::get_game_stats(&app.state::<Store>(), &version, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).await
         }
+        "getGameArtwork" => {
+            let version = app.package_info().version.to_string();
+            let page = args.get(3).and_then(Value::as_u64).unwrap_or(0);
+            artwork::get_game_artwork(&version, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default(), page).await
+        }
+        "getDownloadSources" => download_sources::list(&app.state::<Store>()),
+        "addDownloadSource" => {
+            let version = app.package_info().version.to_string();
+            download_sources::add(&app.state::<Store>(), &version, arg_str(args, 0).unwrap_or_default()).await
+        }
+        "removeDownloadSource" => {
+            let remove_all = args.first().and_then(Value::as_bool).unwrap_or(false);
+            download_sources::remove(&app.state::<Store>(), remove_all, arg_str(args, 1)).map(|_| Value::Null)
+        }
+        "syncDownloadSources" => {
+            let version = app.package_info().version.to_string();
+            download_sources::sync(&app.state::<Store>(), &version).await.map(|_| Value::Null)
+        }
+        "getDownloadSourcesCheckBaseline" => download_sources::timestamp(&app.state::<Store>(), "downloadSourcesCheckBaseline"),
+        "getDownloadSourcesSinceValue" => download_sources::timestamp(&app.state::<Store>(), "downloadSourcesSinceValue"),
         "getBundledGameSetup" => bundled_games::setup(app, arg_str(args, 0).unwrap_or_default()),
         "getUnlockedAchievements" => achievements::get_unlocked_achievements(app, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).await,
         "resetGameAchievements" => achievements::reset(app, shop(args), object_id(args)).await.map(|_| Value::Null),

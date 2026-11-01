@@ -180,12 +180,24 @@ fn default_profile() -> Value {
     json!({ "displayName": "Player", "bio": "", "profileImageUrl": null, "backgroundImageUrl": null, "badges": [], "hydraUserId": null })
 }
 
-fn load_profile(store: &Store) -> Result<Value, String> {
+pub(crate) fn load_profile(store: &Store) -> Result<Value, String> {
     let mut profile = default_profile();
     if let Value::Object(stored) = store.get("", LOCAL_PROFILE_KEY)? {
         profile.as_object_mut().unwrap().extend(stored);
     }
     Ok(profile)
+}
+
+pub(crate) fn save_profile(store: &Store, profile: &Value) -> Result<(), String> {
+    store.put("", LOCAL_PROFILE_KEY, profile)
+}
+
+pub(crate) fn load_collections(store: &Store) -> Result<Value, String> {
+    Ok(json!(store.get("", LOCAL_COLLECTIONS_KEY)?.as_array().cloned().unwrap_or_default()))
+}
+
+pub(crate) fn save_collections(store: &Store, collections: &Value) -> Result<(), String> {
+    store.put("", LOCAL_COLLECTIONS_KEY, collections)
 }
 
 /// Port of patchLocalProfile: only the fields a local profile has.
@@ -342,13 +354,18 @@ fn query_pairs(params: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
-async fn send_public(version: &str, method: &str, url: &str, payload: &Map<String, Value>) -> Result<Value, String> {
+/// Client and full URL for a request to the public Hydra API.
+pub fn public_request(version: &str, url: &str) -> Result<(reqwest::Client, String), String> {
     let base = option_env!("CHIMAERA_API_URL").ok_or("MAIN_VITE_API_URL was not set in .env at build time")?;
     let client = reqwest::Client::builder()
         .user_agent(format!("Hydra Launcher v{version}"))
         .build()
         .map_err(|e| e.to_string())?;
-    let full = format!("{}{url}", base.trim_end_matches('/'));
+    Ok((client, format!("{}{url}", base.trim_end_matches('/'))))
+}
+
+async fn send_public(version: &str, method: &str, url: &str, payload: &Map<String, Value>) -> Result<Value, String> {
+    let (client, full) = public_request(version, url)?;
     let data = payload.get("data").cloned().unwrap_or(Value::Null);
     let request = match method {
         "get" => client.get(&full).query(&query_pairs(payload.get("params").unwrap_or(&Value::Null))),

@@ -7,6 +7,7 @@ mod achievement_popup;
 mod achievements;
 mod artwork;
 mod bundled_games;
+mod download_sources;
 mod electron_import;
 mod file_system;
 mod games;

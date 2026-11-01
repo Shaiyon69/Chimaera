@@ -105,6 +105,32 @@ pub fn copy_custom_game_asset(assets_dir: &Path, source: &str, asset_type: &str)
     Ok(format!("local:{}", destination.to_string_lossy()))
 }
 
+/// `cleanupUnusedAssets`: deletes custom-game images no live game points at. Only this app's
+/// folder is swept; images the Electron build copied stay where they are.
+pub fn cleanup_unused_assets(store: &Store, assets_dir: &Path) -> Result<Value, String> {
+    const FIELDS: &[&str] = &["iconUrl", "logoImageUrl", "libraryHeroImageUrl", "customIconUrl", "customLogoImageUrl", "customHeroImageUrl", "customCoverImageUrl"];
+    let norm = |p: &str| p.replace('/', "\\").to_lowercase();
+    let used: std::collections::HashSet<String> = store
+        .entries("games")?
+        .iter()
+        .filter(|(_, g)| g["isDeleted"].as_bool() != Some(true))
+        .flat_map(|(_, g)| FIELDS.iter().filter_map(|f| g[*f].as_str().and_then(|u| u.strip_prefix("local:")).map(norm)).collect::<Vec<_>>())
+        .collect();
+    let (mut deleted, mut errors) = (0, Vec::<String>::new());
+    let dir = assets_dir.join("custom-games");
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if !path.is_file() || used.contains(&norm(&path.to_string_lossy())) {
+            continue;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => deleted += 1,
+            Err(e) => errors.push(format!("Failed to delete {}: {e}", path.display())),
+        }
+    }
+    Ok(json!({ "deletedCount": deleted, "errors": errors }))
+}
+
 /// `updateCustomGame`: a custom game's own title and art.
 pub fn update_custom_game(store: &Store, params: &Value) -> Result<Value, String> {
     let key = game_key(params["shop"].as_str().unwrap_or_default(), params["objectId"].as_str().unwrap_or_default());
@@ -280,8 +306,162 @@ pub fn set_artwork_selection(store: &Store, params: &Value) -> Result<Value, Str
     Ok(record)
 }
 
+const MAX_ARTWORK_BYTES: usize = 20 * 1024 * 1024;
+const MAX_ARTWORK_REDIRECTS: usize = 3;
+
+fn is_steamgriddb_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https" && url.host_str().is_some_and(|h| h == "steamgriddb.com" || h.ends_with(".steamgriddb.com"))
+}
+
+/// The file-type sniff Electron does: only these image types are kept.
+fn image_extension(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [b'G', b'I', b'F', b'8', ..] => Some("gif"),
+        [0xFF, 0xD8, 0xFF, ..] => Some("jpg"),
+        [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, ..] => Some("png"),
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("webp"),
+        _ => None,
+    }
+}
+
+/// `downloadGameArtwork`: a SteamGridDB image saved to a temp file for cropping.
+/// Ok(None) when it is over 20 MB. Redirects must stay on SteamGridDB.
+pub async fn download_game_artwork(artwork_url: &str) -> Result<Option<String>, String> {
+    let mut url = reqwest::Url::parse(artwork_url).ok().filter(is_steamgriddb_url).ok_or("Invalid SteamGridDB artwork URL")?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut redirects = 0;
+    let mut response = loop {
+        let response = client.get(url.clone()).send().await.map_err(|e| e.to_string())?;
+        let status = response.status();
+        if status.is_redirection() {
+            let location = response.headers().get(reqwest::header::LOCATION).and_then(|l| l.to_str().ok());
+            let next = location.filter(|_| redirects < MAX_ARTWORK_REDIRECTS).and_then(|l| url.join(l).ok()).ok_or("Invalid SteamGridDB artwork redirect")?;
+            if !is_steamgriddb_url(&next) {
+                return Err("Untrusted SteamGridDB artwork redirect".into());
+            }
+            (url, redirects) = (next, redirects + 1);
+            continue;
+        }
+        if !status.is_success() {
+            return Err(format!("SteamGridDB artwork request failed: {status}"));
+        }
+        break response;
+    };
+    match response.content_length() {
+        Some(0) => return Err("Invalid SteamGridDB artwork size".into()),
+        Some(n) if n > MAX_ARTWORK_BYTES as u64 => return Ok(None),
+        _ => {}
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if bytes.len() + chunk.len() > MAX_ARTWORK_BYTES {
+            return Ok(None);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let extension = image_extension(&bytes).ok_or("Unsupported SteamGridDB artwork type")?;
+    // Electron's temp-file guard and sweeper recognise the `hydra-temp-` prefix.
+    let file = std::env::temp_dir().join(format!("hydra-temp-{}-steamgriddb.{extension}", uuid::Uuid::new_v4()));
+    std::fs::write(&file, bytes).map_err(|e| e.to_string())?;
+    Ok(Some(file.to_string_lossy().into_owned()))
+}
+
+const ARTWORK_PAGE_SIZE: usize = 50;
+
+/// SteamGridDB filters per kind, as KIND_PARAMS in src/main/services/game-artwork.ts.
+fn artwork_kind_params(kind: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    Some(match kind {
+        "grids" => &[("nsfw", "false"), ("dimensions", "600x900,342x482,660x930"), ("mimes", "image/png,image/jpeg,image/webp")],
+        "heroes" => &[("nsfw", "false"), ("mimes", "image/png,image/jpeg,image/webp")],
+        "logos" => &[("nsfw", "false"), ("mimes", "image/png,image/webp")],
+        "icons" => &[("nsfw", "false"), ("mimes", "image/png,image/vnd.microsoft.icon")],
+        _ => return None,
+    })
+}
+
+/// The ArtworkPage for one API response; a 404 is an empty page.
+fn artwork_page(status: u16, cache: Option<&str>, body: &Value) -> Result<Value, String> {
+    if status == 404 {
+        return Ok(json!({ "items": [], "cache": "fresh", "hasMore": false }));
+    }
+    if !(200..300).contains(&status) {
+        return Err(format!("Request failed with status code {status}"));
+    }
+    let items = body["data"].as_array().cloned().unwrap_or_default();
+    let has_more = items.len() == ARTWORK_PAGE_SIZE;
+    Ok(json!({ "items": items, "cache": if cache == Some("stale") { "stale" } else { "fresh" }, "hasMore": has_more }))
+}
+
+/// `getGameArtwork` (catalogue/get-game-artwork.ts): one page of SteamGridDB picks from the Hydra API.
+pub async fn get_game_artwork(version: &str, shop: &str, object_id: &str, kind: &str, page: u64) -> Result<Value, String> {
+    if shop == "custom" {
+        return Ok(Value::Null);
+    }
+    let params = artwork_kind_params(kind).ok_or("Invalid artwork kind")?;
+    let segment = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
+    let url = format!("/games/{}/{}/artwork/{kind}", segment(shop), segment(object_id));
+    let (client, full) = crate::hydra_api::public_request(version, &url)?;
+    let response = client
+        .get(full)
+        .query(params)
+        .query(&[("limit", ARTWORK_PAGE_SIZE as u64), ("page", page)])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = response.status().as_u16();
+    let cache = response.headers().get("x-hydra-cache").and_then(|v| v.to_str().ok()).map(str::to_string);
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    artwork_page(status, cache.as_deref(), &body)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cleanup_keeps_assets_a_live_game_uses() {
+        use super::*;
+        let assets = std::env::temp_dir().join(format!("chimaera-assets-{}", uuid::Uuid::new_v4()));
+        let dir = assets.join("custom-games");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["used.png", "orphan.png", "deleted-game.png"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let store = Store::memory().unwrap();
+        let local = |n: &str| format!("local:{}", dir.join(n).display());
+        store.put("games", "custom:1", &json!({ "customIconUrl": local("used.png") })).unwrap();
+        store.put("games", "custom:2", &json!({ "iconUrl": local("deleted-game.png"), "isDeleted": true })).unwrap();
+        assert_eq!(cleanup_unused_assets(&store, &assets).unwrap()["deletedCount"], 2);
+        assert!(dir.join("used.png").exists());
+        std::fs::remove_dir_all(&assets).unwrap();
+    }
+
+    #[test]
+    fn artwork_pages_follow_fetch_game_artwork() {
+        let empty = artwork_page(404, None, &Value::Null).unwrap();
+        assert_eq!(empty["items"], json!([]));
+        assert_eq!(empty["hasMore"], false);
+        let full: Vec<Value> = (0..50).map(|id| json!({ "id": id })).collect();
+        let page = artwork_page(200, Some("stale"), &json!({ "success": true, "data": full })).unwrap();
+        assert_eq!(page["cache"], "stale");
+        assert_eq!(page["hasMore"], true);
+        assert_eq!(artwork_page(200, None, &json!({ "data": [{ "id": 1 }] })).unwrap()["hasMore"], false);
+        assert!(artwork_page(500, None, &Value::Null).is_err());
+        assert!(artwork_kind_params("nsfw").is_none());
+    }
+
+    #[test]
+    fn steamgriddb_artwork_checks() {
+        let ok = |u: &str| super::is_steamgriddb_url(&reqwest::Url::parse(u).unwrap());
+        assert!(ok("https://cdn2.steamgriddb.com/grid/a.png") && ok("https://steamgriddb.com/x"));
+        assert!(!ok("http://cdn2.steamgriddb.com/a.png") && !ok("https://evilsteamgriddb.com/a.png") && !ok("https://steamgriddb.com.evil.io/a"));
+        assert_eq!(super::image_extension(b"RIFF\0\0\0\0WEBPVP8 "), Some("webp"));
+        assert_eq!(super::image_extension(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("jpg"));
+        assert_eq!(super::image_extension(b"<html>"), None);
+    }
+
     use super::*;
 
     #[test]
