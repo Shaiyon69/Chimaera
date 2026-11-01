@@ -1,73 +1,36 @@
+import type { BackendModule, InitOptions, ResourceKey } from "i18next";
 import en from "./en/translation.json";
-import ptPT from "./pt-PT/translation.json";
-import ptBR from "./pt-BR/translation.json";
-import es from "./es/translation.json";
-import nl from "./nl/translation.json";
-import fr from "./fr/translation.json";
-import hu from "./hu/translation.json";
-import it from "./it/translation.json";
-import de from "./de/translation.json";
-import el from "./el/translation.json";
-import pl from "./pl/translation.json";
-import ru from "./ru/translation.json";
-import tr from "./tr/translation.json";
-import be from "./be/translation.json";
-import uk from "./uk/translation.json";
-import zh from "./zh/translation.json";
-import id from "./id/translation.json";
-import ko from "./ko/translation.json";
-import da from "./da/translation.json";
-import ar from "./ar/translation.json";
-import fa from "./fa/translation.json";
-import ro from "./ro/translation.json";
-import ca from "./ca/translation.json";
-import kk from "./kk/translation.json";
-import cs from "./cs/translation.json";
-import nb from "./nb/translation.json";
-import et from "./et/translation.json";
-import bg from "./bg/translation.json";
-import uz from "./uz/translation.json";
-import fi from "./fi/translation.json";
-import sv from "./sv/translation.json";
-import lv from "./lv/translation.json";
-import vi from "./vi/translation.json";
-import ja from "./ja/translation.json";
-import sl from "./sl/translation.json";
+import { languageNames } from "./language-names";
 
-export default {
-  "pt-BR": ptBR,
-  "pt-PT": ptPT,
-  en,
-  de,
-  el,
-  es,
-  nl,
-  fr,
-  hu,
-  it,
-  pl,
-  ru,
-  tr,
-  be,
-  uk,
-  zh,
-  id,
-  ko,
-  da,
-  ar,
-  fa,
-  fi,
-  ro,
-  ca,
-  bg,
-  kk,
-  cs,
-  nb,
-  et,
-  uz,
-  sv,
-  lv,
-  vi,
-  ja,
-  sl,
+export { languageNames };
+
+// Only English (the fallback) ships in the startup bundle. The other languages
+// were about 2.6 MB of JS that every launch parsed; they now load on demand.
+export const localeBackend: BackendModule = {
+  type: "backend",
+  init() {
+    // Nothing to configure; read() does all the work.
+  },
+  read(language, namespace, callback) {
+    // Unknown codes (e.g. "en-US" from the detector) fall back to "en".
+    if (language === "en" || !(language in languageNames)) {
+      callback(null, {});
+      return;
+    }
+    import(`./${language}/translation.json`).then(
+      (module: { default: Record<string, ResourceKey> }) =>
+        callback(null, module.default[namespace] ?? {}),
+      (error: Error) => callback(error, null)
+    );
+  },
+};
+
+// Every top-level key of translation.json is a namespace. Listing them makes
+// init and changeLanguage load all of them before rendering, so nothing suspends.
+export const localeInitOptions: InitOptions = {
+  resources: { en },
+  partialBundledLanguages: true,
+  ns: Object.keys(en),
+  // Keep the i18next default; without it the first namespace above becomes the default.
+  defaultNS: "translation",
 };

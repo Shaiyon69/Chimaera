@@ -21,7 +21,7 @@ import { App } from "./app";
 import { store } from "./store";
 import { loadPreset } from "./themes";
 
-import resources from "@locales";
+import { localeBackend, localeInitOptions } from "@locales";
 
 import { logger } from "./logger";
 import { addCookieInterceptor } from "./cookies";
@@ -79,10 +79,7 @@ console.log = logger.log;
 
 Sentry.init({
   dsn: import.meta.env.RENDERER_VITE_SENTRY_DSN,
-  integrations: [
-    Sentry.browserTracingIntegration(),
-    Sentry.replayIntegration(),
-  ],
+  integrations: [Sentry.browserTracingIntegration()],
   tracesSampleRate: 0.5,
   replaysSessionSampleRate: 0,
   replaysOnErrorSampleRate: 0,
@@ -108,10 +105,11 @@ const syncDocumentLanguage = (language: string) => {
 };
 
 await i18n
+  .use(localeBackend)
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
-    resources,
+    ...localeInitOptions,
     fallbackLng: "en",
     interpolation: {
       escapeValue: false,

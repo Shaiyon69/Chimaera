@@ -12,7 +12,7 @@ import {
 import type { DownloadDirectoryPreference, UserPreferences } from "@types";
 import { settingsContext } from "@renderer/context";
 import { useAppSelector } from "@renderer/hooks";
-import languageResources from "@locales";
+import { languageNames } from "@locales";
 import {
   prepareDefaultDownloadPathSync,
   replaceSavedDownloadDirectoryAndSetDefault,
@@ -25,8 +25,8 @@ interface LanguageOption {
 }
 
 const LANGUAGE_OPTIONS: LanguageOption[] = orderBy(
-  Object.entries(languageResources).map(([language, value]) => ({
-    nativeName: value.language_name,
+  Object.entries(languageNames).map(([language, nativeName]) => ({
+    nativeName,
     option: language,
   })),
   ["nativeName"],
@@ -40,7 +40,7 @@ interface DownloadDirectoryReplacementState {
 }
 
 const resolveLanguage = (language: string | undefined) => {
-  const languageKeys = Object.keys(languageResources);
+  const languageKeys = Object.keys(languageNames);
 
   return (
     languageKeys.find((languageKey) => languageKey === language) ??
