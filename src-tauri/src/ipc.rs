@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, emulators, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, messapp_keys, misc, notifications, processed_image, profile, retro_achievements, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, emulators, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -141,6 +141,12 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             themes::close_editor(app, arg_str(args, 0));
             Ok(Value::Null)
         }
+        "getOptiscalerGpu" => Ok(optiscaler::gpu(app).await),
+        "getOptiscalerStatus" => optiscaler::status(app, shop(args), object_id(args), arg_str(args, 2)).await,
+        "installOptiscaler" => optiscaler::install_for_game(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()).await,
+        "uninstallOptiscaler" => optiscaler::uninstall_for_game(app, shop(args), object_id(args)).map(|_| Value::Null),
+        "getOptiscalerConfig" => optiscaler::get_config(app, shop(args), object_id(args)),
+        "setOptiscalerConfig" => optiscaler::set_config(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default(), arg_str(args, 3).unwrap_or_default()).map(|_| Value::Null),
         // Electron tells the download orchestrator and souvenir worker; neither exists here yet (F4, F6).
         "updateNetworkStatus" => Ok(Value::Null),
         "getLibrary" => {

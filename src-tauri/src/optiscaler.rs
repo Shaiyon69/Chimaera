@@ -1,0 +1,944 @@
+//! OptiScaler per game (port of `src/main/services/optiscaler/` and its events):
+//! release download, FSR4 override DLLs, install with backup and rollback,
+//! the `OptiScaler.ini` allowlist, and the startup auto-update.
+
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tauri::{AppHandle, Manager};
+use tokio::sync::{Mutex, OnceCell};
+
+use crate::games::game_key;
+use crate::store::Store;
+
+const MARKER: &str = "optiscaler_manager.json";
+const BACKUP: &str = ".optiscaler_backup";
+const FSR4_DLL: &str = "amd_fidelityfx_upscaler_dx12.dll";
+const PROXIES: &[&str] = &["dxgi.dll", "winmm.dll", "version.dll", "dbghelp.dll", "d3d12.dll", "wininet.dll", "winhttp.dll"];
+const SKIP: &[&str] = &["unins", "crash", "launcher", "redist", "unitycrash", "vc_redist", "dxsetup", "eac", "easyanticheat", "benchmark"];
+const AC_NAMES: &[&str] = &["easyanticheat", "beservice", "battleye", "vgk", "mhyprot", "equ8", "xigncode", "nprotect"];
+const SHIPPING_SUFFIX: &str = "-win64-shipping.exe";
+const RELEASES_API: &str = "https://api.github.com/repos/optiscaler/OptiScaler/releases";
+// 100, not Electron's 30: the repo posts several timing-kit releases a day, which push the dll- tag off a short page.
+const FSR4_API: &str = "https://api.github.com/repos/zgauthier2000/fsr4-shader-performance-overrides/releases?per_page=100";
+const FSR4_TAG_PREFIX: &str = "dll-";
+const TAG_TTL: Duration = Duration::from_secs(60 * 60);
+
+// ---------- detection ----------
+
+fn walk(root: &Path, max_depth: usize, visit: &mut dyn FnMut(&Path, &fs::DirEntry) -> bool) {
+    fn rec(dir: &Path, depth: usize, max: usize, visit: &mut dyn FnMut(&Path, &fs::DirEntry) -> bool) -> bool {
+        let Ok(entries) = fs::read_dir(dir) else { return true };
+        for e in entries.flatten() {
+            if !visit(dir, &e) {
+                return false;
+            }
+            let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+            if is_dir && !e.file_name().to_string_lossy().starts_with('.') && depth + 1 < max && !rec(&e.path(), depth + 1, max, visit) {
+                return false;
+            }
+        }
+        true
+    }
+    rec(root, 0, max_depth, visit);
+}
+
+/// Largest non-launcher exe up to 5 levels deep; prefers Unreal `*-Win64-Shipping.exe`.
+fn find_main_exe(game_dir: &Path) -> Option<PathBuf> {
+    let mut best: Option<(u64, PathBuf)> = None;
+    walk(game_dir, 5, &mut |_, e| {
+        let low = e.file_name().to_string_lossy().to_lowercase();
+        if e.file_type().is_ok_and(|t| t.is_file()) && low.ends_with(".exe") && !SKIP.iter().any(|s| low.contains(s)) {
+            if let Ok(meta) = e.metadata() {
+                let size = meta.len() + if low.ends_with(SHIPPING_SUFFIX) { 1 << 40 } else { 0 };
+                if best.as_ref().is_none_or(|(b, _)| size > *b) {
+                    best = Some((size, e.path()));
+                }
+            }
+        }
+        true
+    });
+    best.map(|(_, p)| p)
+}
+
+/// Heuristic graphics API from the DLL names embedded in the exe.
+fn detect_api(exe: &Path) -> &'static str {
+    let Ok(bytes) = fs::read(exe) else { return "unknown" };
+    let lower = bytes.to_ascii_lowercase();
+    let has = |name: &str| {
+        let ascii = name.as_bytes().to_vec();
+        let wide: Vec<u8> = name.bytes().flat_map(|b| [b, 0]).collect();
+        [ascii, wide].iter().any(|n| lower.windows(n.len()).any(|w| w == n.as_slice()))
+    };
+    [("d3d12", "dx12"), ("d3d11", "dx11"), ("vulkan-1", "vulkan")].into_iter().find(|(n, _)| has(n)).map_or("unknown", |(_, a)| a)
+}
+
+/// Name of the first anti-cheat file or folder within 4 levels.
+fn detect_anticheat(game_dir: &Path) -> Option<String> {
+    let mut hit = None;
+    walk(game_dir, 4, &mut |_, e| {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if AC_NAMES.iter().any(|a| name.to_lowercase().contains(a)) {
+            hit = Some(name);
+            return false;
+        }
+        true
+    });
+    hit
+}
+
+/// Unreal puts the exe in `<root>/<Game>/Binaries/Win64`; anti-cheat lives at the root.
+fn game_root_from_exe_dir(exe_dir: &Path) -> PathBuf {
+    let parts: Vec<_> = exe_dir.components().collect();
+    match parts.iter().position(|p| p.as_os_str().to_string_lossy().eq_ignore_ascii_case("binaries")) {
+        Some(i) if i > 1 => parts[..i - 1].iter().collect(),
+        _ => exe_dir.to_path_buf(),
+    }
+}
+
+// ---------- GPU ----------
+
+/// `RX` + optional spaces + 4 digits whose first matches `first`.
+fn has_rx(lower: &str, first: impl Fn(char) -> bool) -> bool {
+    lower.match_indices("rx").any(|(i, _)| {
+        let rest = lower[i + 2..].trim_start();
+        let digits: Vec<char> = rest.chars().take(4).collect();
+        digits.len() == 4 && digits.iter().all(char::is_ascii_digit) && first(digits[0])
+    })
+}
+
+/// `Arc A770`-style names: `arc`, spaces, A or B, 2-3 digits, then a word boundary.
+fn has_arc(lower: &str) -> bool {
+    lower.match_indices("arc").any(|(i, _)| {
+        let rest = lower[i + 3..].trim_start();
+        let mut chars = rest.chars();
+        if !matches!(chars.next(), Some('a' | 'b')) {
+            return false;
+        }
+        let tail: String = chars.collect();
+        let n = tail.chars().take_while(char::is_ascii_digit).count();
+        (2..=3).contains(&n) && !tail[n..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+    })
+}
+
+/// "native": RDNA4 runs AMD's own FSR4. "desktop"/"igpu" pick the override zip; the best card wins.
+fn classify_gpus(names: &[String]) -> &'static str {
+    let lows: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
+    if lows.iter().any(|n| has_rx(n, |d| d == '9') || n.contains("r9700") || n.contains("radeon ai pro")) {
+        return "native";
+    }
+    let desktop = |n: &String| has_rx(n, |d| ('5'..='8').contains(&d)) || ["geforce", "rtx", "gtx", "quadro"].iter().any(|k| n.contains(k)) || has_arc(n);
+    if lows.iter().any(desktop) {
+        return "desktop";
+    }
+    // Unknown or undetected falls back to desktop, the pre-detection behavior.
+    if names.is_empty() { "desktop" } else { "igpu" }
+}
+
+async fn gpu_names() -> &'static [String] {
+    static NAMES: OnceCell<Vec<String>> = OnceCell::const_new();
+    NAMES
+        .get_or_init(|| async {
+            tauri::async_runtime::spawn_blocking(|| {
+                let mut command = std::process::Command::new("powershell");
+                command.args(["-NoProfile", "-Command", "(Get-CimInstance Win32_VideoController).Name"]);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                    command.creation_flags(CREATE_NO_WINDOW);
+                }
+                command.output().map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()).unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default()
+        })
+        .await
+}
+
+async fn detect_gpu() -> &'static str {
+    classify_gpus(gpu_names().await)
+}
+
+fn prefs(app: &AppHandle) -> Value {
+    app.state::<Store>().get("", "userPreferences").unwrap_or(Value::Null)
+}
+
+fn nightly(prefs: &Value) -> bool {
+    prefs["optiscalerNightly"].as_bool().unwrap_or(false)
+}
+
+fn variant(prefs: &Value) -> &'static str {
+    if prefs["optiscalerFsr4Variant"] == "lossy" { "lossy" } else { "exact" }
+}
+
+/// Manual override from settings, else the detected GPU.
+async fn resolve_gpu(prefs: &Value) -> String {
+    match prefs["optiscalerFsr4Gpu"].as_str() {
+        Some(chosen @ ("native" | "desktop" | "igpu")) => chosen.to_string(),
+        _ => detect_gpu().await.to_string(),
+    }
+}
+
+// ---------- downloads ----------
+
+fn cache_root(app: &AppHandle) -> Result<PathBuf, String> {
+    crate::save_backups::data_dir(app, "optiscaler")
+}
+
+fn github() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder().user_agent("Chimaera").build().map_err(|e| e.to_string())
+}
+
+async fn github_json(url: &str, timeout: u64) -> Result<Value, String> {
+    github()?
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .timeout(Duration::from_secs(timeout))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn download(url: &str, dest: &Path, timeout: u64) -> Result<(), String> {
+    let bytes = github()?.get(url).timeout(Duration::from_secs(timeout)).send().await.and_then(|r| r.error_for_status()).map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?;
+    fs::write(dest, bytes).map_err(|e| e.to_string())
+}
+
+async fn extract(app: &AppHandle, archive: &Path, dest: &Path) -> Result<(), String> {
+    let binary = crate::extraction::seven_zip(app)?;
+    let (archive, dest) = (archive.to_path_buf(), dest.to_path_buf());
+    tauri::async_runtime::spawn_blocking(move || crate::extraction::run_7z(&binary, &archive, &dest, &mut |_| {})).await.map_err(|e| e.to_string())?
+}
+
+fn release_url(nightly: bool) -> String {
+    if nightly { format!("{RELEASES_API}?per_page=1") } else { format!("{RELEASES_API}/latest") }
+}
+
+fn release_of(data: &Value, nightly: bool) -> &Value {
+    if nightly { &data[0] } else { data }
+}
+
+fn find_payload(root: &Path) -> Option<PathBuf> {
+    let mut hit = None;
+    walk(root, usize::MAX, &mut |dir, e| {
+        if e.file_name() == "OptiScaler.dll" && e.file_type().is_ok_and(|t| t.is_file()) {
+            hit = Some(dir.to_path_buf());
+            return false;
+        }
+        true
+    });
+    hit
+}
+
+/// Newest release tag without downloading; null offline. Cached an hour (GitHub allows 60 calls/h).
+async fn latest_tag(nightly: bool) -> Option<String> {
+    static CACHE: Mutex<Option<HashMap<bool, (String, Instant)>>> = Mutex::const_new(None);
+    let mut cache = CACHE.lock().await;
+    let map = cache.get_or_insert_with(HashMap::new);
+    if let Some((tag, at)) = map.get(&nightly).filter(|(_, at)| at.elapsed() < TAG_TTL) {
+        let _ = at;
+        return Some(tag.clone());
+    }
+    let data = github_json(&release_url(nightly), 10).await.ok()?;
+    let tag = release_of(&data, nightly)["tag_name"].as_str()?.to_string();
+    map.insert(nightly, (tag.clone(), Instant::now()));
+    Some(tag)
+}
+
+/// Release tag plus extracted payload folder; the newest cached release when offline.
+/// The lock makes status warm-up and install share one download.
+async fn fetch_latest(app: &AppHandle, nightly: bool) -> Result<(String, PathBuf), String> {
+    static RESOLVED: Mutex<Option<HashMap<bool, (String, PathBuf, Instant)>>> = Mutex::const_new(None);
+    let mut resolved = RESOLVED.lock().await;
+    let map = resolved.get_or_insert_with(HashMap::new);
+    if let Some((tag, payload, _)) = map.get(&nightly).filter(|(_, p, at)| at.elapsed() < TAG_TTL && find_payload(p).is_some()) {
+        return Ok((tag.clone(), payload.clone()));
+    }
+    let cache = cache_root(app)?.join("cache");
+    let result = match download_latest(app, &cache, nightly).await {
+        Ok(found) => found,
+        Err(err) => newest_cached_release(&cache).ok_or(err)?,
+    };
+    map.insert(nightly, (result.0.clone(), result.1.clone(), Instant::now()));
+    Ok(result)
+}
+
+async fn download_latest(app: &AppHandle, cache: &Path, nightly: bool) -> Result<(String, PathBuf), String> {
+    let data = github_json(&release_url(nightly), 30).await?;
+    let release = release_of(&data, nightly);
+    let tag = release["tag_name"].as_str().ok_or("No OptiScaler release found")?.to_string();
+    let dest = cache.join(format!("OptiScaler_{tag}"));
+    if let Some(payload) = find_payload(&dest) {
+        return Ok((tag, payload));
+    }
+    let asset = release["assets"].as_array().into_iter().flatten().find(|a| a["name"].as_str().is_some_and(|n| n.to_lowercase().ends_with(".7z"))).ok_or(format!("No .7z asset in release {tag}"))?;
+    let (Some(name), Some(url)) = (asset["name"].as_str(), asset["browser_download_url"].as_str()) else { return Err("Bad release asset".into()) };
+    fs::create_dir_all(cache).map_err(|e| e.to_string())?;
+    let archive = cache.join(name);
+    download(url, &archive, 60).await?;
+    let _ = fs::remove_dir_all(&dest);
+    let extracted = extract(app, &archive, &dest).await;
+    let _ = fs::remove_file(&archive);
+    extracted.map_err(|_| format!("Failed to extract OptiScaler {tag}"))?;
+    let payload = find_payload(&dest).ok_or("OptiScaler.dll not found in extracted release")?;
+    Ok((tag, payload))
+}
+
+/// Newest `OptiScaler_<tag>` folder by natural order.
+fn newest_cached_release(cache: &Path) -> Option<(String, PathBuf)> {
+    let mut tags: Vec<String> = fs::read_dir(cache).ok()?.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|d| d.starts_with("OptiScaler_")).collect();
+    tags.sort_by(|a, b| natural_cmp(b, a));
+    tags.into_iter().find_map(|d| find_payload(&cache.join(&d)).map(|p| (d["OptiScaler_".len()..].to_string(), p)))
+}
+
+/// localeCompare with `numeric: true`, enough for version tags.
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    fn chunks(s: &str) -> Vec<(bool, String)> {
+        let mut out: Vec<(bool, String)> = Vec::new();
+        for c in s.chars() {
+            let digit = c.is_ascii_digit();
+            match out.last_mut() {
+                Some((d, text)) if *d == digit => text.push(c),
+                _ => out.push((digit, c.to_string())),
+            }
+        }
+        out
+    }
+    for (x, y) in chunks(a).iter().zip(chunks(b).iter()) {
+        let ord = match (x, y) {
+            ((true, x), (true, y)) => x.trim_start_matches('0').len().cmp(&y.trim_start_matches('0').len()).then_with(|| x.trim_start_matches('0').cmp(y.trim_start_matches('0'))),
+            ((_, x), (_, y)) => x.to_lowercase().cmp(&y.to_lowercase()),
+        };
+        if ord.is_ne() {
+            return ord;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+// ---------- FSR4 override DLLs ----------
+
+fn fsr4_archive(family: &str) -> &'static str {
+    if family == "igpu" { "fsr4.1.1-igpu-cyboman.zip" } else { "fsr4.1.1-cyboman.zip" }
+}
+
+fn fsr4_dll_path(root: &Path, tag: &str, family: &str, variant: &str) -> PathBuf {
+    root.join(tag).join(family).join(variant).join(FSR4_DLL)
+}
+
+fn has_family(root: &Path, tag: &str, family: &str) -> bool {
+    ["exact", "lossy"].iter().all(|v| fsr4_dll_path(root, tag, family, v).is_file())
+}
+
+fn newest_fsr4_tag(root: &Path, family: &str) -> Option<String> {
+    let mut tags: Vec<String> = fs::read_dir(root).ok()?.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|t| t.starts_with(FSR4_TAG_PREFIX) && has_family(root, t, family)).collect();
+    tags.sort_by(|a, b| natural_cmp(a, b));
+    tags.pop()
+}
+
+/// Downloaded DLL for a variant, without touching the network.
+fn cached_fsr4_dll(app: &AppHandle, family: &str, variant: &str) -> Option<PathBuf> {
+    let root = cache_root(app).ok()?.join("fsr4");
+    newest_fsr4_tag(&root, family).map(|tag| fsr4_dll_path(&root, &tag, family, variant))
+}
+
+/// `sha256sum` output as relative path -> hash.
+fn parse_sums(text: &str) -> HashMap<String, String> {
+    text.lines()
+        .filter_map(|l| {
+            let (hash, rest) = l.split_once(char::is_whitespace)?;
+            let name = rest.trim_start().trim_start_matches('*').trim();
+            (hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) && !name.is_empty()).then(|| (name.to_string(), hash.to_lowercase()))
+        })
+        .collect()
+}
+
+fn sha256_file(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    Some(Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Fetches the newest FSR4 DLL release for a GPU family; the newest cached one when offline.
+async fn ensure_fsr4_dlls(app: &AppHandle, family: &str) -> Option<String> {
+    static LOCK: Mutex<()> = Mutex::const_new(());
+    let _guard = LOCK.lock().await;
+    let root = cache_root(app).ok()?.join("fsr4");
+    match fetch_fsr4_dlls(app, &root, family).await {
+        Ok(tag) => Some(tag),
+        Err(err) => {
+            eprintln!("[optiscaler] failed to fetch FSR4 DLLs: {err}");
+            newest_fsr4_tag(&root, family)
+        }
+    }
+}
+
+async fn fetch_fsr4_dlls(app: &AppHandle, root: &Path, family: &str) -> Result<String, String> {
+    let archive_name = fsr4_archive(family);
+    let releases = github_json(FSR4_API, 30).await?;
+    let release = releases.as_array().into_iter().flatten().find(|r| r["tag_name"].as_str().is_some_and(|t| t.starts_with(FSR4_TAG_PREFIX))).ok_or("No FSR4 DLL release found")?;
+    let tag = release["tag_name"].as_str().unwrap_or_default().to_string();
+    if has_family(root, &tag, family) {
+        return Ok(tag);
+    }
+    let asset = |name: &str| release["assets"].as_array().into_iter().flatten().find(|a| a["name"] == name).and_then(|a| a["browser_download_url"].as_str()).map(str::to_string);
+    let (Some(archive_url), Some(sums_url)) = (asset(archive_name), asset("SHA256SUMS")) else {
+        return Err(format!("Release {tag} is missing {archive_name} or SHA256SUMS"));
+    };
+    // Staged per family so desktop and igpu archives can share one tag folder.
+    let tmp = root.join(format!("{tag}.{family}.tmp"));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let archive = tmp.join(archive_name);
+    download(&archive_url, &archive, 120).await?;
+    let sums_text = github()?.get(&sums_url).timeout(Duration::from_secs(30)).send().await.and_then(|r| r.error_for_status()).map_err(|e| e.to_string())?.text().await.map_err(|e| e.to_string())?;
+    let sums = parse_sums(&sums_text);
+    if sha256_file(&archive).as_ref() != sums.get(archive_name) {
+        return Err(format!("Checksum mismatch for {archive_name}"));
+    }
+    extract(app, &archive, &tmp).await.map_err(|_| format!("Failed to extract {archive_name}"))?;
+    let _ = fs::remove_file(&archive);
+    let mut found = Vec::new();
+    for variant in ["exact", "lossy"] {
+        let key = format!("{family}/{variant}/{FSR4_DLL}");
+        // Archives hold either <family>/<variant>/ or <variant>/ at the root.
+        let file = [tmp.join(family).join(variant).join(FSR4_DLL), tmp.join(variant).join(FSR4_DLL)].into_iter().find(|f| f.is_file());
+        match file {
+            Some(f) if sha256_file(&f).as_ref() == sums.get(&key) => found.push((variant, f)),
+            _ => return Err(format!("Bad or missing {key} in {archive_name}")),
+        }
+    }
+    let _ = fs::remove_dir_all(root.join(&tag).join(family));
+    for (variant, file) in found {
+        let target = fsr4_dll_path(root, &tag, family, variant);
+        fs::create_dir_all(target.parent().unwrap()).map_err(|e| e.to_string())?;
+        fs::rename(file, target).map_err(|e| e.to_string())?;
+    }
+    let _ = fs::remove_dir_all(&tmp);
+    Ok(tag)
+}
+
+/// The user's chosen DLL if it still exists, else the downloaded one. Native GPUs need none.
+fn resolve_fsr4_dll(app: &AppHandle, prefs: &Value, gpu: &str) -> Option<PathBuf> {
+    if gpu == "native" {
+        return None;
+    }
+    let v = variant(prefs);
+    let chosen = if v == "lossy" { prefs["optiscalerFsr4LossyPath"].as_str() } else { prefs["optiscalerFsr4ExactPath"].as_str().or(prefs["optiscalerFsr4DllPath"].as_str()) };
+    chosen.map(PathBuf::from).filter(|p| p.exists()).or_else(|| cached_fsr4_dll(app, gpu, v))
+}
+
+// ---------- install ----------
+
+fn read_marker(exe_dir: &Path) -> Option<Value> {
+    let marker: Value = serde_json::from_str(&fs::read_to_string(exe_dir.join(MARKER)).ok()?).ok()?;
+    // Other tools (the Bloodborne port) write a marker of the same name.
+    marker["proxy"].as_str().filter(|p| PROXIES.contains(p))?;
+    Some(marker)
+}
+
+fn write_marker(exe_dir: &Path, tag: &str, proxy: &str, files: &[String], backed: &[String]) -> Result<(), String> {
+    let marker = json!({ "version": tag, "proxy": proxy, "files": files, "backed_up": backed });
+    fs::write(exe_dir.join(MARKER), serde_json::to_string_pretty(&marker).unwrap()).map_err(|e| e.to_string())
+}
+
+fn strings(v: &Value) -> Vec<String> {
+    v.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
+}
+
+/// Files under `root`, relative with `/`.
+fn list_files(root: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    walk(root, usize::MAX, &mut |_, e| {
+        if e.file_type().is_ok_and(|t| t.is_file()) {
+            if let Ok(rel) = e.path().strip_prefix(root) {
+                out.push(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"));
+            }
+        }
+        true
+    });
+    out
+}
+
+/// A marker entry must stay inside the game folder; the marker file is not trusted blindly.
+fn inside(exe_dir: &Path, rel: &str) -> Option<PathBuf> {
+    let path = Path::new(rel);
+    path.components().all(|c| matches!(c, std::path::Component::Normal(_))).then(|| exe_dir.join(path))
+}
+
+fn uninstall(exe_dir: &Path, keep_ini: bool) -> Result<(), String> {
+    let marker = read_marker(exe_dir).ok_or("No install marker found")?;
+    let files = strings(&marker["files"]);
+    for rel in &files {
+        if keep_ini && rel.eq_ignore_ascii_case("optiscaler.ini") {
+            continue;
+        }
+        if let Some(p) = inside(exe_dir, rel) {
+            let _ = fs::remove_file(p);
+        }
+    }
+    let backup = exe_dir.join(BACKUP);
+    for rel in strings(&marker["backed_up"]) {
+        let (Some(src), Some(dst)) = (inside(&backup, &rel), inside(exe_dir, &rel)) else { continue };
+        if src.exists() {
+            if let Some(parent) = dst.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::rename(&src, &dst).map_err(|e| e.to_string())?;
+        }
+    }
+    let _ = fs::remove_dir_all(&backup);
+    let _ = fs::remove_file(exe_dir.join(MARKER));
+    // Prune the empty folders the install created.
+    let mut sorted = files;
+    sorted.sort_by_key(|f| std::cmp::Reverse(f.len()));
+    for rel in sorted {
+        let Some(mut dir) = inside(exe_dir, &rel).and_then(|p| p.parent().map(Path::to_path_buf)) else { continue };
+        while dir != exe_dir && dir.starts_with(exe_dir) && fs::read_dir(&dir).is_ok_and(|mut d| d.next().is_none()) {
+            let _ = fs::remove_dir(&dir);
+            dir = match dir.parent() {
+                Some(p) => p.to_path_buf(),
+                None => break,
+            };
+        }
+    }
+    Ok(())
+}
+
+/// Copies the payload into `exe_dir`, backing up what it replaces. The marker is written
+/// first, so a failure rolls back through `uninstall` to the game's original files.
+fn install(payload: &Path, exe_dir: &Path, proxy: &str, tag: &str, fsr4_dll: Option<&Path>, fsr4_mode: Option<&str>, api: &str) -> Result<Vec<(String, String)>, String> {
+    let old = read_marker(exe_dir);
+    if old.is_none() && exe_dir.join(MARKER).exists() {
+        return Err("Another tool's optiscaler_manager.json is in this folder".into());
+    }
+    if old.is_some() {
+        // Restore originals first so the backups stay the true originals.
+        uninstall(exe_dir, true)?;
+    }
+    let old_files = old.as_ref().map(|m| strings(&m["files"])).unwrap_or_default();
+    let backup = exe_dir.join(BACKUP);
+    let (mut copied, mut backed): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    write_marker(exe_dir, tag, proxy, &copied, &backed)?;
+
+    let mut run = || -> Result<Vec<(String, String)>, String> {
+        let back_up = |dst: &Path, rel: &str, backed: &mut Vec<String>| -> Result<(), String> {
+            let b = backup.join(rel);
+            fs::create_dir_all(b.parent().unwrap()).map_err(|e| e.to_string())?;
+            fs::rename(dst, &b).map_err(|e| e.to_string())?;
+            backed.push(rel.to_string());
+            Ok(())
+        };
+        for rel in list_files(payload) {
+            if rel.starts_with("!!") || rel.to_lowercase().starts_with("setup_") {
+                continue;
+            }
+            let src = payload.join(&rel);
+            let rel = if rel.eq_ignore_ascii_case("optiscaler.dll") { proxy.to_string() } else { rel };
+            let dst = exe_dir.join(&rel);
+            fs::create_dir_all(dst.parent().unwrap()).map_err(|e| e.to_string())?;
+            if dst.exists() {
+                if rel.eq_ignore_ascii_case("optiscaler.ini") {
+                    // Still ours from the previous install: keep the user's settings.
+                    if old_files.iter().any(|f| f == "OptiScaler.ini") {
+                        copied.push(rel);
+                    }
+                    continue;
+                }
+                back_up(&dst, &rel, &mut backed)?;
+            }
+            fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+            copied.push(rel);
+            write_marker(exe_dir, tag, proxy, &copied, &backed)?;
+        }
+        if let Some(dll) = fsr4_dll {
+            let dst = exe_dir.join(FSR4_DLL);
+            let ours = copied.iter().any(|f| f == FSR4_DLL);
+            if dst.exists() && !ours {
+                back_up(&dst, FSR4_DLL, &mut backed)?;
+            }
+            fs::copy(dll, &dst).map_err(|e| e.to_string())?;
+            if !ours {
+                copied.push(FSR4_DLL.into());
+            }
+        }
+        write_marker(exe_dir, tag, proxy, &copied, &backed)?;
+        Ok(configure_ini(&exe_dir.join("OptiScaler.ini"), api, fsr4_mode))
+    };
+    run().inspect_err(|_| {
+        // Rollback is best effort; the original error matters more.
+        let _ = uninstall(exe_dir, false);
+    })
+}
+
+// ---------- OptiScaler.ini ----------
+
+/// Reads a key (any section); with `value`, sets it, appending when missing.
+fn ini_get_set(ini: &Path, key: &str, value: Option<&str>) -> Option<String> {
+    let text = fs::read_to_string(ini).unwrap_or_default();
+    let mut lines: Vec<String> = text.split('\n').map(|l| l.trim_end_matches('\r').to_string()).collect();
+    if lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    let mut old = None;
+    for line in lines.iter_mut() {
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim() == key {
+                old = Some(v.trim().to_string());
+                if let Some(value) = value {
+                    *line = format!("{key}={value}");
+                }
+                break;
+            }
+        }
+    }
+    if let Some(value) = value {
+        if old.is_none() {
+            lines.push(format!("{key}={value}"));
+        }
+        let _ = fs::write(ini, lines.join("\n") + "\n");
+    }
+    old
+}
+
+/// Sets FSR4-related keys that are still "auto"; never overrides the user's values.
+fn configure_ini(ini: &Path, api: &str, fsr4: Option<&str>) -> Vec<(String, String)> {
+    if !ini.exists() {
+        return Vec::new();
+    }
+    let mut wanted: Vec<(&str, &str)> = Vec::new();
+    if let Some(mode) = fsr4 {
+        wanted.push(("Fsr4Update", "true"));
+        // RDNA4 runs FSR4 natively; INT8 is the fallback for the override DLL on older cards.
+        if mode == "dll" {
+            wanted.push(("Fsr4ForceEnableInt8", "true"));
+        }
+        match api {
+            "dx12" => wanted.push(("Dx12Upscaler", "fsr31")),
+            "dx11" => wanted.push(("Dx11Upscaler", "fsr31_12")),
+            "vulkan" => wanted.push(("VulkanUpscaler", "fsr31_12")),
+            _ => wanted.extend([("Dx12Upscaler", "fsr31"), ("Dx11Upscaler", "fsr31_12"), ("VulkanUpscaler", "fsr31_12")]),
+        }
+    }
+    wanted.extend([("LogToFile", "true"), ("LogLevel", "2")]);
+    let mut done = Vec::new();
+    for (k, v) in wanted {
+        if ini_get_set(ini, k, None).unwrap_or_default().eq_ignore_ascii_case("auto") {
+            ini_get_set(ini, k, Some(v));
+            done.push((k.to_string(), v.to_string()));
+        }
+    }
+    done
+}
+
+const UPSCALERS: &[&str] = &["auto", "fsr31", "fsr31_12", "fsr21", "fsr21_12", "xess", "dlss"];
+
+/// Allowlist of user-editable keys; the renderer can only touch these.
+fn config_fields() -> Vec<Value> {
+    vec![
+        json!({ "key": "Dx12Upscaler", "type": "select", "options": UPSCALERS }),
+        json!({ "key": "Dx11Upscaler", "type": "select", "options": UPSCALERS }),
+        json!({ "key": "VulkanUpscaler", "type": "select", "options": UPSCALERS }),
+        json!({ "key": "FGType", "type": "select", "options": ["auto", "nofg", "optifg"] }),
+        json!({ "key": "Sharpness", "type": "number", "min": 0, "max": 1 }),
+        json!({ "key": "Fsr4Update", "type": "toggle" }),
+        json!({ "key": "Fsr4ForceEnableInt8", "type": "toggle" }),
+        json!({ "key": "LogToFile", "type": "toggle" }),
+        json!({ "key": "LogLevel", "type": "select", "options": ["0", "1", "2", "3", "4"] }),
+    ]
+}
+
+fn read_config(ini: &Path) -> Value {
+    Value::Array(
+        config_fields()
+            .into_iter()
+            .filter_map(|mut f| {
+                let value = ini_get_set(ini, f["key"].as_str()?, None)?;
+                f["value"] = json!(value);
+                Some(f)
+            })
+            .collect(),
+    )
+}
+
+fn write_config_value(ini: &Path, key: &str, value: &str) -> Result<(), String> {
+    let field = config_fields().into_iter().find(|f| f["key"] == key).filter(|_| ini_get_set(ini, key, None).is_some()).ok_or(format!("Unsupported setting: {key}"))?;
+    let valid = match field["type"].as_str() {
+        Some("toggle") => value == "true" || value == "false",
+        Some("select") => field["options"].as_array().is_some_and(|o| o.iter().any(|v| v == value)),
+        _ => value.trim().parse::<f64>().is_ok_and(|n| n >= field["min"].as_f64().unwrap_or(0.0) && n <= field["max"].as_f64().unwrap_or(0.0)),
+    };
+    if !valid {
+        return Err(format!("Invalid value for {key}: {value}"));
+    }
+    ini_get_set(ini, key, Some(value));
+    Ok(())
+}
+
+/// "live" if OptiScaler.log (newer than the install) shows the FSR4 4.1.x DLL, "loaded" if only OptiScaler ran.
+fn loaded_state(exe_dir: &Path) -> Option<&'static str> {
+    let log = exe_dir.join("OptiScaler.log");
+    let (log_meta, marker_meta) = (fs::metadata(&log).ok()?, fs::metadata(exe_dir.join(MARKER)).ok()?);
+    if !log_meta.is_file() || log_meta.modified().ok()? < marker_meta.modified().ok()? {
+        return None;
+    }
+    let bytes = fs::read(&log).ok()?;
+    let tail = &bytes[bytes.len().saturating_sub(2 << 20)..];
+    Some(if String::from_utf8_lossy(tail).contains("4.1.1") { "live" } else { "loaded" })
+}
+
+// ---------- game context and channels ----------
+
+/// Unreal games ship a root stub that starts `Binaries/Win64/*-Win64-Shipping.exe`; the proxy must sit next to the real process.
+fn resolve_injected_exe(exe: PathBuf) -> PathBuf {
+    if exe.to_string_lossy().to_lowercase().ends_with(SHIPPING_SUFFIX) {
+        return exe;
+    }
+    match exe.parent().and_then(find_main_exe) {
+        Some(main) if main.to_string_lossy().to_lowercase().ends_with(SHIPPING_SUFFIX) => main,
+        _ => exe,
+    }
+}
+
+fn context(app: &AppHandle, shop: &str, object_id: &str) -> Result<(PathBuf, PathBuf), String> {
+    let game = app.state::<Store>().get("games", &game_key(shop, object_id))?;
+    let exe = game["executablePath"].as_str().filter(|p| !p.is_empty()).ok_or("Game has no executable path")?;
+    // A .bat launcher is not the injected process; target the tracked exe.
+    let tracked = game["trackingExecutablePaths"].as_array().into_iter().flatten().filter_map(Value::as_str).find(|p| !p.is_empty());
+    let chosen = if crate::launch::is_batch_file(exe) { tracked.unwrap_or(exe) } else { exe };
+    let exe = resolve_injected_exe(PathBuf::from(chosen));
+    let dir = exe.parent().map(Path::to_path_buf).ok_or("Game has no executable path")?;
+    Ok((exe, dir))
+}
+
+/// `getOptiscalerStatus`.
+pub async fn status(app: &AppHandle, shop: &str, object_id: &str, proxy: Option<&str>) -> Result<Value, String> {
+    let (exe, dir) = context(app, shop, object_id)?;
+    let prefs = prefs(app);
+    let marker = read_marker(&dir);
+    let gpu = resolve_gpu(&prefs).await;
+    let night = nightly(&prefs);
+    {
+        // Warm the caches so the first install already has the files.
+        let (app, gpu) = (app.clone(), gpu.clone());
+        tauri::async_runtime::spawn(async move {
+            if gpu != "native" {
+                ensure_fsr4_dlls(&app, &gpu).await;
+            }
+            let _ = fetch_latest(&app, night).await;
+        });
+    }
+    let latest = latest_tag(night).await;
+    let version = marker.as_ref().map(|m| m["version"].clone());
+    let update = matches!((&version, &latest), (Some(Value::String(v)), Some(l)) if v != l);
+    // A foreign DLL under the chosen proxy name would be moved to backup.
+    let conflict = proxy.filter(|p| marker.is_none() && dir.join(p).exists());
+    Ok(json!({
+        "installed": marker.is_some(),
+        "version": version.unwrap_or(Value::Null),
+        "proxy": marker.as_ref().map_or(Value::Null, |m| m["proxy"].clone()),
+        "loaded": if marker.is_some() { json!(loaded_state(&dir)) } else { Value::Null },
+        "api": detect_api(&exe),
+        "anticheat": detect_anticheat(&game_root_from_exe_dir(&dir)),
+        "proxies": PROXIES,
+        "latestTag": latest,
+        "updateAvailable": update,
+        "fsr4Available": gpu == "native" || resolve_fsr4_dll(app, &prefs, &gpu).is_some(),
+        "fsr4Gpu": gpu,
+        "fsr4Variant": variant(&prefs),
+        "proxyConflict": conflict,
+    }))
+}
+
+/// `getOptiscalerGpu`.
+pub async fn gpu(app: &AppHandle) -> Value {
+    let effective = resolve_gpu(&prefs(app)).await;
+    let native = effective == "native";
+    if !native {
+        // Fetch now so settings can show the DLLs that install will use.
+        ensure_fsr4_dlls(app, &effective).await;
+    }
+    let dll = |v: &str| if native { Value::Null } else { json!(cached_fsr4_dll(app, &effective, v).map(|p| p.to_string_lossy().into_owned())) };
+    json!({ "detected": detect_gpu().await, "effective": effective, "autoDlls": { "exact": dll("exact"), "lossy": dll("lossy") } })
+}
+
+/// `installOptiscaler`.
+pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, proxy: &str) -> Result<Value, String> {
+    if !PROXIES.contains(&proxy) {
+        return Err(format!("Invalid proxy: {proxy}"));
+    }
+    let (exe, dir) = context(app, shop, object_id)?;
+    let prefs = prefs(app);
+    let (tag, payload) = fetch_latest(app, nightly(&prefs)).await?;
+    let gpu = resolve_gpu(&prefs).await;
+    if gpu != "native" {
+        ensure_fsr4_dlls(app, &gpu).await;
+    }
+    let dll = resolve_fsr4_dll(app, &prefs, &gpu);
+    let mode = if gpu == "native" { Some("native") } else if dll.is_some() { Some("dll") } else { None };
+    let api = detect_api(&exe);
+    let proxy = proxy.to_string();
+    tauri::async_runtime::spawn_blocking(move || install(&payload, &dir, &proxy, &tag, dll.as_deref(), mode, api).map(|_| json!({ "version": tag })))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// `uninstallOptiscaler`.
+pub fn uninstall_for_game(app: &AppHandle, shop: &str, object_id: &str) -> Result<(), String> {
+    uninstall(&context(app, shop, object_id)?.1, false)
+}
+
+fn ini_path(app: &AppHandle, shop: &str, object_id: &str) -> Result<PathBuf, String> {
+    let dir = context(app, shop, object_id)?.1;
+    read_marker(&dir).ok_or("OptiScaler is not installed")?;
+    Ok(dir.join("OptiScaler.ini"))
+}
+
+/// `getOptiscalerConfig`.
+pub fn get_config(app: &AppHandle, shop: &str, object_id: &str) -> Result<Value, String> {
+    let ini = ini_path(app, shop, object_id)?;
+    Ok(if ini.exists() { read_config(&ini) } else { json!([]) })
+}
+
+/// `setOptiscalerConfig`.
+pub fn set_config(app: &AppHandle, shop: &str, object_id: &str, key: &str, value: &str) -> Result<(), String> {
+    write_config_value(&ini_path(app, shop, object_id)?, key, value)
+}
+
+/// Startup: fetch the FSR4 DLLs, then bring every installed game up to the newest release.
+pub async fn auto_update(app: &AppHandle) {
+    let prefs = prefs(app);
+    let gpu = resolve_gpu(&prefs).await;
+    if gpu != "native" {
+        ensure_fsr4_dlls(app, &gpu).await;
+    }
+    let Ok((tag, _)) = fetch_latest(app, nightly(&prefs)).await else { return };
+    let games = app.state::<Store>().entries("games").unwrap_or_default();
+    for (_, game) in games {
+        let (Some(shop), Some(object_id)) = (game["shop"].as_str(), game["objectId"].as_str()) else { continue };
+        let Ok((_, dir)) = context(app, shop, object_id) else { continue };
+        let Some(marker) = read_marker(&dir) else { continue };
+        let Some(proxy) = marker["proxy"].as_str().filter(|_| marker["version"] != tag.as_str()) else { continue };
+        // Files stay locked while the game runs; install rolls back and retries next launch.
+        match install_for_game(app, shop, object_id, proxy).await {
+            Ok(_) => eprintln!("[optiscaler] updated to {tag}: {}", game["title"]),
+            Err(err) => eprintln!("[optiscaler] auto-update skipped for {}: {err}", game["title"]),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("chimaera-optiscaler-{name}-{}", crate::library::now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn classifies_gpus_like_electron() {
+        let c = |n: &[&str]| classify_gpus(&n.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(c(&["AMD Radeon RX 9070 XT"]), "native");
+        assert_eq!(c(&["AMD Radeon(TM) Graphics", "AMD Radeon RX 7800 XT"]), "desktop");
+        assert_eq!(c(&["NVIDIA GeForce RTX 4070"]), "desktop");
+        assert_eq!(c(&["Intel Arc A770 Graphics"]), "desktop");
+        // Same as the JS regex: "(TM)" between Arc and the model breaks the match.
+        assert_eq!(c(&["Intel(R) Arc(TM) A770 Graphics"]), "igpu");
+        assert_eq!(c(&["Intel(R) Arc(TM) Graphics"]), "igpu");
+        assert_eq!(c(&["AMD Radeon 780M"]), "igpu");
+        assert_eq!(c(&[]), "desktop");
+    }
+
+    #[test]
+    fn parses_sums_and_natural_order() {
+        let h = "a".repeat(64);
+        let sums = parse_sums(&format!("{h}  fsr4.zip\r\n{h} *desktop/exact/x.dll\nbad line\n"));
+        assert_eq!(sums.get("fsr4.zip"), Some(&h));
+        assert_eq!(sums.get("desktop/exact/x.dll"), Some(&h));
+        assert_eq!(sums.len(), 2);
+        let mut tags = vec!["dll-10", "dll-9", "dll-2"];
+        tags.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(tags, ["dll-2", "dll-9", "dll-10"]);
+    }
+
+    #[test]
+    fn detects_api_root_and_anticheat() {
+        let dir = temp("detect");
+        let exe = dir.join("game.exe");
+        let wide: Vec<u8> = "D3D11.dll".bytes().flat_map(|b| [b, 0]).collect();
+        fs::write(&exe, [b"xx".as_slice(), &wide].concat()).unwrap();
+        assert_eq!(detect_api(&exe), "dx11");
+        fs::write(&exe, b"vulkan-1.dll d3d12.dll").unwrap();
+        assert_eq!(detect_api(&exe), "dx12");
+        fs::create_dir_all(dir.join("EasyAntiCheat")).unwrap();
+        assert_eq!(detect_anticheat(&dir).as_deref(), Some("EasyAntiCheat"));
+        let unreal = dir.join("Game").join("Binaries").join("Win64");
+        assert_eq!(game_root_from_exe_dir(&unreal), dir);
+        fs::create_dir_all(&unreal).unwrap();
+        fs::write(unreal.join("Game-Win64-Shipping.exe"), b"x").unwrap();
+        assert_eq!(resolve_injected_exe(exe.clone()), unreal.join("Game-Win64-Shipping.exe"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn installs_backs_up_reinstalls_and_rolls_back() {
+        let root = temp("install");
+        let (payload, game) = (root.join("payload"), root.join("game"));
+        fs::create_dir_all(payload.join("D3D12_Optiscaler")).unwrap();
+        fs::create_dir_all(&game).unwrap();
+        fs::write(payload.join("OptiScaler.dll"), b"opti").unwrap();
+        fs::write(payload.join("OptiScaler.ini"), "[Upscalers]\nDx12Upscaler=auto\nLogToFile=auto\nLogLevel=auto\nFsr4Update=auto\n").unwrap();
+        fs::write(payload.join("D3D12_Optiscaler").join("x.dll"), b"x").unwrap();
+        fs::write(payload.join("!! READ ME.txt"), b"skip").unwrap();
+        fs::write(game.join("dxgi.dll"), b"original").unwrap();
+        let fsr4 = root.join("fsr4.dll");
+        fs::write(&fsr4, b"fsr4").unwrap();
+
+        let done = install(&payload, &game, "dxgi.dll", "v1", Some(&fsr4), Some("dll"), "dx12").unwrap();
+        assert!(done.contains(&("Dx12Upscaler".into(), "fsr31".into())));
+        assert_eq!(fs::read(game.join("dxgi.dll")).unwrap(), b"opti");
+        assert_eq!(fs::read(game.join(BACKUP).join("dxgi.dll")).unwrap(), b"original");
+        assert!(!game.join("!! READ ME.txt").exists());
+        assert_eq!(read_marker(&game).unwrap()["version"], "v1");
+
+        // User edits survive a reinstall; the backup keeps the true original.
+        write_config_value(&game.join("OptiScaler.ini"), "Dx12Upscaler", "xess").unwrap();
+        assert!(write_config_value(&game.join("OptiScaler.ini"), "Dx12Upscaler", "bogus").is_err());
+        assert!(write_config_value(&game.join("OptiScaler.ini"), "Unknown", "1").is_err());
+        install(&payload, &game, "dxgi.dll", "v2", None, None, "dx12").unwrap();
+        assert_eq!(ini_get_set(&game.join("OptiScaler.ini"), "Dx12Upscaler", None).as_deref(), Some("xess"));
+        assert_eq!(fs::read(game.join(BACKUP).join("dxgi.dll")).unwrap(), b"original");
+        assert_eq!(read_config(&game.join("OptiScaler.ini")).as_array().unwrap().len(), 4);
+
+        uninstall(&game, false).unwrap();
+        assert_eq!(fs::read(game.join("dxgi.dll")).unwrap(), b"original");
+        assert!(!game.join("D3D12_Optiscaler").exists() && !game.join(MARKER).exists() && !game.join(BACKUP).exists());
+
+        // A failed copy rolls back to the original files.
+        let missing = root.join("missing.dll");
+        assert!(install(&payload, &game, "dxgi.dll", "v3", Some(&missing), Some("dll"), "dx12").is_err());
+        assert_eq!(fs::read(game.join("dxgi.dll")).unwrap(), b"original");
+        assert!(!game.join(MARKER).exists());
+
+        // Another tool's marker blocks the install.
+        fs::write(game.join(MARKER), r#"{"proxy":"bloodborne"}"#).unwrap();
+        assert!(install(&payload, &game, "dxgi.dll", "v4", None, None, "dx12").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn marker_paths_cannot_leave_the_game_folder() {
+        assert!(inside(Path::new("g"), "../evil.dll").is_none());
+        assert!(inside(Path::new("g"), "a/b.dll").is_some());
+    }
+}

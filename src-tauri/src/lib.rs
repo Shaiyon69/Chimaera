@@ -39,6 +39,7 @@ mod screenshots;
 mod local_files;
 mod misc;
 mod notifications;
+mod optiscaler;
 mod processed_image;
 mod retro_achievements;
 mod shop_details;
@@ -167,6 +168,17 @@ pub fn run() {
                 if let Some(main) = app.get_webview_window("main") {
                     let _ = main.minimize();
                 }
+            }
+            if cfg!(windows) {
+                let handle = app.handle().clone();
+                let app = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = common_redist::download(&app).await {
+                        eprintln!("[common-redist] download failed: {error}");
+                    }
+                });
+                let app = handle;
+                tauri::async_runtime::spawn(async move { optiscaler::auto_update(&app).await });
             }
             {
                 // After the window is up, so the renderer hears the sync progress.
