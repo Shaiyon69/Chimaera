@@ -4,7 +4,13 @@ import type {
   DownloadSource,
 } from "@types";
 
-import { useAppDispatch, useAppSelector, useFormat } from "@renderer/hooks";
+import {
+  useAppDispatch,
+  useAppSelector,
+  useFormat,
+  useScrollRestoration,
+} from "@renderer/hooks";
+import { useLocation } from "react-router-dom";
 import {
   lazy,
   Suspense,
@@ -122,6 +128,12 @@ export default function Catalogue() {
   const requestSequenceRef = useRef(0);
   const hasResultsRef = useRef(false);
   const cataloguePageRef = useRef<HTMLDivElement>(null);
+  // Kept alive while hidden; the offset comes back on return from game details.
+  const { pathname } = useLocation();
+  useScrollRestoration(
+    cataloguePageRef,
+    pathname === "/catalogue" ? "/catalogue" : null
+  );
 
   const { steamDevelopers, steamPublishers, downloadSources } = useCatalogue();
 

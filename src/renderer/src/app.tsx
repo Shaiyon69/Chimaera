@@ -13,6 +13,7 @@ import {
   useLibrary,
   useToast,
   useUserDetails,
+  useScrollRestoration,
 } from "@renderer/hooks";
 import { useDownloadOptionsListener } from "@renderer/hooks/use-download-options-listener";
 import i18n from "i18next";
@@ -41,7 +42,12 @@ import {
   updateRetroArchScanProgress,
 } from "@renderer/features";
 import { useTranslation } from "react-i18next";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import {
+  Outlet,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+} from "react-router-dom";
 import { ArchiveDeletionModal } from "./pages/downloads/archive-deletion-error-modal";
 import { BundledGameSetupModal } from "./components/bundled-game-setup-modal/bundled-game-setup-modal";
 import { BUNDLED_GAMES } from "@shared";
@@ -124,6 +130,9 @@ export function App() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const navigationType = useNavigationType();
+  // Back/forward (POP) returns to where the page was left; new pages start at the top.
+  useScrollRestoration(contentRef, location.key, navigationType === "POP");
 
   const activeKeptPage =
     location.pathname in KEPT_ALIVE_PAGES ? location.pathname : null;
@@ -619,11 +628,7 @@ export function App() {
   ]);
 
   useEffect(() => {
-    const asyncScrollAndNotify = async () => {
-      if (contentRef.current) contentRef.current.scrollTop = 0;
-      await workwondersRef.current?.notifyUrlChange?.();
-    };
-    asyncScrollAndNotify();
+    workwondersRef.current?.notifyUrlChange?.();
   }, [location.pathname, location.search]);
 
   useEffect(() => {
