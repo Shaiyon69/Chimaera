@@ -155,3 +155,6 @@ export const CLOUD_GIFT_ID_VARIABLE = "giftId";
 export const NOTIFICATIONS_FETCH_FILTER = "all";
 export const NOTIFICATIONS_FETCH_TAKE = 20;
 export const NOTIFICATIONS_FETCH_SKIP = 0;
+
+// Achievement points are Hydra's score, and nothing in Chimaera uses them yet; hidden until they get a purpose.
+export const SHOW_ACHIEVEMENT_POINTS = false;

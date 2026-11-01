@@ -4,6 +4,7 @@ import {
 } from "@types";
 import cn from "classnames";
 import HydraIcon from "@renderer/assets/icons/hydra.svg?react";
+import { SHOW_ACHIEVEMENT_POINTS } from "@shared";
 import { EyeClosedIcon } from "@primer/octicons-react";
 import Ellipses from "@renderer/assets/icons/ellipses.png";
 import "./achievement-notification.scss";
@@ -34,7 +35,7 @@ export function AchievementNotificationItem({
         [`${baseClassName}--platinum`]: achievement.isPlatinum,
       })}
     >
-      {achievement.points !== undefined && (
+      {SHOW_ACHIEVEMENT_POINTS && achievement.points !== undefined && (
         <div className="achievement-notification__chip">
           <HydraIcon className="achievement-notification__chip__icon" />
           <span className="achievement-notification__chip__label">

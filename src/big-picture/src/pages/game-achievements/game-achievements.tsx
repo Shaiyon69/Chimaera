@@ -1,4 +1,5 @@
 import type { GameShop, UserAchievement } from "@types";
+import { SHOW_ACHIEVEMENT_POINTS } from "@shared";
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { VerticalFocusGroup } from "../../components";
@@ -109,10 +110,12 @@ export default function GameAchievements() {
           />
 
           <section className="game-achievements-page__list-section">
-            <AvailablePointsBar
-              earnedPoints={earnedPoints}
-              totalPoints={totalPoints}
-            />
+            {SHOW_ACHIEVEMENT_POINTS && (
+              <AvailablePointsBar
+                earnedPoints={earnedPoints}
+                totalPoints={totalPoints}
+              />
+            )}
 
             <VerticalFocusGroup
               regionId={GAME_ACHIEVEMENTS_LIST_REGION_ID}

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import "./achievements.scss";
 import { EyeClosedIcon, SearchIcon } from "@primer/octicons-react";
 import HydraIcon from "@renderer/assets/icons/hydra.svg?react";
+import { SHOW_ACHIEVEMENT_POINTS } from "@shared";
 import { useState } from "react";
 import { FullscreenMediaModal } from "@renderer/components";
 
@@ -89,27 +90,28 @@ export function AchievementList({
             )}
 
             <div className="achievements__item-meta-details">
-              {achievement.points != undefined ? (
-                <div
-                  className="achievements__item-points"
-                  title={t("achievement_earn_points", {
-                    points: achievement.points,
-                  })}
-                >
-                  <HydraIcon className="achievements__item-points-icon" />
-                  <p className="achievements__item-points-value">
-                    {achievement.points}
-                  </p>
-                </div>
-              ) : (
-                <div
-                  className="achievements__item-points achievements__item-points--locked"
-                  title={t("achievement_earn_points", { points: "???" })}
-                >
-                  <HydraIcon className="achievements__item-points-icon" />
-                  <p className="achievements__item-points-value">???</p>
-                </div>
-              )}
+              {SHOW_ACHIEVEMENT_POINTS &&
+                (achievement.points != undefined ? (
+                  <div
+                    className="achievements__item-points"
+                    title={t("achievement_earn_points", {
+                      points: achievement.points,
+                    })}
+                  >
+                    <HydraIcon className="achievements__item-points-icon" />
+                    <p className="achievements__item-points-value">
+                      {achievement.points}
+                    </p>
+                  </div>
+                ) : (
+                  <div
+                    className="achievements__item-points achievements__item-points--locked"
+                    title={t("achievement_earn_points", { points: "???" })}
+                  >
+                    <HydraIcon className="achievements__item-points-icon" />
+                    <p className="achievements__item-points-value">???</p>
+                  </div>
+                ))}
               {achievement.unlockTime != null && (
                 <div
                   className="achievements__item-unlock-time"

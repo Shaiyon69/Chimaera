@@ -21,7 +21,10 @@ export function AchievementProgress({
     achievementCount,
     unlockedAchievementCount
   );
-  const safeMax = achievementCount || 1;
+  // Total is unknown when the catalogue never loaded (0) or is stale (below the unlocks).
+  const hasTotal =
+    achievementCount >= unlockedAchievementCount && achievementCount > 0;
+  const safeMax = hasTotal ? achievementCount : 1;
   const percentage = Math.round((unlockedAchievementCount / safeMax) * 100);
 
   const percentageClassName = `${classNamePrefix}__achievement-percentage`;
@@ -41,19 +44,18 @@ export function AchievementProgress({
             />
           )}
           <span className={`${classNamePrefix}__achievement-count`}>
-            {unlockedAchievementCount} / {achievementCount}
+            {hasTotal
+              ? `${unlockedAchievementCount} / ${achievementCount}`
+              : unlockedAchievementCount}
           </span>
         </div>
         <span className={className}>
-          {isCompleted ? (
-            <TrophyIcon size={trophyIconSize} />
-          ) : (
-            <>{percentage}%</>
-          )}
+          {isCompleted && <TrophyIcon size={trophyIconSize} />}
+          {!isCompleted && hasTotal && <>{percentage}%</>}
         </span>
       </div>
       <ProgressBar
-        now={unlockedAchievementCount}
+        now={hasTotal ? unlockedAchievementCount : 0}
         max={safeMax}
         label={label}
         completed={isCompleted}

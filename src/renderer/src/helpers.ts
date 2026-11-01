@@ -378,7 +378,8 @@ export const isGameCompleted = (
   unlockedAchievementCount?: number | null
 ): boolean => {
   if (!achievementCount) return false;
-  return (unlockedAchievementCount ?? 0) >= achievementCount;
+  // More unlocks than the total means the total is stale, not a completed game.
+  return (unlockedAchievementCount ?? 0) === achievementCount;
 };
 
 const SKU_REGION_FLAGS: Record<SkuRegion, string> = {

@@ -13,6 +13,7 @@ import type { ComparedAchievements } from "@types";
 import { Link, ProgressBar } from "@renderer/components";
 import { ComparedAchievementList } from "./compared-achievement-list";
 import { AchievementList } from "./achievement-list";
+import { SHOW_ACHIEVEMENT_POINTS } from "@shared";
 import { AchievementPanel } from "./achievement-panel";
 import { ComparedAchievementPanel } from "./compared-achievement-panel";
 import { RetroAchievementsConnectBanner } from "@renderer/components/retro-achievements-connect-banner/retro-achievements-connect-banner";
@@ -268,12 +269,16 @@ export function AchievementsContent({
 
         {otherUser ? (
           <>
-            <ComparedAchievementPanel achievements={comparedAchievements!} />
+            {SHOW_ACHIEVEMENT_POINTS && (
+              <ComparedAchievementPanel achievements={comparedAchievements!} />
+            )}
             <ComparedAchievementList achievements={comparedAchievements!} />
           </>
         ) : (
           <>
-            <AchievementPanel achievements={achievements!} />
+            {SHOW_ACHIEVEMENT_POINTS && (
+              <AchievementPanel achievements={achievements!} />
+            )}
             <AchievementList achievements={achievements!} />
           </>
         )}

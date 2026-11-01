@@ -5,6 +5,7 @@ import {
   MedalIcon,
 } from "@phosphor-icons/react";
 import type { UserAchievement } from "@types";
+import { SHOW_ACHIEVEMENT_POINTS } from "@shared";
 import cn from "classnames";
 import { useDate } from "../../../../hooks";
 import { FocusItem, Tooltip, Typography } from "../../../common";
@@ -100,7 +101,7 @@ export function AchievementRow({
             </span>
           ) : null}
 
-          {achievement.points != undefined ? (
+          {SHOW_ACHIEVEMENT_POINTS && achievement.points != undefined ? (
             <div
               className="game-achievements-row__points"
               title={`Earn ${achievement.points} points with this achievement`}
