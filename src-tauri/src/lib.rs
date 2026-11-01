@@ -7,10 +7,12 @@ mod achievement_popup;
 mod achievements;
 mod artwork;
 mod bundled_games;
+mod common_redist;
 mod debrid;
 mod download_sources;
 mod downloads;
 mod electron_import;
+mod extraction;
 mod file_system;
 mod game_installer;
 mod games;
@@ -29,7 +31,9 @@ mod save_backups;
 mod scan;
 mod screenshots;
 mod local_files;
+mod misc;
 mod notifications;
+mod processed_image;
 mod shop_details;
 mod shortcuts;
 mod steam_shortcuts;
@@ -37,6 +41,7 @@ mod store;
 mod torrent;
 mod torrenting;
 mod trackers;
+mod transfer;
 mod watcher;
 
 use serde_json::{json, Value};
@@ -139,6 +144,13 @@ pub fn run() {
                 .initialization_script(&process_script())
                 .build()?;
             let args: Vec<String> = std::env::args().collect();
+            // Started with Windows and asked to stay out of the way.
+            // shortcut: minimized, not hidden to the tray; the tray icon is not ported yet.
+            if args.iter().any(|a| a == misc::HIDDEN_ARG) {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.minimize();
+                }
+            }
             if let Some((shop, object_id)) = shortcuts::deep_link_arg(&args).and_then(shortcuts::run_target) {
                 let app = app.handle().clone();
                 tauri::async_runtime::spawn(async move { shortcuts::run_game(&app, &shop, &object_id).await });

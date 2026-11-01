@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, debrid, download_sources, downloads, file_system, game_installer, games, google_drive, hydra_api, installer, launch, launcher_import, library, notifications, save_backups, scan, screenshots, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
+use crate::{achievement_popup, achievements, artwork, bundled_games, common_redist, debrid, download_sources, downloads, extraction, file_system, game_installer, games, google_drive, hydra_api, installer, launch, launcher_import, library, misc, notifications, processed_image, save_backups, scan, screenshots, shop_details, shortcuts, steam_shortcuts, torrenting, trackers, transfer};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -295,6 +295,10 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let assets = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Assets");
             artwork::copy_custom_game_asset(&assets, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).map(|url| json!(url))
         }
+        "cleanupUnusedAssets" => {
+            let assets = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Assets");
+            artwork::cleanup_unused_assets(&app.state::<Store>(), &assets)
+        }
         "updateCustomGame" => {
             let game = artwork::update_custom_game(&app.state::<Store>(), args.first().unwrap_or(&Value::Null))?;
             app.emit("on-library-batch-complete", ()).map_err(|e| e.to_string())?;
@@ -494,6 +498,10 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             if let Some(limit) = patch.get("maxDownloadSpeedBytesPerSecond") {
                 downloads::apply_speed_limit(app, limit).await;
             }
+            if let Some(interface) = patch.get("torrentNetworkInterface") {
+                downloads::apply_network_interface(interface.as_str()).await;
+            }
+            // shortcut: Wine prefix pinning reacts to these preferences in Electron; it moves here with Linux support.
             app.emit("on-user-preferences-updated", [&updated]).map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }
@@ -512,6 +520,35 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "cleanupAchievementSouvenirSync" => Ok(json!({ "status": screenshots::idle_status(), "deletedCount": 0, "failedFilePaths": [] })),
         // Souvenir ids exist only on the Hydra server, which this build does not reach.
         "deleteAchievementSouvenir" => Ok(Value::Null),
+        "transferGameFiles" => Ok(transfer::transfer(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()).await),
+        "cancelGameTransfer" => {
+            transfer::cancel(shop(args), object_id(args));
+            Ok(Value::Null)
+        }
+        "pauseGameTransfer" | "resumeGameTransfer" => {
+            transfer::set_paused(shop(args), object_id(args), channel == "pauseGameTransfer");
+            Ok(Value::Null)
+        }
+        // Hydra Cloud saves: the Electron main process never registered these (the preload kept
+        // them after Hydra Cloud went away) and the renderer does not call them.
+        "syncGameCloudSave" | "syncGameCloudSaveFromModal" | "syncCloudSaveAfterCustomPathRebind" | "resolveCloudSaveConflict" => {
+            Err("cloud-save/unavailable: Hydra Cloud saves are not part of Chimaera; use save backups".into())
+        }
+        "extractGameDownload" => Ok(json!(extraction::start(app, shop(args), object_id(args), false))),
+        "autoLaunch" => misc::auto_launch(args.first().unwrap_or(&Value::Null)).map(|_| Value::Null),
+        "canInstallCommonRedist" => Ok(json!(common_redist::can_install(app))),
+        "installCommonRedist" => common_redist::install(app).map(|_| Value::Null),
+        "resetCommonRedistPreflight" => common_redist::reset_preflight(&app.state::<Store>()).map(|_| Value::Null),
+        "checkHomebrewFolderExists" => Ok(json!(misc::homebrew_folder_exists(app))),
+        "saveTempFile" => misc::save_temp_file(arg_str(args, 0).unwrap_or_default(), args.get(1).unwrap_or(&Value::Null)).map(|p| json!(p)),
+        "deleteTempFile" => {
+            misc::delete_temp_file(arg_str(args, 0).unwrap_or_default());
+            Ok(Value::Null)
+        }
+        "getNetworkInterfaces" => Ok(misc::network_interfaces()),
+        "getProcessedImage" => Ok(processed_image::get(app, arg_str(args, 0), args.get(1).unwrap_or(&Value::Null)).await),
+        // shortcut: Wine is not ported (Linux), and Windows has no default prefix.
+        "getDefaultWinePrefixSelectionPath" => Ok(Value::Null),
         "publishNewRepacksNotification" => {
             notifications::new_repacks(app, args.first().and_then(Value::as_i64).unwrap_or(0));
             Ok(Value::Null)

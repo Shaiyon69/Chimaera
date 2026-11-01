@@ -186,8 +186,8 @@ pub fn record_launch(game: Value, exe: &str, launch_options: Option<&str>, own_e
 }
 
 /// `openGame`.
-// shortcut: Windows-native only. Bundled games (Bloodborne, Horizon), Steam protocol launch,
-// the common-redist preflight and Linux Wine/umu/Proton are not ported; each lands with its milestone.
+// shortcut: Windows-native only. Bundled games (Bloodborne, Horizon), Steam protocol launch
+// and Linux Wine/umu/Proton are not ported; each lands with its milestone.
 pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_path: &str, launch_options: Option<&str>) -> Result<Value, String> {
     let store = app.state::<Store>();
     let key = game_key(shop, object_id);
@@ -211,6 +211,7 @@ pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_
 
     app.state::<LauncherStatuses>().clear(&key);
     open_launcher_window(app, shop, object_id)?;
+    crate::common_redist::preflight(app).await;
     tokio::time::sleep(std::time::Duration::from_millis(LAUNCH_DELAY_MS)).await;
 
     let launch = resolve_launch_command(&parsed, launch_options);

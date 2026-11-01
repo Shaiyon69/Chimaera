@@ -30,7 +30,7 @@ fastrand = "2"
 rusty-leveldb = "3"
 sha2 = "0.10"
 percent-encoding = "2"
-sysinfo = { version = "0.37", default-features = false, features = ["system", "disk"] }
+sysinfo = { version = "0.37", default-features = false, features = ["system", "disk", "network"] }
 tokio = { version = "1", features = ["time", "macros", "sync", "net", "io-util"] }
 base64 = "0.22"
 unicode-normalization = "0.1"
