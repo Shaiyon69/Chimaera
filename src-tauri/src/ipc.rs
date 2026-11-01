@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, common_redist, debrid, download_sources, downloads, extraction, file_system, game_installer, games, google_drive, hydra_api, installer, launch, launcher_import, library, misc, notifications, processed_image, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer};
+use crate::{achievement_popup, achievements, artwork, bundled_games, common_redist, debrid, download_sources, downloads, extraction, file_system, game_installer, games, google_drive, hydra_api, installer, launch, launcher_import, library, misc, notifications, processed_image, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -574,6 +574,8 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "getActiveRetroArchImport" => Ok(Value::Null),
         // Returns whether auto-install is on; the Tauri updater arrives with milestone F1.
         "checkForUpdates" => Ok(json!(false)),
+        "checkForUpdates" => Ok(updater::check(app)),
+        "restartAndInstallUpdate" => updater::restart_and_install(app),
         "getRandomGame" => library::random_steam250_game().await,
         "showOpenDialog" => file_system::open_dialog(app, window, args.first().unwrap_or(&Value::Null)).await,
         "showItemInFolder" => {
