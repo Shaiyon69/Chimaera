@@ -19,12 +19,15 @@ export const preloadChannels = (source) => {
   return channels;
 };
 
-// Handled channels: `"name" =>` match arms in the dispatcher, src-tauri/src/ipc.rs.
+// Handled channels: `"name" =>` and `"a" | "b" =>` match arms in the dispatcher,
+// src-tauri/src/ipc.rs.
 export const rustChannels = (sources) => {
   const channels = new Set();
   for (const source of sources)
-    for (const m of source.matchAll(/^\s*"([A-Za-z0-9_-]+)"\s*=>/gm))
-      channels.add(m[1]);
+    for (const m of source.matchAll(
+      /^\s*("[A-Za-z0-9_-]+"(?:\s*\|\s*"[A-Za-z0-9_-]+")*)\s*=>/gm
+    ))
+      for (const c of m[1].matchAll(/"([^"]+)"/g)) channels.add(c[1]);
   return channels;
 };
 

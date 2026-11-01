@@ -26,4 +26,13 @@ describe("tauri parity", () => {
     const rust = `match channel {\n  "ping" => Ok(json!("pong")),\n  "getVersion" => x,\n  _ => Err(format!("not ported")),\n}`;
     assert.deepEqual([...rustChannels([rust])].sort(), ["getVersion", "ping"]);
   });
+
+  it("reads every pattern of an or-arm", () => {
+    const rust = `match channel {
+  "a" | "b" | "c" => {
+    let s = "d" | 1;
+  }
+}`;
+    assert.deepEqual([...rustChannels([rust])].sort(), ["a", "b", "c"]);
+  });
 });
