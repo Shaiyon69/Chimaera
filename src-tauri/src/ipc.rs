@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, download_sources, downloads, file_system, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
+use crate::{achievement_popup, achievements, artwork, debrid, download_sources, downloads, file_system, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -403,6 +403,14 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let index = args.get(3).and_then(Value::as_i64);
             downloads::move_placement(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default(), index).await.map(|ok| json!(ok))
         }
+        "getDebridFiles" => {
+            let provider = args.get(1).and_then(Value::as_i64).unwrap_or(-1);
+            Ok(debrid::files(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default(), provider).await)
+        }
+        "authenticateRealDebrid" => debrid::authenticate(debrid::REAL_DEBRID, arg_str(args, 0).unwrap_or_default()).await,
+        "authenticateTorBox" => debrid::authenticate(debrid::TORBOX, arg_str(args, 0).unwrap_or_default()).await,
+        "authenticateAllDebrid" => debrid::authenticate(debrid::ALL_DEBRID, arg_str(args, 0).unwrap_or_default()).await,
+        "authenticatePremiumize" => debrid::authenticate(debrid::PREMIUMIZE, arg_str(args, 0).unwrap_or_default()).await,
         "getBundledGameSetup" => bundled_games::setup(app, arg_str(args, 0).unwrap_or_default()),
         "getUnlockedAchievements" => achievements::get_unlocked_achievements(app, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).await,
         "resetGameAchievements" => achievements::reset(app, shop(args), object_id(args)).await.map(|_| Value::Null),
