@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, common_redist, debrid, download_sources, downloads, extraction, file_system, game_installer, games, google_drive, hydra_api, installer, launch, launcher_import, library, misc, notifications, processed_image, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, misc, notifications, processed_image, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -364,6 +364,9 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             Ok(Value::Null)
         }
         "openMainWindow" => {
+            if big_picture::focus_if_open(app) {
+                return Ok(Value::Null);
+            }
             if let Some(main) = app.get_webview_window("main") {
                 let _ = main.show();
                 let _ = main.unminimize();
@@ -371,6 +374,8 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             }
             Ok(Value::Null)
         }
+        "openBigPictureWindow" => big_picture::open(app).map(|_| Value::Null),
+        "executeSystemPowerAction" => big_picture::execute_power_action(window.label(), args.first().unwrap_or(&Value::Null)).await.map(|_| Value::Null),
         "isMainWindowOpen" => Ok(json!(app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false)))),
         "getImageDataUrl" => Ok(launch::image_data_url(arg_str(args, 0).unwrap_or_default()).await),
         // null = "no still poster", so the renderer shows the original cover.
@@ -547,6 +552,22 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         // them after Hydra Cloud went away) and the renderer does not call them.
         "syncGameCloudSave" | "syncGameCloudSaveFromModal" | "syncCloudSaveAfterCustomPathRebind" | "resolveCloudSaveConflict" => {
             Err("cloud-save/unavailable: Hydra Cloud saves are not part of Chimaera; use save backups".into())
+        }
+        "importHydraBackup" => {
+            let root = save_backups::data_dir(app, "hydra-backup")?;
+            let picked = file_system::open_dialog(app, window, &json!({ "properties": ["openDirectory"], "defaultPath": root })).await?;
+            match picked["filePaths"][0].as_str() {
+                Some(dir) if picked["canceled"] != json!(true) => hydra_backup::import(app, std::path::Path::new(dir)).await,
+                _ => Ok(Value::Null),
+            }
+        }
+        "getHydraDeckyPluginInfo" => decky::info(app).await,
+        "installHydraDeckyPlugin" => Ok(decky::install(app).await),
+        "openHydraBackupsFolder" => {
+            let dir = save_backups::data_dir(app, "hydra-backup")?;
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())?;
+            Ok(Value::Null)
         }
         "extractGameDownload" => Ok(json!(extraction::start(app, shop(args), object_id(args), false))),
         "autoLaunch" => misc::auto_launch(args.first().unwrap_or(&Value::Null)).map(|_| Value::Null),

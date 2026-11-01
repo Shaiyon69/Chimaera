@@ -29,7 +29,7 @@ pub fn decode_value(raw: &[u8]) -> Value {
     serde_json::from_str(&text).unwrap_or_else(|_| Value::String(text.into_owned()))
 }
 
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;

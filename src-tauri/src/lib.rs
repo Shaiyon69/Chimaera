@@ -6,9 +6,11 @@ mod achievement_files;
 mod achievement_popup;
 mod achievements;
 mod artwork;
+mod big_picture;
 mod bundled_games;
 mod common_redist;
 mod debrid;
+mod decky;
 mod download_sources;
 mod downloads;
 mod electron_import;
@@ -20,6 +22,7 @@ mod google_drive;
 mod hosters;
 mod http_download;
 mod hydra_api;
+mod hydra_backup;
 mod i18n;
 mod image_cache;
 mod installer;
@@ -140,14 +143,19 @@ pub fn run() {
             app.manage(steam::SteamSync::default());
             // Same size and chrome as WindowManager.createMainWindow: the renderer
             // draws its own title bar and window buttons.
+            let args: Vec<String> = std::env::args().collect();
+            let launch_big_picture = big_picture::should_launch_in(&app.state::<store::Store>(), &args);
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("tauri.html".into()))
                 .title("Chimaera")
+                .visible(!launch_big_picture)
                 .inner_size(1200.0, 860.0)
                 .min_inner_size(1024.0, 600.0)
                 .decorations(false)
                 .initialization_script(&process_script())
                 .build()?;
-            let args: Vec<String> = std::env::args().collect();
+            if launch_big_picture {
+                big_picture::open(app.handle())?;
+            }
             // Started with Windows and asked to stay out of the way.
             // shortcut: minimized, not hidden to the tray; the tray icon is not ported yet.
             if args.iter().any(|a| a == misc::HIDDEN_ARG) {

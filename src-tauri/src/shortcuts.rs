@@ -44,6 +44,9 @@ fn prefers_hidden_on_game_start(app: &AppHandle) -> bool {
 }
 
 fn focus_main(app: &AppHandle) {
+    if crate::big_picture::focus_if_open(app) {
+        return;
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
