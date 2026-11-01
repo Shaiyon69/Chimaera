@@ -40,6 +40,7 @@ mod local_files;
 mod misc;
 mod notifications;
 mod processed_image;
+mod retro_achievements;
 mod shop_details;
 mod shortcuts;
 mod steam;

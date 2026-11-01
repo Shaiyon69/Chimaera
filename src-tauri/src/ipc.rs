@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, emulators, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, messapp_keys, misc, notifications, processed_image, profile, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, emulators, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, messapp_keys, misc, notifications, processed_image, profile, retro_achievements, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -105,6 +105,21 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "clearMessappKey" => messapp_keys::clear(arg_str(args, 0).unwrap_or_default()).await.map(|_| Value::Null),
         // The compare route is another user's Hydra data, which local mode always blocks (same error as Electron).
         "getComparedUnlockedAchievements" => Err("user not logged in".into()),
+        "getRetroAchievementsAchievements" => retro_achievements::get_achievements(app, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default(), args.get(2).and_then(Value::as_i64)).await,
+        "resetRetroAchievementsAchievements" => retro_achievements::reset(app, args.first().and_then(Value::as_bool).unwrap_or(false)).map(|_| Value::Null),
+        "openRetroAchievementsConnectionWindow" => retro_achievements::open_window(app).map(|_| Value::Null),
+        "minimizeRetroAchievementsConnectionWindow" => {
+            retro_achievements::minimize_window(app);
+            Ok(Value::Null)
+        }
+        "closeRetroAchievementsConnectionWindow" => {
+            retro_achievements::close_window(app);
+            Ok(Value::Null)
+        }
+        "completeRetroAchievementsConnectionWindow" => {
+            retro_achievements::complete_window(app);
+            Ok(Value::Null)
+        }
         // Electron tells the download orchestrator and souvenir worker; neither exists here yet (F4, F6).
         "updateNetworkStatus" => Ok(Value::Null),
         "getLibrary" => {
