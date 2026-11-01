@@ -35,6 +35,8 @@ unicode-normalization = "0.1"
 crc32fast = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico", "webp", "gif"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+serde_yaml = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 lnk = "0.6"

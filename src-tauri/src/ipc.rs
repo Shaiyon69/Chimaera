@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, debrid, download_sources, downloads, file_system, game_installer, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
+use crate::{achievement_popup, achievements, artwork, bundled_games, debrid, download_sources, downloads, file_system, game_installer, games, hydra_api, installer, launch, launcher_import, library, save_backups, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -444,6 +444,29 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "updateAchievementCustomNotificationWindow" => {
             achievement_popup::dispose(app);
             Ok(Value::Null)
+        }
+        "getGameSaveFolder" => Ok(save_backups::save_folder(app, object_id(args)).await),
+        "listLocalSaveBackups" => Ok(json!(save_backups::list_in(&save_backups::game_dir(app, shop(args), object_id(args))?))),
+        "createLocalSaveBackup" => save_backups::create(app, shop(args), object_id(args), arg_str(args, 2), false).await,
+        "deleteLocalSaveBackup" => save_backups::delete_in(&save_backups::game_dir(app, shop(args), object_id(args))?, arg_str(args, 2).unwrap_or_default()).map(|_| Value::Null),
+        "restoreLocalSaveBackup" => save_backups::restore(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()).await.map(|_| Value::Null),
+        "openLocalSaveBackupsFolder" => {
+            let dir = save_backups::game_dir(app, shop(args), object_id(args))?;
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())?;
+            Ok(Value::Null)
+        }
+        "getSaveBackupsDir" => save_backups::backups_dir(app).map(|dir| json!(dir)),
+        "selectSaveBackupsDir" => {
+            let current = save_backups::backups_dir(app)?;
+            let picked = file_system::open_dialog(app, window, &json!({ "properties": ["openDirectory", "createDirectory"], "defaultPath": current })).await?;
+            match picked["filePaths"][0].as_str() {
+                Some(dir) => {
+                    save_backups::set_backups_dir(&app.state::<Store>(), dir)?;
+                    Ok(json!(dir))
+                }
+                None => Ok(Value::Null),
+            }
         }
         "getUserPreferences" => app.state::<Store>().get("", "userPreferences"),
         "updateUserPreferences" => {

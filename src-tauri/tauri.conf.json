@@ -21,6 +21,8 @@
     "resources": {
       "../resources/bloodborne": "bloodborne",
       "../resources/horizon": "horizon",
+      "../ludusavi/ludusavi.exe": "ludusavi/ludusavi.exe",
+      "../ludusavi/config.yaml": "ludusavi/config.yaml",
       "../native/torrent-bridge/prebuilt/x64-windows-static/bin/hydra_torrent_bridge.dll": "hydra_torrent_bridge.dll"
     },
     "icon": [
