@@ -1,4 +1,3 @@
-import { ImageIcon } from "@primer/octicons-react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { cachedImage } from "@shared";
@@ -9,6 +8,7 @@ import {
   useAppSelector,
   useCoverPoster,
 } from "@renderer/hooks";
+import { ArtFallback } from "../art-fallback/art-fallback";
 import { getVerticalCoverCardImageSources } from "./vertical-cover-card-image-sources";
 
 import "./vertical-cover-card.scss";
@@ -80,7 +80,7 @@ export function VerticalCoverCard({
     if (!displayCoverUrl) {
       return (
         <div className="vertical-cover-card__placeholder">
-          <ImageIcon size={48} />
+          <ArtFallback title={gameTitle} />
         </div>
       );
     }

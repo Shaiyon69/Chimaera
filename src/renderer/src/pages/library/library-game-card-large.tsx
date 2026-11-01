@@ -14,7 +14,11 @@ import {
   resolveClassicsBadge,
   shouldShowSteamLibraryBadge,
 } from "@renderer/helpers";
-import { AchievementProgress, SteamLibraryBadge } from "@renderer/components";
+import {
+  AchievementProgress,
+  ArtFallback,
+  SteamLibraryBadge,
+} from "@renderer/components";
 import { GameVisibilityBadge } from "@renderer/components/game-visibility-badge/game-visibility-badge";
 import {
   cachedImage,
@@ -194,6 +198,7 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
   );
 
   const [heroIndex, setHeroIndex] = useState(0);
+  const [heroFailed, setHeroFailed] = useState(false);
 
   const [unlockedAchievementsCount, setUnlockedAchievementsCount] = useState(
     game.unlockedAchievementCount ?? 0
@@ -201,6 +206,7 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
 
   useEffect(() => {
     setHeroIndex(0);
+    setHeroFailed(false);
   }, [
     game.objectId,
     game.customHeroImageUrl,
@@ -253,6 +259,8 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
     img.onerror = () => {
       if (heroIndex < heroSources.length - 1) {
         setHeroIndex((prev) => prev + 1);
+      } else {
+        setHeroFailed(true);
       }
     };
 
@@ -307,6 +315,8 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
   }, [renderClassicsBlurred, activeHeroCandidate, displayHeroSource]);
 
   const logoImage = cachedImage(game.customLogoImageUrl ?? game.logoImageUrl);
+  const [logoFailed, setLogoFailed] = useState(false);
+  useEffect(() => setLogoFailed(false), [logoImage]);
 
   const { label: classicsPlatformLabel, icon: classicsEmulatorIcon } =
     resolveClassicsBadge(
@@ -337,6 +347,9 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
         className="library-game-card-large__background"
         style={backgroundStyle}
       />
+      {(heroFailed || heroSources.length === 0) && (
+        <ArtFallback title={game.title} variant="banner" />
+      )}
       {usesAnimatedHeroLayer && animatedHeroSource && (
         <img
           src={animatedHeroSource}
@@ -426,11 +439,12 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
         </div>
 
         <div className="library-game-card-large__logo-container">
-          {logoImage ? (
+          {logoImage && !logoFailed ? (
             <img
               src={logoImage}
               alt={game.title}
               className="library-game-card-large__logo"
+              onError={() => setLogoFailed(true)}
             />
           ) : (
             <h3 className="library-game-card-large__title">{game.title}</h3>
@@ -442,10 +456,7 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
             ((game.achievementCount ?? 0) > 0 ||
               unlockedAchievementsCount > 0) && (
               <AchievementProgress
-                achievementCount={Math.max(
-                  game.achievementCount ?? 0,
-                  unlockedAchievementsCount
-                )}
+                achievementCount={game.achievementCount ?? 0}
                 unlockedAchievementCount={unlockedAchievementsCount}
                 classNamePrefix="library-game-card-large"
                 label={`${game.title} achievements`}

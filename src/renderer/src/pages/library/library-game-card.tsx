@@ -14,14 +14,17 @@ import {
   resolveClassicsBadge,
   shouldShowSteamLibraryBadge,
 } from "@renderer/helpers";
-import { AchievementProgress, SteamLibraryBadge } from "@renderer/components";
+import {
+  AchievementProgress,
+  ArtFallback,
+  SteamLibraryBadge,
+} from "@renderer/components";
 import { GameVisibilityBadge } from "@renderer/components/game-visibility-badge/game-visibility-badge";
 import { memo, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ClockIcon,
   AlertFillIcon,
-  ImageIcon,
   CheckCircleFillIcon,
 } from "@primer/octicons-react";
 import {
@@ -79,7 +82,13 @@ export const LibraryGameCard = memo(function LibraryGameCard({
     { url: game.coverImageUrl, isChosenCover: hasPickedCover }, // Level 1
     { url: game.libraryImageUrl, isChosenCover: false }, // Level 2
     { url: game.iconUrl, isChosenCover: false }, // Level 3
-  ].filter(({ url }) => url && url.trim() !== "");
+  ].filter(
+    // Steam games share one URL for cover and icon; a repeated src never fires a second onError.
+    ({ url }, index, all) =>
+      url &&
+      url.trim() !== "" &&
+      all.findIndex((other) => other.url === url) === index
+  );
 
   const sources = candidates.map(({ url }) => url);
 
@@ -184,7 +193,7 @@ export const LibraryGameCard = memo(function LibraryGameCard({
     if (imageError || !activeImageSource) {
       return (
         <div className="library-game-card__cover-placeholder">
-          <ImageIcon size={48} />
+          <ArtFallback title={game.title} />
         </div>
       );
     }
@@ -326,10 +335,7 @@ export const LibraryGameCard = memo(function LibraryGameCard({
           ((game.achievementCount ?? 0) > 0 ||
             (game.unlockedAchievementCount ?? 0) > 0) && (
             <AchievementProgress
-              achievementCount={Math.max(
-                game.achievementCount ?? 0,
-                game.unlockedAchievementCount ?? 0
-              )}
+              achievementCount={game.achievementCount ?? 0}
               unlockedAchievementCount={game.unlockedAchievementCount ?? 0}
               classNamePrefix="library-game-card"
               label={`${game.title} achievements`}

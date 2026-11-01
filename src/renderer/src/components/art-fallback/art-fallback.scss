@@ -1,0 +1,76 @@
+.art-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+  color: var(--text);
+  background:
+    radial-gradient(
+      ellipse at 50% 38%,
+      color-mix(in srgb, var(--accent) 22%, transparent) 0%,
+      transparent 62%
+    ),
+    var(--bg);
+  container-type: size;
+
+  &__frame {
+    position: absolute;
+    inset: 7%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6cqmin;
+    padding: 8%;
+    border: 1px solid rgb(255 255 255 / 0.22);
+    border-radius: 4px;
+    // Second hairline gives the double tarot border.
+    outline: 1px solid rgb(255 255 255 / 0.1);
+    outline-offset: 4px;
+    text-align: center;
+  }
+
+  &__star {
+    color: var(--accent-text);
+    font-size: 9cqmin;
+    line-height: 1;
+  }
+
+  &__title {
+    display: -webkit-box;
+    max-width: 100%;
+    overflow: hidden;
+    font-size: clamp(11px, 8cqmin, 22px);
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  &__rule {
+    width: 30%;
+    height: 1px;
+    background: rgb(255 255 255 / 0.22);
+  }
+
+  &__brand {
+    color: var(--muted);
+    font-size: clamp(9px, 4.5cqmin, 13px);
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+  }
+
+  &--banner &__frame {
+    inset: 10% 6%;
+    gap: 4cqmin;
+  }
+
+  // Banners sit under a card that already prints the title or logo.
+  &--banner &__title,
+  &--banner &__rule {
+    display: none;
+  }
+}
