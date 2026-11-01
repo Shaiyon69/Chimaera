@@ -48,7 +48,10 @@ const downloadLudusavi = async () => {
     await fs.promises.mkdir(targetPath, { recursive: true });
 
     if (process.platform === "win32") {
-      await exec(`npx extract-zip ${file} ${targetPath}`);
+      // extract-zip truncated ludusavi.exe (38 KB short, unrunnable); Windows' bsdtar reads zips intact.
+      // Full path: Git Bash puts GNU tar (no zip support) first on PATH.
+      const bsdtar = path.join(process.env.SystemRoot, "System32", "tar.exe");
+      await exec(`"${bsdtar}" -xf ${file} -C "${targetPath}"`);
     } else {
       await tar.x({
         file: file,
