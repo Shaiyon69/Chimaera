@@ -41,6 +41,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 tar = "0.4"
 serde_yaml = "0.9"
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "crypto-rust"] }
+chd = "0.4.0"
+flate2 = "1.1.10"
+regex = "1.13.1"
 
 [target.'cfg(windows)'.dependencies]
 lnk = "0.6"

@@ -16,8 +16,8 @@ pub struct Known {
     pub system: &'static str,
     pub binary: &'static str,
     pub display_name: &'static str,
-    linux_names: &'static [&'static str],
-    windows_names: &'static [&'static str],
+    pub(crate) linux_names: &'static [&'static str],
+    pub(crate) windows_names: &'static [&'static str],
     version_flags: &'static [&'static str],
     version_probe_off_on_windows: bool,
     pub rom_extensions: &'static [&'static str],
@@ -78,6 +78,18 @@ pub const KNOWN: [Known; 5] = [
         rom_extensions: &[".iso", ".gcm", ".bin", ".rvz", ".wia", ".gcz", ".ciso", ".tgc", ".wbfs", ".wad"],
     },
 ];
+
+/// RETROARCH_DETECTABLE. Kept out of `KNOWN`: RetroArch has its own `retroarch` store, not an `emulators` entry.
+pub const RETROARCH: Known = Known {
+    system: "retroarch",
+    binary: "retroarch",
+    display_name: "RetroArch",
+    linux_names: &["retroarch", "RetroArch"],
+    windows_names: &["retroarch.exe"],
+    version_flags: &["--version"],
+    version_probe_off_on_windows: false,
+    rom_extensions: &[],
+};
 
 pub fn known(system: &str) -> Result<&'static Known, String> {
     KNOWN.iter().find(|k| k.system == system).ok_or_else(|| format!("Unknown emulator system: {system}"))
@@ -197,7 +209,7 @@ pub fn is_valid_for(path: &Path, k: &Known) -> bool {
     is_valid_executable(path) && name_expected(path, k)
 }
 
-fn no_window(command: &mut Command) -> &mut Command {
+pub(crate) fn no_window(command: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

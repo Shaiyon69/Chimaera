@@ -118,12 +118,14 @@ pub fn credited_keys(games: &[(String, Value)], running: &HashSet<String>) -> Ha
 
 // shortcut: no Steam playtime policy, Hydra sync, achievement watcher or souvenir capture on exit;
 // local playtime always counts. Those hook in with Steam (F7) and achievements (F6).
-fn tick(app: &AppHandle, running: &HashSet<String>, was_idle: &mut bool) -> Result<(), String> {
+fn tick(app: &AppHandle, running: &HashSet<String>, pids: &HashSet<u32>, was_idle: &mut bool) -> Result<(), String> {
     let store = app.state::<Store>();
     let sessions = app.state::<Sessions>();
     let now = Instant::now();
     let games = store.entries("games")?;
-    let credited = credited_keys(&games, running);
+    let mut credited = credited_keys(&games, running);
+    // Classics games have no exe of their own: their emulator's PID stands in.
+    credited.extend(app.state::<crate::classics_launch::EmulatorPids>().alive(pids));
     for (key, game) in games {
         if game["isDeleted"].as_bool().unwrap_or(false) {
             continue;
@@ -181,7 +183,8 @@ pub fn spawn(app: AppHandle) {
         loop {
             tokio::time::sleep(INTERVAL).await;
             let running = running_exes(&mut system);
-            if let Err(error) = tick(&app, &running, &mut was_idle) {
+            let pids: HashSet<u32> = system.processes().keys().map(|p| p.as_u32()).collect();
+            if let Err(error) = tick(&app, &running, &pids, &mut was_idle) {
                 eprintln!("[watcher] tick failed: {error}");
             }
         }

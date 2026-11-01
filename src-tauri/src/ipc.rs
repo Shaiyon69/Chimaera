@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, emulators, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -432,7 +432,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         // null = "no still poster", so the renderer shows the original cover.
         // shortcut: animated covers play instead of a still first frame until the local: protocol (F1) can serve built posters.
         "getCoverPoster" => Ok(Value::Null),
-        "getClassicsImportStatus" => Ok(json!(false)),
+        "getClassicsImportStatus" => Ok(json!(app.state::<classics_import::ClassicsImports>().is_importing())),
         "getGameShopDetails" => {
             let (object_id, shop, language) = (arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default(), arg_str(args, 2).unwrap_or("en"));
             shop_details::get_game_shop_details(app, object_id, shop, language).await
@@ -639,11 +639,51 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             notifications::new_repacks(app, args.first().and_then(Value::as_i64).unwrap_or(0));
             Ok(Value::Null)
         }
-        // No remote library sync, classics import or RetroArch import exists in this
-        // build yet, so these report their real idle state.
+        // No remote library sync exists in this build yet, so it reports its real idle state.
         "getRemoteLibrarySyncState" => Ok(json!(false)),
-        "getActiveClassicsImport" => Ok(Value::Null),
-        "getActiveRetroArchImport" => Ok(Value::Null),
+        "getActiveClassicsImport" => Ok(app.state::<classics_import::ClassicsImports>().active()),
+        "getActiveRetroArchImport" => Ok(app.state::<retroarch::RetroArchImports>().active()),
+        "getRetroArchConfig" => retroarch::config_checked(&app.state::<Store>()),
+        "checkRetroArchExecutable" => {
+            let config = retroarch::get_config(&app.state::<Store>())?;
+            Ok(json!({ "exists": config["executablePath"].as_str().is_some_and(|p| std::path::Path::new(p).exists()) }))
+        }
+        "removeRetroArch" => retroarch::remove(&app.state::<Store>()),
+        "setRetroArchCoresDir" => {
+            let managed = save_backups::data_dir(app, "retroarch")?;
+            retroarch::set_cores_dir(&app.state::<Store>(), &managed, arg_str(args, 0))
+        }
+        "detectRetroArch" | "setRetroArchExecutablePath" | "previewRetroArchExecutable" | "previewRetroArchRomFolder" => {
+            // Version probes, folder walks and archive listings block for seconds.
+            let (app, channel, args) = (app.clone(), channel.to_string(), args.to_vec());
+            tauri::async_runtime::spawn_blocking(move || match channel.as_str() {
+                "detectRetroArch" => retroarch::detect_and_save(&app),
+                "setRetroArchExecutablePath" => retroarch::set_executable_path(&app, arg_str(&args, 0)),
+                "previewRetroArchExecutable" => retroarch::preview_executable(&app, arg_str(&args, 0)),
+                _ => Ok(retroarch::preview_folder(&app, arg_str(&args, 0).unwrap_or_default(), args.get(1).and_then(Value::as_bool).unwrap_or(false))),
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        "addRetroArchRomFolder" => retroarch::add_folder(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default(), args.get(1).and_then(Value::as_bool).unwrap_or(false)),
+        "changeRetroArchRomFolder" => retroarch::change_folder(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()),
+        "removeRetroArchRomFolder" => retroarch::remove_folder(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default()),
+        "toggleRetroArchSubfolders" => retroarch::toggle_subfolders(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default(), args.get(1).and_then(Value::as_bool).unwrap_or(false)),
+        "listRetroArchRoms" => retroarch::list_roms(&app.state::<Store>()),
+        "importRetroArchRoms" => {
+            let folders = classics_import::folders_arg(args.first().unwrap_or(&Value::Null));
+            let (request_id, _) = retroarch::start(app, folders, arg_str(args, 1).unwrap_or("en"));
+            Ok(json!({ "requestId": request_id }))
+        }
+        "cancelRetroArchImport" => {
+            app.state::<retroarch::RetroArchImports>().cancel(arg_str(args, 0).unwrap_or_default());
+            Ok(Value::Null)
+        }
+        "rescanRetroArch" => retroarch::rescan(app, arg_str(args, 0).unwrap_or("en")).await,
+        "getRetroArchInstallOptions" => Ok(retroarch::install_options().await),
+        "installRetroArch" => Ok(retroarch::install(app, arg_str(args, 0).unwrap_or_default()).await),
+        "installRetroArchCore" => Ok(retroarch::install_core(app, arg_str(args, 0).unwrap_or_default()).await),
+        "installAllRetroArchCores" => Ok(retroarch::install_all_cores(app).await),
         "openGameWinetricks" => {
             let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
             emulators::open_winetricks(&app.state::<Store>(), &app_data, shop(args), object_id(args)).map(Value::from)
@@ -678,6 +718,112 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
                     "setEmulatorExecutablePath" => emulators::set_executable_path(&store, k, arg_str(&args, 1)),
                     "previewEmulatorExecutable" => Ok(emulators::preview(k, arg_str(&args, 1), &dirs)),
                     _ => emulators::apply_detection(&store, k, emulators::detect(k, &dirs, true)),
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        "updateClassicsDisc" => classics_launch::update_disc(&app.state::<Store>(), shop(args), object_id(args), args.get(2).unwrap_or(&Value::Null)),
+        "openClassicsGame" => {
+            let force = args.get(3).and_then(Value::as_bool).unwrap_or(false);
+            classics_launch::open(app, shop(args), object_id(args), arg_str(args, 2), force).await.map(|_| Value::Null)
+        }
+        "checkEmulatorBios" => {
+            let (app, args) = (app.clone(), args.to_vec());
+            tauri::async_runtime::spawn_blocking(move || classics_launch::check_bios(&app.state::<Store>(), arg_str(&args, 0).unwrap_or_default(), arg_str(&args, 1), arg_str(&args, 2)))
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        "importLaunchboxRoms" => {
+            let folders = classics_import::folders_arg(args.get(1).unwrap_or(&Value::Null));
+            Ok(classics_import::start(app, arg_str(args, 0).unwrap_or_default(), folders, arg_str(args, 2).unwrap_or("en")))
+        }
+        "cancelLaunchboxImport" => {
+            app.state::<classics_import::ClassicsImports>().cancel(arg_str(args, 0).unwrap_or_default());
+            Ok(Value::Null)
+        }
+        "addRomFolder" => {
+            let (system, path) = (arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default());
+            let current = emulators::get_config(&app.state::<Store>(), system)?;
+            if current["romFolders"].as_array().into_iter().flatten().any(|f| f["path"].as_str() == Some(path)) {
+                return Ok(current);
+            }
+            let folder = classics_import::Folder { path: path.to_string(), scan_subfolders: args.get(2).and_then(Value::as_bool).unwrap_or(false) };
+            classics_import::import_and_config(app, system, vec![folder], arg_str(args, 3).unwrap_or("en")).await
+        }
+        "rescanEmulator" => {
+            let system = arg_str(args, 0).unwrap_or_default();
+            let store = app.state::<Store>();
+            let current = emulators::get_config(&store, system)?;
+            let folders: Vec<classics_import::Folder> = current["romFolders"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|f| Some(classics_import::Folder { path: f["path"].as_str()?.to_string(), scan_subfolders: f["scanSubfolders"].as_bool().unwrap_or(false) }))
+                .collect();
+            if folders.is_empty() {
+                return emulators::update_config(&store, system, classics_import::recompute_totals);
+            }
+            classics_import::import_and_config(app, system, folders, arg_str(args, 1).unwrap_or("en")).await
+        }
+        "registerRomFolder" => {
+            let scan_subfolders = args.get(2).and_then(Value::as_bool).unwrap_or(false);
+            classics_import::ensure_registered(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default(), scan_subfolders)
+        }
+        "removeRomFolder" => classics_import::remove_folder(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()),
+        "getEmulatorRomPaths" => classics_import::read_recursive_paths(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default()),
+        "addEmulatorRomPath" => classics_import::add_recursive_path(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()),
+        "getRpcs3DefaultSources" => classics_import::rpcs3_default_sources(&app.state::<Store>()),
+        "getRpcs3ConfigRootStatus" => rpcs3_root::status(&app.state::<Store>()),
+        "setRpcs3ConfigRoot" => rpcs3_root::set_root(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default()),
+        "checkPs3Firmware" => Ok(json!({ "installed": rpcs3_root::firmware_installed(arg_str(args, 0)) })),
+        "getEmulatorInstallOptions" => Ok(Value::Array(emulator_install::options(arg_str(args, 0).unwrap_or_default()).await)),
+        "installEmulator" => Ok(emulator_install::install(app, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).await),
+        "scanPs1Memcards" | "scanPs2Memcards" => {
+            let platform = if channel == "scanPs1Memcards" { memcard_saves::Platform::Ps1 } else { memcard_saves::Platform::Ps2 };
+            Ok(memcard_saves::start_scan(app, platform, args.first().cloned().unwrap_or(Value::Null)))
+        }
+        "cancelPs1MemcardScan" | "cancelPs2MemcardScan" => {
+            memcard_saves::cancel_scan(arg_str(args, 0).unwrap_or_default());
+            Ok(Value::Null)
+        }
+        "listPs1MemcardSaves" => memcard_saves::list(&app.state::<Store>(), memcard_saves::Platform::Ps1),
+        "listPs2MemcardSaves" => memcard_saves::list(&app.state::<Store>(), memcard_saves::Platform::Ps2),
+        "forgetPs1MemcardSave" | "forgetPs2MemcardSave" => {
+            let platform = if channel == "forgetPs1MemcardSave" { memcard_saves::Platform::Ps1 } else { memcard_saves::Platform::Ps2 };
+            memcard_saves::forget_save(&app.state::<Store>(), platform, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).map(|_| Value::Null)
+        }
+        "forgetPs1MemcardCard" | "forgetPs2MemcardCard" => {
+            let platform = if channel == "forgetPs1MemcardCard" { memcard_saves::Platform::Ps1 } else { memcard_saves::Platform::Ps2 };
+            memcard_saves::forget_card(&app.state::<Store>(), platform, arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null)
+        }
+        "listLocalEmulationSaves" => Ok(file_saves::list(app, arg_str(args, 0).unwrap_or_default()).await),
+        "inspectMemcard" => {
+            let (platform, card) = (arg_str(args, 0).unwrap_or_default().to_string(), arg_str(args, 1).unwrap_or_default().to_string());
+            tauri::async_runtime::spawn_blocking(move || json!(memcard_saves::inspect(&platform, &card))).await.map_err(|e| e.to_string())
+        }
+        "exportPs1Save" | "exportPs2Save" => {
+            // The save dialog blocks until the user answers.
+            let platform = if channel == "exportPs1Save" { memcard_saves::Platform::Ps1 } else { memcard_saves::Platform::Ps2 };
+            let (app, args) = (app.clone(), args.to_vec());
+            tauri::async_runtime::spawn_blocking(move || {
+                memcard_saves::export(&app, platform, arg_str(&args, 0).unwrap_or_default(), arg_str(&args, 1).unwrap_or_default(), arg_str(&args, 2).unwrap_or_default())
+            })
+            .await
+            .map_err(|e| e.to_string())
+        }
+        "listEmulatorRoms" => classics_import::list_roms(&app.state::<Store>(), arg_str(args, 0).unwrap_or_default()),
+        "previewRomFolder" | "toggleRomFolderSubfolders" => {
+            // Folder walks and disc reads block.
+            let (app, channel, args) = (app.clone(), channel.to_string(), args.to_vec());
+            tauri::async_runtime::spawn_blocking(move || {
+                let (system, target) = (arg_str(&args, 0).unwrap_or_default(), arg_str(&args, 1).unwrap_or_default());
+                let scan_subfolders = args.get(2).and_then(Value::as_bool).unwrap_or(false);
+                if channel == "previewRomFolder" {
+                    emulators::known(system)?;
+                    classics_import::preview_folder(system, target, scan_subfolders)
+                } else {
+                    classics_import::toggle_subfolders(&app.state::<Store>(), system, target, scan_subfolders)
                 }
             })
             .await

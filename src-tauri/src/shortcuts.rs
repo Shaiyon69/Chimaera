@@ -68,12 +68,29 @@ pub fn handle_second_instance(app: &AppHandle, args: &[String]) {
     }
 }
 
-/// handleRunGame for shop games.
-// shortcut: classics (launchbox) runs are skipped until classics are ported.
+/// handleRunGame: classics start through their emulator, shop games through their exe.
 pub async fn run_game(app: &AppHandle, shop: &str, object_id: &str) {
-    let game = app.state::<Store>().get("games", &game_key(shop, object_id)).unwrap_or(Value::Null);
-    let Some(exe) = game["executablePath"].as_str().filter(|_| shop != "launchbox") else {
-        eprintln!("[deep-link] cannot run {shop}:{object_id}: not in the library, a classic, or no executable");
+    let store = app.state::<Store>();
+    let key = game_key(shop, object_id);
+    let mut game = store.get("games", &key).unwrap_or(Value::Null);
+    if shop == "launchbox" && game.is_object() {
+        // lookupCachedPlatform: older imports may only have the platform in the shop cache.
+        if game["platform"].as_str().is_none_or(str::is_empty) {
+            let prefix = format!("{key}:");
+            let cached = store.entries("gameShopCache").unwrap_or_default().into_iter().find_map(|(k, v)| v["platform"].as_str().filter(|_| k.starts_with(&prefix)).map(str::to_string));
+            if let Some(platform) = cached {
+                game["platform"] = Value::from(platform);
+                let _ = store.put("games", &key, &game);
+            }
+        }
+        if let Err(error) = crate::classics_launch::open(app, shop, object_id, None, false).await {
+            eprintln!("[deep-link] failed to launch {shop}:{object_id}: {error}");
+            focus_main(app);
+        }
+        return;
+    }
+    let Some(exe) = game["executablePath"].as_str() else {
+        eprintln!("[deep-link] cannot run {shop}:{object_id}: not in the library or no executable");
         return;
     };
     if let Err(error) = crate::launch::open_game(app, shop, object_id, exe, game["launchOptions"].as_str()).await {
