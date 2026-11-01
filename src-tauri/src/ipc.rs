@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, debrid, download_sources, downloads, file_system, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
+use crate::{achievement_popup, achievements, artwork, bundled_games, debrid, download_sources, downloads, file_system, game_installer, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -180,6 +180,20 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let (download, root) = download_of(app, args)?;
             tauri::async_runtime::spawn_blocking(move || json!(installer::download_installer(&download, &root).is_some())).await.map_err(|e| e.to_string())
         }
+        "isSteamAppExecutable" => {
+            let (app_id, executable) = (arg_str(args, 0).unwrap_or_default().to_string(), arg_str(args, 1).unwrap_or_default().to_string());
+            tauri::async_runtime::spawn_blocking(move || {
+                let libraries = steam_shortcuts::steam_path().map(|s| scan::library_folders(&s)).unwrap_or_default();
+                json!(scan::is_app_executable(&libraries, &app_id, &executable))
+            })
+            .await
+            .map_err(|e| e.to_string())
+        }
+        "selectGameWinePrefix" => games::set_checked_path(&app.state::<Store>(), shop(args), object_id(args), "winePrefixPath", arg_str(args, 2), games::is_wine_prefix, "Invalid wine prefix path").map(|_| Value::Null),
+        "selectGameProtonPath" => games::set_checked_path(&app.state::<Store>(), shop(args), object_id(args), "protonPath", arg_str(args, 2), games::is_proton_dir, "Invalid proton path").map(|_| Value::Null),
+        "downloadGameArtwork" => artwork::download_game_artwork(arg_str(args, 0).unwrap_or_default()).await.map(|path| json!(path)),
+        "openGameInstaller" => game_installer::open(app, shop(args), object_id(args)).await.map(|ok| json!(ok)),
+        "recheckInstalledExecutable" => Ok(json!(game_installer::recheck(app, shop(args), object_id(args)).await)),
         "openGameInstallerPath" => {
             let (download, _) = download_of(app, args)?;
             // Like Electron, only a download with its own recorded path is revealed.

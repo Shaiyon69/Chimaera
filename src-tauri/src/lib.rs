@@ -12,6 +12,7 @@ mod download_sources;
 mod downloads;
 mod electron_import;
 mod file_system;
+mod game_installer;
 mod games;
 mod hosters;
 mod http_download;

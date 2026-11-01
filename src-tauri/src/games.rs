@@ -1,6 +1,8 @@
 //! Library mutations on `games/<shop>:<objectId>`, ported from src/main/events/library/.
 //! Chimaera runs in local mode, so the Hydra profile calls those handlers make are dropped.
 
+use std::path::Path;
+
 use serde_json::{json, Map, Value};
 
 use crate::library::iso_now;
@@ -284,6 +286,36 @@ pub fn set_tracking_paths(store: &Store, shop: &str, object_id: &str, paths: Vec
         game.insert("trackingExecutablePathsUpdatedAt".into(), at);
     })
     .map(|_| ())
+}
+
+/// selectGameWinePrefix / selectGameProtonPath: stores the real path when `valid` accepts it; no path clears the field.
+pub fn set_checked_path(store: &Store, shop: &str, object_id: &str, field: &'static str, path: Option<&str>, valid: fn(&Path) -> bool, error: &str) -> Result<(), String> {
+    let key = game_key(shop, object_id);
+    if store.get("games", &key)?.is_null() {
+        return Ok(());
+    }
+    let value = match path.filter(|p| !p.is_empty()) {
+        None => Value::Null,
+        Some(p) => {
+            let real = crate::achievement_files::real_path(Path::new(p)).ok_or_else(|| format!("{error}: {p} does not exist"))?;
+            if !valid(&real) {
+                return Err(error.into());
+            }
+            json!(real.to_string_lossy())
+        }
+    };
+    update(store, &key, set(field, value)).map(|_| ())
+}
+
+/// Wine.validatePrefix.
+pub fn is_wine_prefix(prefix: &Path) -> bool {
+    ["system.reg", "user.reg", "userdef.reg"].iter().all(|f| prefix.join(f).exists())
+        && ["dosdevices", "drive_c"].iter().all(|d| std::fs::symlink_metadata(prefix.join(d)).is_ok_and(|m| m.is_dir()))
+}
+
+/// Umu.isValidProtonPath.
+pub fn is_proton_dir(dir: &Path) -> bool {
+    dir.join("proton").exists() && dir.join("toolmanifest.vdf").exists()
 }
 
 /// `verifyExecutablePathInUse`: the first game (deleted ones included, as in Electron) using this exe.
