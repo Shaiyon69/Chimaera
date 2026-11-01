@@ -64,6 +64,7 @@ mod trackers;
 mod transfer;
 mod updater;
 mod watcher;
+mod webview_memory;
 
 use serde_json::{json, Value};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -171,7 +172,16 @@ pub fn run() {
                 .min_inner_size(1024.0, 600.0)
                 .decorations(false)
                 .initialization_script(&process_script())
-                .build()?;
+                .build()?
+                .on_window_event({
+                    let app = app.handle().clone();
+                    // Minimize, restore and hide all land here as Resized/Focused.
+                    move |event| {
+                        if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
+                            webview_memory::refresh(&app);
+                        }
+                    }
+                });
             if launch_big_picture {
                 big_picture::open(app.handle())?;
             }

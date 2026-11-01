@@ -67,9 +67,11 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
                 let _ = main.show();
                 let _ = main.set_focus();
             }
+            crate::webview_memory::refresh(&app);
         }
     });
     let _ = window.set_focus();
+    crate::webview_memory::refresh(window.app_handle());
     Ok(())
 }
 

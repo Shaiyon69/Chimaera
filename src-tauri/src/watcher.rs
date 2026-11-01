@@ -29,6 +29,10 @@ impl Sessions {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.lock().is_empty()
+    }
+
     /// getGamesRunning.
     pub fn running(&self) -> Value {
         let now = Instant::now();
@@ -149,11 +153,13 @@ fn tick(app: &AppHandle, running: &HashSet<String>, pids: &HashSet<u32>, was_idl
                         let _ = main.hide();
                     }
                 }
+                crate::webview_memory::refresh(app);
             }
             (false, Some(_)) => {
                 let session = all.remove(&key).unwrap();
                 drop(all);
                 close_session(&store, &key, session, now)?;
+                crate::webview_memory::refresh(app);
                 if game["automaticCloudSync"].as_bool().unwrap_or(false) {
                     let (app, shop, object_id) = (app.clone(), game["shop"].as_str().unwrap_or_default().to_string(), game["objectId"].as_str().unwrap_or_default().to_string());
                     tauri::async_runtime::spawn(async move {

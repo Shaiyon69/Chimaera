@@ -50,6 +50,9 @@ lnk = "0.6"
 winreg = "0.56"
 encoding_rs = "0.8"
 xcap = { version = "0.9", features = ["wgc"] }
+# Same versions wry uses; for the WebView2 memory target level (webview_memory.rs).
+webview2-com = "0.39"
+windows = "0.62"
 
 [profile.release]
 lto = true
