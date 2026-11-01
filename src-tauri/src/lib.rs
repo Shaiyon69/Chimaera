@@ -36,6 +36,7 @@ mod notifications;
 mod processed_image;
 mod shop_details;
 mod shortcuts;
+mod steam;
 mod steam_shortcuts;
 mod store;
 mod torrent;
@@ -134,6 +135,7 @@ pub fn run() {
             achievements::spawn(app.handle().clone());
             app.manage(downloads::Downloads::default());
             downloads::spawn(app.handle().clone());
+            app.manage(steam::SteamSync::default());
             // Same size and chrome as WindowManager.createMainWindow: the renderer
             // draws its own title bar and window buttons.
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("tauri.html".into()))
@@ -150,6 +152,14 @@ pub fn run() {
                 if let Some(main) = app.get_webview_window("main") {
                     let _ = main.minimize();
                 }
+            }
+            {
+                // After the window is up, so the renderer hears the sync progress.
+                let app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    steam::start_on_launch(&app);
+                });
             }
             if let Some((shop, object_id)) = shortcuts::deep_link_arg(&args).and_then(shortcuts::run_target) {
                 let app = app.handle().clone();

@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, bundled_games, common_redist, debrid, download_sources, downloads, extraction, file_system, game_installer, games, google_drive, hydra_api, installer, launch, launcher_import, library, misc, notifications, processed_image, save_backups, scan, screenshots, shop_details, shortcuts, steam_shortcuts, torrenting, trackers, transfer};
+use crate::{achievement_popup, achievements, artwork, bundled_games, common_redist, debrid, download_sources, downloads, extraction, file_system, game_installer, games, google_drive, hydra_api, installer, launch, launcher_import, library, misc, notifications, processed_image, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -180,6 +180,20 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let (download, root) = download_of(app, args)?;
             tauri::async_runtime::spawn_blocking(move || json!(installer::download_installer(&download, &root).is_some())).await.map_err(|e| e.to_string())
         }
+        "startSteamOAuth" => steam::start_login(app).map(|_| Value::Null),
+        "getSteamIntegrationStatus" => Ok(steam::integration_status(&app.state::<Store>())),
+        "disconnectSteam" => {
+            let delete_imported = args.first().and_then(Value::as_bool).unwrap_or(false);
+            steam::disconnect(app, delete_imported).await.map(|_| Value::Null)
+        }
+        "startSteamSync" => Ok(steam::start(app, "manual")),
+        "cancelSteamSync" => {
+            app.state::<steam::SteamSync>().cancel(app).await;
+            Ok(Value::Null)
+        }
+        "getSteamSyncState" => Ok(app.state::<steam::SteamSync>().state()),
+        "syncSteamGameOnGamePage" => Ok(json!(steam::sync_game_page(app, arg_str(args, 0).unwrap_or_default()))),
+        "installGameOnSteam" => steam::install_on_steam(app, arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null),
         "isSteamAppExecutable" => {
             let (app_id, executable) = (arg_str(args, 0).unwrap_or_default().to_string(), arg_str(args, 1).unwrap_or_default().to_string());
             tauri::async_runtime::spawn_blocking(move || {
