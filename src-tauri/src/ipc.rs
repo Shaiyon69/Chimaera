@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, download_sources, file_system, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts};
+use crate::{achievement_popup, achievements, artwork, download_sources, file_system, games, hydra_api, installer, launch, launcher_import, library, scan, shop_details, shortcuts, steam_shortcuts, torrenting, trackers};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -373,6 +373,11 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         }
         "getDownloadSourcesCheckBaseline" => download_sources::timestamp(&app.state::<Store>(), "downloadSourcesCheckBaseline"),
         "getDownloadSourcesSinceValue" => download_sources::timestamp(&app.state::<Store>(), "downloadSourcesSinceValue"),
+        "getTorrentFiles" => Ok(torrenting::get_torrent_files(app, arg_str(args, 0).unwrap_or_default()).await),
+        "saveGlobalTrackers" => {
+            let (manual, append_manual, append_url) = (args.first().unwrap_or(&Value::Null), args.get(2).and_then(Value::as_bool).unwrap_or(false), args.get(3).and_then(Value::as_bool).unwrap_or(false));
+            trackers::save(&app.state::<Store>(), manual, arg_str(args, 1), append_manual, append_url).map(|_| Value::Null)
+        }
         "getBundledGameSetup" => bundled_games::setup(app, arg_str(args, 0).unwrap_or_default()),
         "getUnlockedAchievements" => achievements::get_unlocked_achievements(app, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).await,
         "resetGameAchievements" => achievements::reset(app, shop(args), object_id(args)).await.map(|_| Value::Null),

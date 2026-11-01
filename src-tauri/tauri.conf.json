@@ -20,7 +20,8 @@
     "targets": ["nsis"],
     "resources": {
       "../resources/bloodborne": "bloodborne",
-      "../resources/horizon": "horizon"
+      "../resources/horizon": "horizon",
+      "../native/torrent-bridge/prebuilt/x64-windows-static/bin/hydra_torrent_bridge.dll": "hydra_torrent_bridge.dll"
     },
     "icon": [
       "icons/32x32.png",

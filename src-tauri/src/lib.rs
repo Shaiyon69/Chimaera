@@ -24,6 +24,9 @@ mod shop_details;
 mod shortcuts;
 mod steam_shortcuts;
 mod store;
+mod torrent;
+mod torrenting;
+mod trackers;
 mod watcher;
 
 use serde_json::{json, Value};
@@ -128,8 +131,14 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Chimaera");
+        .build(tauri::generate_context!())
+        .expect("error while running Chimaera")
+        .run(|_, event| {
+            // Close the libtorrent session cleanly so resume data and the port are released.
+            if let tauri::RunEvent::Exit = event {
+                tauri::async_runtime::block_on(torrent::shutdown());
+            }
+        });
 }
 
 #[cfg(test)]
