@@ -1,27 +1,15 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import {
-  PlusCircleIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-} from "@primer/octicons-react";
-import { Tooltip } from "react-tooltip";
+import { PlusCircleIcon } from "@primer/octicons-react";
 
-import {
-  Badge,
-  Button,
-  Modal,
-  TextField,
-  CheckboxField,
-  SteamIcon,
-} from "@renderer/components";
+import { Button, Modal, TextField, SteamIcon } from "@renderer/components";
 import type { DownloadSource, Game, GameRepack } from "@types";
 
 import { DownloadSettingsModal } from "./download-settings-modal";
 import { gameDetailsContext } from "@renderer/context";
 import { Downloader } from "@shared";
-import { orderBy } from "lodash-es";
+import { countBy, orderBy } from "lodash-es";
 import {
   useDate,
   useAppDispatch,
@@ -30,6 +18,7 @@ import {
 } from "@renderer/hooks";
 import { clearNewDownloadOptions } from "@renderer/features";
 import { levelDBService } from "@renderer/services/leveldb.service";
+import { logger } from "@renderer/logger";
 import {
   canDownloadOnSteam,
   getGameKey,
@@ -53,18 +42,29 @@ export interface RepacksModalProps {
   onClose: () => void;
 }
 
+type Availability = "online" | "partial" | "offline";
+
+const SKELETON_ROWS = 3;
+
+function getAvailability(repack: GameRepack): Availability {
+  const uris = Array.isArray(repack.uris) ? repack.uris : [];
+  const unavailable = new Set(repack.unavailableUris ?? []);
+  const availableCount = uris.filter((uri) => !unavailable.has(uri)).length;
+
+  if (availableCount === 0) return "offline";
+  if (availableCount === uris.length) return "online";
+  return "partial";
+}
+
 export function RepacksModal({
   visible,
   startDownload,
   onClose,
 }: Readonly<RepacksModalProps>) {
-  const [filteredRepacks, setFilteredRepacks] = useState<GameRepack[]>([]);
   const [repack, setRepack] = useState<GameRepack | null>(null);
   const [showSelectFolderModal, setShowSelectFolderModal] = useState(false);
   const [downloadSources, setDownloadSources] = useState<DownloadSource[]>([]);
-  const [selectedFingerprints, setSelectedFingerprints] = useState<string[]>(
-    []
-  );
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [filterTerm, setFilterTerm] = useState("");
 
   const [lastCheckTimestamp, setLastCheckTimestamp] = useState<string | null>(
@@ -75,7 +75,8 @@ export function RepacksModal({
     new Set()
   );
 
-  const { game, repacks } = useContext(gameDetailsContext);
+  const { game, repacks, repacksStatus, reloadRepacks } =
+    useContext(gameDetailsContext);
 
   const { t } = useTranslation("game_details");
 
@@ -85,18 +86,16 @@ export function RepacksModal({
   const userPreferences = useAppSelector(
     (state) => state.userPreferences.value
   );
+  const showNewBadges =
+    userPreferences?.enableNewDownloadOptionsBadges !== false;
 
   useEffect(() => {
-    const fetchDownloadSources = async () => {
-      const sources = (await levelDBService.values(
-        "downloadSources"
-      )) as DownloadSource[];
-      const sorted = orderBy(sources, "createdAt", "desc");
-      setDownloadSources(sorted);
-    };
-
-    fetchDownloadSources();
-  }, []);
+    if (!visible) return;
+    levelDBService
+      .values("downloadSources")
+      .then((sources) => setDownloadSources(sources as DownloadSource[]))
+      .catch((error) => logger.error("Failed to read download sources", error));
+  }, [visible]);
 
   useEffect(() => {
     const fetchLastCheckTimestamp = async () => {
@@ -117,12 +116,12 @@ export function RepacksModal({
       }
     };
 
-    if (visible && userPreferences?.enableNewDownloadOptionsBadges !== false) {
+    if (visible && showNewBadges) {
       fetchLastCheckTimestamp();
     } else {
       setIsLoadingTimestamp(false);
     }
-  }, [visible, repacks, userPreferences?.enableNewDownloadOptionsBadges]);
+  }, [visible, repacks, showNewBadges]);
 
   useEffect(() => {
     if (
@@ -143,56 +142,42 @@ export function RepacksModal({
           }
           return Promise.resolve();
         })
-        .catch(() => {});
+        .catch((error) =>
+          logger.error("Failed to clear the new download options count", error)
+        );
 
       const gameId = `${game.shop}:${game.objectId}`;
       dispatch(clearNewDownloadOptions({ gameId }));
     }
   }, [visible, game, dispatch]);
 
-  const sortedRepacks = useMemo(() => {
-    return orderBy(repacks, [(repack) => repack.uploadDate], ["desc"]);
+  const sortedRepacks = useMemo(
+    () => orderBy(repacks, [(repack) => repack.uploadDate], ["desc"]),
+    [repacks]
+  );
+
+  // Chips come from the options themselves, so every chip matches something.
+  const sourceChips = useMemo(() => {
+    const counts = countBy(repacks, (repack) => repack.downloadSourceName);
+    return orderBy(Object.entries(counts), [1, 0], ["desc", "asc"]);
   }, [repacks]);
 
-  const getRepackAvailabilityStatus = (
-    repack: GameRepack
-  ): "online" | "partial" | "offline" => {
-    const uris = Array.isArray(repack.uris) ? repack.uris : [];
-    const unavailableSet = new Set(repack.unavailableUris ?? []);
-    const availableCount = uris.filter(
-      (uri) => !unavailableSet.has(uri)
-    ).length;
-    const unavailableCount = uris.length - availableCount;
+  const term = filterTerm.trim().toLowerCase();
 
-    if (uris.length === 0) return "offline";
-    if (unavailableCount === 0) return "online";
-    if (availableCount === 0) return "offline";
-    return "partial";
-  };
+  const filteredRepacks = useMemo(
+    () =>
+      sortedRepacks.filter(
+        (repack) =>
+          (selectedSources.length === 0 ||
+            selectedSources.includes(repack.downloadSourceName)) &&
+          (!term ||
+            repack.title.toLowerCase().includes(term) ||
+            repack.downloadSourceName.toLowerCase().includes(term))
+      ),
+    [sortedRepacks, selectedSources, term]
+  );
 
-  useEffect(() => {
-    const term = filterTerm.trim().toLowerCase();
-
-    const byTerm = sortedRepacks.filter((repack) => {
-      if (!term) return true;
-      const lowerTitle = repack.title.toLowerCase();
-      const lowerRepacker = repack.downloadSourceName.toLowerCase();
-      return lowerTitle.includes(term) || lowerRepacker.includes(term);
-    });
-
-    const bySource = byTerm.filter((repack) => {
-      if (selectedFingerprints.length === 0) return true;
-
-      return downloadSources.some(
-        (src) =>
-          src.fingerprint &&
-          selectedFingerprints.includes(src.fingerprint) &&
-          src.name === repack.downloadSourceName
-      );
-    });
-
-    setFilteredRepacks(bySource);
-  }, [sortedRepacks, filterTerm, selectedFingerprints, downloadSources]);
+  const isFiltered = term !== "" || selectedSources.length > 0;
 
   const handleRepackClick = (repack: GameRepack) => {
     setRepack(repack);
@@ -200,16 +185,20 @@ export function RepacksModal({
     setViewedRepackIds((prev) => new Set(prev).add(repack.id));
   };
 
-  const handleFilter: React.ChangeEventHandler<HTMLInputElement> = (event) => {
-    setFilterTerm(event.target.value);
+  const toggleSource = (name: string) => {
+    setSelectedSources((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    );
   };
 
-  const toggleFingerprint = (fingerprint: string) => {
-    setSelectedFingerprints((prev) =>
-      prev.includes(fingerprint)
-        ? prev.filter((f) => f !== fingerprint)
-        : [...prev, fingerprint]
-    );
+  const clearFilters = () => {
+    setFilterTerm("");
+    setSelectedSources([]);
+  };
+
+  const goToSources = () => {
+    onClose();
+    navigate("/settings?tab=download_sources");
   };
 
   const checkIfLastDownloadedOption = (repack: GameRepack) => {
@@ -220,38 +209,23 @@ export function RepacksModal({
 
   const isNewRepack = (repack: GameRepack): boolean => {
     if (isLoadingTimestamp) return false;
-
     if (viewedRepackIds.has(repack.id)) return false;
+    if (!lastCheckTimestamp || !repack.createdAt) return false;
 
-    if (!lastCheckTimestamp || !repack.createdAt) {
-      return false;
-    }
+    const lastCheckDate = new Date(lastCheckTimestamp);
+    if (isNaN(lastCheckDate.getTime())) return false;
 
-    try {
-      const lastCheckDate = new Date(lastCheckTimestamp);
-
-      if (isNaN(lastCheckDate.getTime())) {
-        return false;
-      }
-
-      const lastCheckUtc = lastCheckDate.toISOString();
-
-      return repack.createdAt > lastCheckUtc;
-    } catch {
-      return false;
-    }
+    return repack.createdAt > lastCheckDate.toISOString();
   };
 
-  const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
-  const steamOptionTerm = filterTerm.trim().toLowerCase();
   const isNonSteamExecutable = useIsNonSteamExecutable(game);
   const showSteamOption =
     (canDownloadOnSteam(game) ||
       (isSteamImportedGame(game) && isNonSteamExecutable)) &&
-    selectedFingerprints.length === 0 &&
-    (!steamOptionTerm ||
-      "steam".includes(steamOptionTerm) ||
-      (game?.title ?? "").toLowerCase().includes(steamOptionTerm));
+    selectedSources.length === 0 &&
+    (!term ||
+      "steam".includes(term) ||
+      (game?.title ?? "").toLowerCase().includes(term));
 
   const handleSteamOptionClick = () => {
     if (!game) return;
@@ -261,12 +235,162 @@ export function RepacksModal({
   };
 
   useEffect(() => {
-    if (!visible) {
-      setFilterTerm("");
-      setSelectedFingerprints([]);
-      setIsFilterDrawerOpen(false);
-    }
+    if (!visible) clearFilters();
   }, [visible]);
+
+  const renderStatus = (availability: Availability) => (
+    <span
+      className={`repacks-modal__status repacks-modal__status--${availability}`}
+      title={t(`source_${availability}`)}
+    >
+      <span className="repacks-modal__status-dot" aria-hidden="true" />
+      {t(`availability_${availability}`)}
+    </span>
+  );
+
+  const renderEmpty = () => {
+    if (repacksStatus === "error") {
+      return (
+        <div className="repacks-modal__empty" role="alert">
+          <p>{t("download_options_load_failed")}</p>
+          <Button type="button" theme="outline" onClick={reloadRepacks}>
+            {t("retry_download_options")}
+          </Button>
+        </div>
+      );
+    }
+
+    if (isFiltered && repacks.length > 0) {
+      return (
+        <div className="repacks-modal__empty">
+          <p>{t("no_download_options_match")}</p>
+          <Button type="button" theme="outline" onClick={clearFilters}>
+            {t("clear_download_filters")}
+          </Button>
+        </div>
+      );
+    }
+
+    if (downloadSources.length === 0) {
+      return (
+        <div className="repacks-modal__empty">
+          <p>{t("no_download_sources_added")}</p>
+          <Button type="button" theme="primary" onClick={goToSources}>
+            <PlusCircleIcon />
+            {t("add_download_source", { ns: "settings" })}
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="repacks-modal__empty">
+        <p>
+          {t("no_download_options_in_sources", {
+            count: downloadSources.length,
+          })}
+        </p>
+        <Button type="button" theme="outline" onClick={goToSources}>
+          {t("manage_download_sources")}
+        </Button>
+      </div>
+    );
+  };
+
+  const renderList = () => {
+    if (repacksStatus === "loading" && repacks.length === 0) {
+      return (
+        <ul
+          className="repacks-modal__list"
+          aria-busy="true"
+          aria-label={t("loading_download_options")}
+        >
+          {Array.from({ length: SKELETON_ROWS }, (_, index) => (
+            <li key={index} className="repacks-modal__skeleton" />
+          ))}
+        </ul>
+      );
+    }
+
+    if (filteredRepacks.length === 0 && !showSteamOption) return renderEmpty();
+
+    return (
+      <ul className="repacks-modal__list">
+        {showSteamOption && game && (
+          <li>
+            <button
+              type="button"
+              className="repacks-modal__row"
+              onClick={handleSteamOptionClick}
+            >
+              <span className="repacks-modal__row-main">
+                <span className="repacks-modal__row-title">
+                  <SteamIcon size={16} />
+                  {game.title}
+                </span>
+                <span className="repacks-modal__row-meta">
+                  {t("download_on_steam")}
+                </span>
+              </span>
+              <span className="repacks-modal__row-side">
+                {renderStatus("online")}
+              </span>
+            </button>
+          </li>
+        )}
+
+        {filteredRepacks.map((repack) => {
+          const isNew = showNewBadges && isNewRepack(repack);
+          const isLast = checkIfLastDownloadedOption(repack);
+          const meta = [
+            repack.fileSize?.trim(),
+            repack.uploadDate ? formatDate(repack.uploadDate) : null,
+          ].filter(Boolean);
+
+          return (
+            <li key={repack.id}>
+              <button
+                type="button"
+                className="repacks-modal__row"
+                onClick={() => handleRepackClick(repack)}
+              >
+                <span className="repacks-modal__row-main">
+                  <span
+                    className="repacks-modal__row-title"
+                    title={repack.title}
+                  >
+                    {repack.title}
+                  </span>
+                  <span className="repacks-modal__row-meta">
+                    <span className="repacks-modal__source">
+                      {repack.downloadSourceName}
+                    </span>
+                    {meta.map((part) => (
+                      <span key={part}>{part}</span>
+                    ))}
+                  </span>
+                </span>
+
+                <span className="repacks-modal__row-side">
+                  {isNew && (
+                    <span className="repacks-modal__tag repacks-modal__tag--new">
+                      {t("new_download_option")}
+                    </span>
+                  )}
+                  {isLast && (
+                    <span className="repacks-modal__tag">
+                      {t("last_downloaded_option")}
+                    </span>
+                  )}
+                  {renderStatus(getAvailability(repack))}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
 
   return (
     <>
@@ -282,157 +406,53 @@ export function RepacksModal({
         title={t("download_options_title")}
         description={t("repacks_modal_description")}
         onClose={onClose}
+        large
       >
-        <div
-          className={`repacks-modal__filter-container ${isFilterDrawerOpen ? "repacks-modal__filter-container--drawer-open" : ""}`}
-        >
-          <div className="repacks-modal__filter-top">
-            <TextField
-              placeholder={t("filter")}
-              value={filterTerm}
-              onChange={handleFilter}
-            />
-            {downloadSources.length > 0 && (
-              <Button
-                type="button"
-                theme="outline"
-                onClick={() => setIsFilterDrawerOpen(!isFilterDrawerOpen)}
-                className="repacks-modal__filter-toggle"
-              >
-                {t("filter_by_source")}
-                {isFilterDrawerOpen ? <ChevronUpIcon /> : <ChevronDownIcon />}
-              </Button>
-            )}
-          </div>
-
-          <div
-            className={`repacks-modal__download-sources ${isFilterDrawerOpen ? "repacks-modal__download-sources--open" : ""}`}
-          >
-            <div className="repacks-modal__source-grid">
-              {downloadSources
-                .filter(
-                  (
-                    source
-                  ): source is DownloadSource & { fingerprint: string } =>
-                    source.fingerprint !== undefined
-                )
-                .map((source) => {
-                  const label = source.name || source.url;
-                  const truncatedLabel =
-                    label.length > 16 ? label.substring(0, 16) + "..." : label;
-                  return (
-                    <div
-                      key={source.fingerprint}
-                      className="repacks-modal__source-item"
-                    >
-                      <CheckboxField
-                        label={truncatedLabel}
-                        checked={selectedFingerprints.includes(
-                          source.fingerprint
-                        )}
-                        onChange={() => toggleFingerprint(source.fingerprint)}
-                      />
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-        </div>
-
-        <div className="repacks-modal__repacks">
-          {showSteamOption && game && (
-            <Button
-              theme="dark"
-              onClick={handleSteamOptionClick}
-              className="repacks-modal__repack-button"
-            >
-              <span
-                className="repacks-modal__availability-orb repacks-modal__availability-orb--online"
-                data-tooltip-id="availability-orb-steam"
-                data-tooltip-content={t("source_online")}
+        <div className="repacks-modal">
+          {repacks.length > 0 && (
+            <div className="repacks-modal__toolbar">
+              <TextField
+                placeholder={t("filter")}
+                aria-label={t("filter")}
+                value={filterTerm}
+                onChange={(event) => setFilterTerm(event.target.value)}
               />
-              <Tooltip id="availability-orb-steam" />
-
-              <p className="repacks-modal__repack-title repacks-modal__steam-title">
-                <SteamIcon size={16} />
-                {game.title}
-              </p>
-
-              <p className="repacks-modal__repack-info">
-                {t("download_on_steam")}
-              </p>
-            </Button>
+              <span className="repacks-modal__count" aria-live="polite">
+                {isFiltered
+                  ? t("download_options_shown", {
+                      shown: filteredRepacks.length,
+                      total: repacks.length,
+                    })
+                  : t("download_options_total", { count: repacks.length })}
+              </span>
+            </div>
           )}
 
-          {showSteamOption && filteredRepacks.length > 0 && (
-            <div className="repacks-modal__separator" />
-          )}
-
-          {filteredRepacks.length === 0
-            ? !showSteamOption && (
-                <div className="repacks-modal__no-results">
-                  <div className="repacks-modal__no-results-content">
-                    <div className="repacks-modal__no-results-text">
-                      {t("no_repacks_found")}
-                    </div>
-                    <div className="repacks-modal__no-results-button">
-                      <Button
-                        type="button"
-                        theme="primary"
-                        onClick={() => {
-                          onClose();
-                          navigate("/settings?tab=download_sources");
-                        }}
-                      >
-                        <PlusCircleIcon />
-                        {t("add_download_source", { ns: "settings" })}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )
-            : filteredRepacks.map((repack) => {
-                const isLastDownloadedOption =
-                  checkIfLastDownloadedOption(repack);
-                const availabilityStatus = getRepackAvailabilityStatus(repack);
-                const tooltipId = `availability-orb-${repack.id}`;
-
+          {sourceChips.length > 1 && (
+            <div
+              className="repacks-modal__chips"
+              role="group"
+              aria-label={t("filter_by_source")}
+            >
+              {sourceChips.map(([name, count]) => {
+                const active = selectedSources.includes(name);
                 return (
-                  <Button
-                    key={repack.id}
-                    theme="dark"
-                    onClick={() => handleRepackClick(repack)}
-                    className="repacks-modal__repack-button"
+                  <button
+                    key={name}
+                    type="button"
+                    className={`repacks-modal__chip ${active ? "repacks-modal__chip--active" : ""}`}
+                    aria-pressed={active}
+                    onClick={() => toggleSource(name)}
                   >
-                    <span
-                      className={`repacks-modal__availability-orb repacks-modal__availability-orb--${availabilityStatus}`}
-                      data-tooltip-id={tooltipId}
-                      data-tooltip-content={t(`source_${availabilityStatus}`)}
-                    />
-                    <Tooltip id={tooltipId} />
-
-                    <p className="repacks-modal__repack-title">
-                      {repack.title}
-                      {userPreferences?.enableNewDownloadOptionsBadges !==
-                        false &&
-                        isNewRepack(repack) && (
-                          <span className="repacks-modal__new-badge">
-                            {t("new_download_option")}
-                          </span>
-                        )}
-                    </p>
-
-                    {isLastDownloadedOption && (
-                      <Badge>{t("last_downloaded_option")}</Badge>
-                    )}
-
-                    <p className="repacks-modal__repack-info">
-                      {repack.fileSize} - {repack.downloadSourceName} -{" "}
-                      {repack.uploadDate ? formatDate(repack.uploadDate) : ""}
-                    </p>
-                  </Button>
+                    {name}
+                    <span className="repacks-modal__chip-count">{count}</span>
+                  </button>
                 );
               })}
+            </div>
+          )}
+
+          {renderList()}
         </div>
       </Modal>
     </>

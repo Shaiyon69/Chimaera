@@ -5,6 +5,7 @@ import { setHeaderTitle } from "@renderer/features";
 import { levelDBService } from "@renderer/services/leveldb.service";
 import { ensureArray } from "@renderer/helpers";
 import { orderBy } from "lodash-es";
+import { logger } from "@renderer/logger";
 import {
   useAppDispatch,
   useAppSelector,
@@ -40,6 +41,8 @@ export const gameDetailsContext = createContext<GameDetailsContext>({
   game: null,
   shopDetails: null,
   repacks: [],
+  repacksStatus: "loading",
+  reloadRepacks: () => {},
   shop: "steam",
   gameTitle: "",
   isGameRunning: false,
@@ -104,6 +107,14 @@ export function GameDetailsContextProvider({
   const [gameOptionsInitialCategory, setGameOptionsInitialCategory] =
     useState<GameOptionsCategoryId>("general");
   const [repacks, setRepacks] = useState<GameRepack[]>([]);
+  const [repacksStatus, setRepacksStatus] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
+  const [repacksReloadKey, setRepacksReloadKey] = useState(0);
+  const reloadRepacks = useCallback(
+    () => setRepacksReloadKey((key) => key + 1),
+    []
+  );
 
   const { t, i18n } = useTranslation("game_details");
   const location = useLocation();
@@ -426,6 +437,8 @@ export function GameDetailsContextProvider({
     let cancelled = false;
 
     const fetchDownloadSources = async () => {
+      setRepacksStatus("loading");
+      let loaded = false;
       try {
         const sourcesRaw = (await levelDBService.values(
           "downloadSources"
@@ -456,6 +469,8 @@ export function GameDetailsContextProvider({
         );
 
         setRepacks(downloadOptions);
+        setRepacksStatus("ready");
+        loaded = true;
 
         const results = await fetchHosterAvailability(
           downloadOptions,
@@ -467,7 +482,9 @@ export function GameDetailsContextProvider({
 
         setRepacks(applyHosterAvailability(downloadOptions, results));
       } catch (error) {
-        console.error("Failed to fetch download sources:", error);
+        logger.error("Failed to fetch download sources:", error);
+        // A failed hoster check after the list loaded keeps the list.
+        if (!cancelled && !loaded) setRepacksStatus("error");
       }
     };
 
@@ -476,7 +493,7 @@ export function GameDetailsContextProvider({
     return () => {
       cancelled = true;
     };
-  }, [shop, objectId]);
+  }, [shop, objectId, repacksReloadKey]);
 
   const getDownloadsPath = async () => {
     if (userPreferences?.downloadsPath) return userPreferences.downloadsPath;
@@ -523,6 +540,8 @@ export function GameDetailsContextProvider({
         shopDetails,
         shop,
         repacks,
+        repacksStatus,
+        reloadRepacks,
         gameTitle,
         isGameRunning,
         isLoading,

@@ -1,211 +1,224 @@
 @use "../../../scss/globals.scss";
 
 .repacks-modal {
-  &__filter-container {
-    transition: all 0.3s ease;
-  }
+  display: flex;
+  flex-direction: column;
+  gap: calc(globals.$spacing-unit * 1.5);
 
-  &__filter-top {
-    margin-bottom: calc(globals.$spacing-unit * 2);
-    display: flex;
-    flex-direction: row;
-    gap: calc(globals.$spacing-unit * 1);
-    align-items: center;
-  }
-
-  &__filter-toggle {
+  &__toolbar {
     display: flex;
     align-items: center;
-    gap: calc(globals.$spacing-unit * 1);
+    gap: calc(globals.$spacing-unit * 1.5);
+
+    > :first-child {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+
+  &__count {
+    color: var(--faint);
     font-size: globals.$small-font-size;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    padding: calc(globals.$spacing-unit * 1) calc(globals.$spacing-unit * 1.5);
-    border-radius: 6px;
-    transition: background-color 0.2s ease;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
-  &__repacks {
+  &__chips {
     display: flex;
+    flex-wrap: wrap;
+    gap: calc(globals.$spacing-unit * 0.75);
+  }
+
+  &__chip {
+    @include globals.chip;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 0;
+    color: var(--muted);
+    cursor: pointer;
+    transition:
+      background-color 0.18s var(--ease),
+      color 0.18s var(--ease),
+      box-shadow 0.18s var(--ease);
+
+    &:hover {
+      background: var(--fill-hover);
+      color: var(--text);
+    }
+
+    &--active {
+      background: color-mix(in srgb, var(--accent) 22%, transparent);
+      box-shadow: inset 0 0 0 0.5px var(--accent);
+      color: var(--text);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+  }
+
+  &__chip-count {
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__list {
+    @include globals.surface(var(--glass-1), 12px);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+
+    > li + li {
+      border-top: 0.5px solid var(--line);
+    }
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
     gap: calc(globals.$spacing-unit * 2);
-    flex-direction: column;
-  }
-
-  &__repack-button {
-    display: flex;
+    width: 100%;
+    padding: 12px 16px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
     text-align: left;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: calc(globals.$spacing-unit * 1);
-    color: globals.$body-color;
-    padding: calc(globals.$spacing-unit * 2);
-    padding-right: calc(globals.$spacing-unit * 4);
-    position: relative;
+    cursor: pointer;
+    transition: background-color 0.18s var(--ease);
+
+    &:hover {
+      background: var(--fill);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
   }
 
-  &__availability-orb {
-    position: absolute;
-    top: calc(globals.$spacing-unit * 1.5);
-    right: calc(globals.$spacing-unit * 1.5);
+  &__row-main {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__row-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    color: var(--text);
+    font-weight: 600;
+    line-height: 1.35;
+    word-break: break-word;
+
+    svg {
+      margin-right: 6px;
+      vertical-align: -2px;
+    }
+  }
+
+  &__row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    color: var(--muted);
+    font-size: globals.$small-font-size;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__source {
+    color: var(--accent-text);
+    font-weight: 600;
+  }
+
+  &__row-side {
+    display: flex;
+    align-items: center;
+    gap: calc(globals.$spacing-unit * 1);
+    flex-shrink: 0;
+  }
+
+  &__tag {
+    @include globals.count;
+    white-space: nowrap;
+
+    &--new {
+      background: color-mix(in srgb, var(--good) 18%, transparent);
+      color: var(--good);
+    }
+  }
+
+  &__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 96px;
+    color: var(--muted);
+    font-size: globals.$small-font-size;
+    white-space: nowrap;
+
+    &--online {
+      --status: var(--good);
+    }
+
+    &--partial {
+      --status: var(--warn);
+    }
+
+    &--offline {
+      --status: var(--danger);
+      color: var(--faint);
+    }
+  }
+
+  &__status-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
+    background: var(--status);
+  }
 
-    &--online {
-      background-color: #22c55e;
-      box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
-    }
+  &__skeleton {
+    height: 64px;
+    background: var(--fill);
+    animation: repacks-modal-pulse 1.2s var(--ease) infinite alternate;
 
-    &--partial {
-      background-color: #eab308;
-      box-shadow: 0 0 6px rgba(234, 179, 8, 0.5);
-    }
-
-    &--offline {
-      background-color: #ef4444;
-      opacity: 0.7;
-      box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
     }
   }
 
-  &__repack-title {
-    color: globals.$muted-color;
-    word-break: break-word;
-    display: flex;
-    align-items: center;
-    gap: calc(globals.$spacing-unit * 1);
-  }
-
-  &__repack-info {
-    font-size: globals.$small-font-size;
-  }
-
-  &__separator {
-    height: 1px;
-    width: 100%;
-    background-color: globals.$border-color;
-  }
-
-  &__steam-title {
-    color: globals.$body-color;
-
-    svg {
-      flex-shrink: 0;
-    }
-  }
-
-  &__new-badge {
-    background-color: rgba(34, 197, 94, 0.15);
-    color: rgb(187, 247, 208);
-    padding: 2px 8px;
-    border-radius: 6px;
-    font-size: 9px;
-    text-align: center;
-    flex-shrink: 0;
-    border: 1px solid rgba(34, 197, 94, 0.5);
-  }
-
-  &__no-results {
-    width: 100%;
-    padding: calc(globals.$spacing-unit * 4) 0;
-    text-align: center;
-    color: globals.$muted-color;
-    font-size: globals.$small-font-size;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  &__no-results-content {
+  &__empty {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: calc(globals.$spacing-unit * 1.5);
-    max-width: 480px;
-    width: 100%;
-  }
-
-  &__no-results-text {
-    color: globals.$muted-color;
-    font-size: globals.$small-font-size;
+    padding: calc(globals.$spacing-unit * 4) calc(globals.$spacing-unit * 2);
+    color: var(--muted);
     text-align: center;
-  }
 
-  &__no-results-button {
-    display: flex;
-    justify-content: center;
-    width: 100%;
-  }
-
-  &__download-sources {
-    padding: 0;
-    background-color: var(--color-background-light);
-    border-radius: 8px;
-    margin-bottom: calc(globals.$spacing-unit * 2);
-    margin-top: calc(globals.$spacing-unit * 1);
-    max-height: 0;
-    overflow: hidden;
-    transition:
-      max-height 0.3s ease,
-      padding 0.3s ease;
-
-    &--open {
-      max-height: 280px;
+    p {
+      margin: 0;
+      max-width: 420px;
     }
   }
+}
 
-  &__filter-label {
-    display: none;
-    font-size: globals.$small-font-size;
-    font-weight: 600;
-    margin-bottom: 0.75rem;
-    color: var(--color-text-secondary);
-    width: 100%;
+@keyframes repacks-modal-pulse {
+  from {
+    opacity: 0.5;
   }
 
-  &__source-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: calc(globals.$spacing-unit * 1);
-    max-height: 200px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    align-items: start;
-    padding: calc(globals.$spacing-unit * 0.5) calc(globals.$spacing-unit * 0.5)
-      calc(globals.$spacing-unit * 0.5) 0;
-  }
-
-  &__source-item {
-    padding: calc(globals.$spacing-unit * 0.75) calc(globals.$spacing-unit * 1);
-    background: var(--color-surface, rgb(var(--shade) / 0.03));
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    min-height: calc(globals.$spacing-unit * 5);
-    box-sizing: border-box;
-    width: 100%;
-    transition: border-color 0.2s ease;
-
-    &:hover {
-      border-color: var(--line-strong);
-    }
-  }
-
-  &__source-item :global(.checkbox-field) {
-    width: 100%;
-    min-width: 0;
-  }
-
-  &__source-item :global(.checkbox-field__label) {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: unset;
-    display: block;
-    font-size: 0.85rem;
-    width: 100%;
-    word-break: break-word;
+  to {
+    opacity: 1;
   }
 }
