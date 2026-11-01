@@ -46,6 +46,7 @@ mod shortcuts;
 mod steam;
 mod steam_shortcuts;
 mod store;
+mod themes;
 mod torrent;
 mod torrenting;
 mod trackers;

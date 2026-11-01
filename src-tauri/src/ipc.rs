@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, emulators, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, messapp_keys, misc, notifications, processed_image, profile, retro_achievements, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, common_redist, debrid, decky, download_sources, downloads, emulators, extraction, file_system, game_installer, games, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, messapp_keys, misc, notifications, processed_image, profile, retro_achievements, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -118,6 +118,27 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         }
         "completeRetroAchievementsConnectionWindow" => {
             retro_achievements::complete_window(app);
+            Ok(Value::Null)
+        }
+        "getAllCustomThemes" => themes::all(&app.state::<Store>()),
+        "getActiveCustomTheme" => themes::active(&app.state::<Store>()),
+        "getCustomThemeById" => app.state::<Store>().get("themes", arg_str(args, 0).unwrap_or_default()),
+        "addCustomTheme" => themes::add(&app.state::<Store>(), args.first().unwrap_or(&Value::Null)).map(|_| Value::Null),
+        "deleteCustomTheme" => app.state::<Store>().del("themes", arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null),
+        "deleteAllCustomThemes" => app.state::<Store>().clear("themes").map(|_| Value::Null),
+        "toggleCustomTheme" => themes::toggle(app, arg_str(args, 0).unwrap_or_default(), args.get(1).and_then(Value::as_bool).unwrap_or(false)).map(|_| Value::Null),
+        "updateCustomTheme" => themes::update_code(app, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).map(|_| Value::Null),
+        "getThemeSoundPath" => themes::sound_path_of(app, arg_str(args, 0).unwrap_or_default()),
+        "getThemeSoundDataUrl" => Ok(themes::sound_data_url(app, arg_str(args, 0).unwrap_or_default())),
+        "copyThemeAchievementSound" => themes::copy_sound(app, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).map(|_| Value::Null),
+        "removeThemeAchievementSound" => themes::remove_sound(app, arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null),
+        "importThemeSoundFromStore" => {
+            let (id, name, url) = (arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default(), arg_str(args, 2).unwrap_or_default());
+            themes::import_sound_from_store(app, id, name, url).await.map(|_| Value::Null)
+        }
+        "openEditorWindow" => themes::open_editor(app, arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null),
+        "closeEditorWindow" => {
+            themes::close_editor(app, arg_str(args, 0));
             Ok(Value::Null)
         }
         // Electron tells the download orchestrator and souvenir worker; neither exists here yet (F4, F6).
