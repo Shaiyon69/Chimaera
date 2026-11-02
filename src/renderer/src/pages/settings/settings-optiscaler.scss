@@ -30,6 +30,19 @@
     color: globals.$muted-color;
   }
 
+  &__cache-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(globals.$spacing-unit * 1.5);
+
+    span:first-child {
+      flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+  }
+
   &__hint {
     margin: 0;
     font-size: globals.$hint-font-size;

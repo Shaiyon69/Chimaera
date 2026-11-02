@@ -10,6 +10,7 @@ import {
 import type { LibraryGame } from "@types";
 
 import { OptiscalerConfig } from "./optiscaler-config";
+import { VersionSelect } from "./version-select";
 import {
   OptiscalerProfilePicker,
   type OptiscalerProfile,
@@ -33,6 +34,7 @@ export function OptiscalerSection({
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [profiles, setProfiles] = useState<OptiscalerProfile[]>([]);
   const [profile, setProfile] = useState("default");
+  const [version, setVersion] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [leftovers, setLeftovers] = useState<string[] | null>(null);
 
@@ -91,7 +93,8 @@ export function OptiscalerSection({
       await window.electron.installOptiscaler(
         game.shop,
         game.objectId,
-        proxy ?? "dxgi.dll"
+        proxy ?? "dxgi.dll",
+        version || undefined
       );
       if (profile !== "default") await applyProfile();
     });
@@ -209,6 +212,12 @@ export function OptiscalerSection({
               setProxy(e.target.value);
               setConfirm(null);
             }}
+          />
+          <VersionSelect
+            tool="optiscaler"
+            value={version}
+            disabled={busy}
+            onChange={setVersion}
           />
           <OptiscalerProfilePicker
             profiles={profiles}

@@ -281,7 +281,34 @@ async fn fetch_latest(app: &AppHandle, nightly: bool) -> Result<(String, PathBuf
 
 async fn download_latest(app: &AppHandle, cache: &Path, nightly: bool) -> Result<(String, PathBuf), String> {
     let data = github_json(&release_url(nightly), 30).await?;
-    let release = release_of(&data, nightly);
+    download_release(app, cache, release_of(&data, nightly)).await
+}
+
+/// A release tag safe to put in a URL and a folder name.
+pub(crate) fn valid_tag(tag: &str) -> bool {
+    !tag.is_empty() && tag.len() <= 100 && tag.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
+/// One specific release, from the cache when it is there.
+async fn fetch_tag(app: &AppHandle, tag: &str) -> Result<(String, PathBuf), String> {
+    if !valid_tag(tag) {
+        return Err(format!("Invalid OptiScaler version: {tag}"));
+    }
+    let cache = cache_root(app)?.join("cache");
+    if let Some(payload) = find_payload(&cache.join(format!("OptiScaler_{tag}"))) {
+        return Ok((tag.to_string(), payload));
+    }
+    let release = github_json(&format!("{RELEASES_API}/tags/{tag}"), 30).await?;
+    download_release(app, &cache, &release).await
+}
+
+/// `getGraphicsReleases("optiscaler")`: recent releases, newest first.
+pub async fn releases() -> Result<Value, String> {
+    let data = github_json(&format!("{RELEASES_API}?per_page=15"), 15).await?;
+    Ok(Value::Array(data.as_array().into_iter().flatten().map(|r| json!({ "tag": r["tag_name"], "prerelease": r["prerelease"], "date": r["published_at"] })).collect()))
+}
+
+async fn download_release(app: &AppHandle, cache: &Path, release: &Value) -> Result<(String, PathBuf), String> {
     let tag = release["tag_name"].as_str().ok_or("No OptiScaler release found")?.to_string();
     let dest = cache.join(format!("OptiScaler_{tag}"));
     if let Some(payload) = find_payload(&dest) {
@@ -1077,7 +1104,7 @@ pub async fn gpu(app: &AppHandle) -> Value {
 }
 
 /// `installOptiscaler`.
-pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, proxy: &str) -> Result<Value, String> {
+pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, proxy: &str, version: Option<&str>) -> Result<Value, String> {
     if !PROXIES.contains(&proxy) {
         return Err(format!("Invalid proxy: {proxy}"));
     }
@@ -1090,7 +1117,10 @@ pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, prox
         return Err(format!("ReShade is installed as {proxy}; pick another injection DLL"));
     }
     let prefs = prefs(app);
-    let (tag, payload) = fetch_latest(app, nightly(&prefs)).await?;
+    let (tag, payload) = match version {
+        Some(v) => fetch_tag(app, v).await?,
+        None => fetch_latest(app, nightly(&prefs)).await?,
+    };
     let gpu = resolve_gpu(&prefs).await;
     if gpu != "native" {
         ensure_fsr4_dlls(app, &gpu).await;
@@ -1104,6 +1134,8 @@ pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, prox
     let result = tauri::async_runtime::spawn_blocking(move || install(&payload, &dir, &proxy, &tag, dll.as_deref(), mode, api).map(|_| json!({ "version": tag })))
         .await
         .map_err(|e| e.to_string())??;
+    // A chosen version is pinned: the startup auto-update leaves the game alone.
+    set_pinned(app, &game_key(shop, object_id), version.is_some())?;
     if had_optipatcher {
         if let Err(err) = set_optipatcher(app, shop, object_id, true).await {
             eprintln!("[optiscaler] could not restore OptiPatcher: {err}");
@@ -1114,7 +1146,62 @@ pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, prox
 
 /// `uninstallOptiscaler`.
 pub fn uninstall_for_game(app: &AppHandle, shop: &str, object_id: &str) -> Result<(), String> {
-    uninstall(&context(app, shop, object_id)?.1, false)
+    uninstall(&context(app, shop, object_id)?.1, false)?;
+    set_pinned(app, &game_key(shop, object_id), false)
+}
+
+const PINNED_KEY: &str = "optiscalerPinned";
+
+fn pinned(app: &AppHandle) -> Vec<String> {
+    app.state::<Store>().get("", PINNED_KEY).ok().map(|v| strings(&v)).unwrap_or_default()
+}
+
+fn set_pinned(app: &AppHandle, key: &str, pin: bool) -> Result<(), String> {
+    let mut list = pinned(app);
+    list.retain(|k| k != key);
+    if pin {
+        list.push(key.to_string());
+    }
+    app.state::<Store>().put("", PINNED_KEY, &json!(list))
+}
+
+// ---------- cache manager ----------
+
+/// Cached downloads as (id, tool, version, folder); ids are paths under the data folder.
+fn cache_entries(app: &AppHandle) -> Vec<(String, &'static str, String, PathBuf)> {
+    let mut out = Vec::new();
+    let mut add = |base: Result<PathBuf, String>, sub: &str, tool: &'static str, prefix: &str| {
+        let Ok(base) = base else { return };
+        for e in fs::read_dir(base.join(sub)).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if e.path().is_dir() && !name.ends_with(".tmp") && name.starts_with(prefix) {
+                out.push((format!("{tool}/{name}"), tool, name[prefix.len()..].to_string(), e.path()));
+            }
+        }
+    };
+    add(cache_root(app), "cache", "optiscaler", "OptiScaler_");
+    add(cache_root(app), "fsr4", "fsr4", "dll-");
+    add(cache_root(app), "optipatcher", "optipatcher", "");
+    add(crate::save_backups::data_dir(app, "dxvk"), "cache", "dxvk", "");
+    out
+}
+
+fn dir_size(dir: &Path) -> u64 {
+    list_files(dir).iter().filter_map(|r| fs::metadata(dir.join(r)).ok()).map(|m| m.len()).sum()
+}
+
+/// `getGraphicsCache`.
+pub async fn cache_list(app: &AppHandle) -> Result<Value, String> {
+    let entries = cache_entries(app);
+    tauri::async_runtime::spawn_blocking(move || Value::Array(entries.into_iter().map(|(id, tool, version, dir)| json!({ "id": id, "tool": tool, "version": version, "size": dir_size(&dir) })).collect()))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// `deleteGraphicsCache`: only ids from the listing, so no other folder can be removed.
+pub fn cache_delete(app: &AppHandle, id: &str) -> Result<(), String> {
+    let (_, _, _, dir) = cache_entries(app).into_iter().find(|(i, ..)| i == id).ok_or("Cached version not found")?;
+    fs::remove_dir_all(dir).map_err(|e| e.to_string())
 }
 
 fn ini_path(app: &AppHandle, shop: &str, object_id: &str) -> Result<PathBuf, String> {
@@ -1143,13 +1230,17 @@ pub async fn auto_update(app: &AppHandle) {
     }
     let Ok((tag, _)) = fetch_latest(app, nightly(&prefs)).await else { return };
     let games = app.state::<Store>().entries("games").unwrap_or_default();
-    for (_, game) in games {
+    let pinned = pinned(app);
+    for (key, game) in games {
+        if pinned.contains(&key) {
+            continue;
+        }
         let (Some(shop), Some(object_id)) = (game["shop"].as_str(), game["objectId"].as_str()) else { continue };
         let Ok((_, dir)) = context(app, shop, object_id) else { continue };
         let Some(marker) = read_marker(&dir) else { continue };
         let Some(proxy) = marker["proxy"].as_str().filter(|_| marker["version"] != tag.as_str()) else { continue };
         // Files stay locked while the game runs; install rolls back and retries next launch.
-        match install_for_game(app, shop, object_id, proxy).await {
+        match install_for_game(app, shop, object_id, proxy, None).await {
             Ok(_) => eprintln!("[optiscaler] updated to {tag}: {}", game["title"]),
             Err(err) => eprintln!("[optiscaler] auto-update skipped for {}: {err}", game["title"]),
         }
@@ -1313,6 +1404,12 @@ mod tests {
         assert_eq!(fs::read(game.join("libxess.dll")).unwrap(), b"xess-game");
         assert!(game.join("dxgi.dll").exists() && !has_leftovers(&game));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validates_release_tags() {
+        assert!(valid_tag("v0.9.4") && valid_tag("v3.1.1-1") && valid_tag("dll-12"));
+        assert!(!valid_tag("") && !valid_tag("../x") && !valid_tag("v1/../../y") && !valid_tag("a b"));
     }
 
     #[test]

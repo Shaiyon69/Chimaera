@@ -5,6 +5,7 @@ import { Button, TextField } from "@renderer/components";
 import { settingsContext } from "@renderer/context";
 import { useAppSelector } from "@renderer/hooks";
 
+import { SettingsGraphicsCache } from "./settings-graphics-cache";
 import { SettingsOptiscalerProfiles } from "./settings-optiscaler-profiles";
 
 import "./settings-optiscaler.scss";
@@ -214,6 +215,7 @@ export function SettingsContextOptiscaler() {
       )}
 
       <SettingsOptiscalerProfiles />
+      <SettingsGraphicsCache />
     </div>
   );
 }

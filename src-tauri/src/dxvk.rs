@@ -19,6 +19,8 @@ const BACKUP: &str = ".dxvk_backup";
 const CONF: &str = "dxvk.conf";
 const BUILDS: &[&str] = &["dxvk", "gplasync"];
 const OFFICIAL_API: &str = "https://api.github.com/repos/doitsujin/dxvk/releases/latest";
+const OFFICIAL_RELEASES: &str = "https://api.github.com/repos/doitsujin/dxvk/releases";
+const GPLASYNC_RELEASES: &str = "https://gitlab.com/api/v4/projects/Ph42oN%2Fdxvk-gplasync/releases";
 const GPLASYNC_API: &str = "https://gitlab.com/api/v4/projects/Ph42oN%2Fdxvk-gplasync/releases?per_page=1";
 const TAG_TTL: Duration = Duration::from_secs(60 * 60);
 
@@ -74,9 +76,10 @@ fn blocked(exe: &Path, dir: &Path, api: &str) -> Option<&'static str> {
 
 // ---------- releases ----------
 
-/// Tag and `.tar.gz` URL of the newest release in a GitHub or GitLab releases response.
+/// Tag and `.tar.gz` URL of a release (or the first in a list) from GitHub or GitLab.
 fn release_asset(build: &str, data: &Value) -> Option<(String, String)> {
-    let (release, assets, url_key) = if build == "gplasync" { (&data[0], &data[0]["assets"]["links"], "direct_asset_url") } else { (data, &data["assets"], "browser_download_url") };
+    let release = if data.is_array() { &data[0] } else { data };
+    let (assets, url_key) = if build == "gplasync" { (&release["assets"]["links"], "direct_asset_url") } else { (&release["assets"], "browser_download_url") };
     let tag = release["tag_name"].as_str()?.to_string();
     // The official release also carries a Linux-only dxvk-native tarball.
     let asset = assets.as_array()?.iter().find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(".tar.gz") && !n.contains("native")))?;
@@ -117,12 +120,39 @@ fn unpack(archive: &Path, dest: &Path) -> Result<PathBuf, String> {
     fs::read_dir(dest).map_err(|e| e.to_string())?.flatten().map(|e| e.path()).find(|p| complete(p)).ok_or("x64/x32 DLLs not found in the DXVK archive".into())
 }
 
-/// Release tag plus folder with `x64/` and `x32/`; the newest cached release when offline.
-async fn fetch(app: &AppHandle, build: &str) -> Result<(String, PathBuf), String> {
+/// `getGraphicsReleases("dxvk" | "gplasync")`: recent releases, newest first.
+pub async fn releases(build: &str) -> Result<Value, String> {
+    let gl = build == "gplasync";
+    let data = github_json(&format!("{}?per_page=15", if gl { GPLASYNC_RELEASES } else { OFFICIAL_RELEASES }), 15).await?;
+    let date = if gl { "released_at" } else { "published_at" };
+    Ok(Value::Array(data.as_array().into_iter().flatten().map(|r| json!({ "tag": r["tag_name"], "prerelease": r["prerelease"].as_bool().unwrap_or(false), "date": r[date] })).collect()))
+}
+
+/// Tag and URL of one release.
+async fn tagged(build: &str, tag: &str) -> Result<(String, String), String> {
+    let url = if build == "gplasync" { format!("{GPLASYNC_RELEASES}/{tag}") } else { format!("{OFFICIAL_RELEASES}/tags/{tag}") };
+    release_asset(build, &github_json(&url, 15).await?).ok_or(format!("No Windows tarball in {build} {tag}"))
+}
+
+/// Release tag plus folder with `x64/` and `x32/`: `version` or the newest, which falls
+/// back to the newest cached release when offline.
+async fn fetch(app: &AppHandle, build: &str, version: Option<&str>) -> Result<(String, PathBuf), String> {
     static LOCK: Mutex<()> = Mutex::const_new(());
     let _guard = LOCK.lock().await;
     let cache = cache_root(app)?;
-    let Some((tag, url)) = latest(build).await else {
+    if let Some(v) = version {
+        if !crate::optiscaler::valid_tag(v) {
+            return Err(format!("Invalid DXVK version: {v}"));
+        }
+        if complete(&cache.join(format!("{build}_{v}"))) {
+            return Ok((v.to_string(), cache.join(format!("{build}_{v}"))));
+        }
+    }
+    let found = match version {
+        Some(v) => Some(tagged(build, v).await?),
+        None => latest(build).await,
+    };
+    let Some((tag, url)) = found else {
         return newest_cached(&cache, build).ok_or(format!("Could not reach the {build} releases and none is cached"));
     };
     let dest = cache.join(format!("{build}_{tag}"));
@@ -276,7 +306,7 @@ pub async fn status(app: &AppHandle, shop: &str, object_id: &str) -> Result<Valu
 }
 
 /// `installDxvk`.
-pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, build: &str) -> Result<Value, String> {
+pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, build: &str, version: Option<&str>) -> Result<Value, String> {
     if !BUILDS.contains(&build) {
         return Err(format!("Invalid DXVK build: {build}"));
     }
@@ -290,7 +320,7 @@ pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, buil
         None => {}
     }
     let (files, bits) = (files_for(api).unwrap_or_default(), pe_bits(&exe).unwrap_or(64));
-    let (tag, release) = fetch(app, build).await?;
+    let (tag, release) = fetch(app, build, version).await?;
     let build = build.to_string();
     tauri::async_runtime::spawn_blocking(move || install(&release, &dir, &build, &tag, files, bits).map(|_| json!({ "version": tag })))
         .await
@@ -438,6 +468,21 @@ mod tests {
         fs::create_dir_all(dir.join("EasyAntiCheat")).unwrap();
         assert_eq!(blocked(&exe, &dir, "dx11"), Some("anticheat"));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "network: lists releases and resolves a tag for each build"]
+    fn lists_live_releases() {
+        tauri::async_runtime::block_on(async {
+            for build in BUILDS {
+                let list = releases(build).await.unwrap();
+                let tag = list[0]["tag"].as_str().unwrap().to_string();
+                let (t, url) = tagged(build, &tag).await.unwrap();
+                assert_eq!(t, tag);
+                assert!(url.contains(".tar.gz"), "{url}");
+            }
+            assert!(crate::optiscaler::releases().await.unwrap().as_array().unwrap().len() > 1);
+        });
     }
 
     #[test]

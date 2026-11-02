@@ -868,15 +868,28 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("getGameUpscalers", shop, objectId),
   getDxvkStatus: (shop: GameShop, objectId: string) =>
     ipcRenderer.invoke("getDxvkStatus", shop, objectId),
-  installDxvk: (shop: GameShop, objectId: string, build: string) =>
-    ipcRenderer.invoke("installDxvk", shop, objectId, build),
+  installDxvk: (
+    shop: GameShop,
+    objectId: string,
+    build: string,
+    version?: string
+  ) => ipcRenderer.invoke("installDxvk", shop, objectId, build, version),
+  getGraphicsReleases: (tool: string) =>
+    ipcRenderer.invoke("getGraphicsReleases", tool),
+  getGraphicsCache: () => ipcRenderer.invoke("getGraphicsCache"),
+  deleteGraphicsCache: (id: string) =>
+    ipcRenderer.invoke("deleteGraphicsCache", id),
   uninstallDxvk: (shop: GameShop, objectId: string) =>
     ipcRenderer.invoke("uninstallDxvk", shop, objectId),
   getOptiscalerGpu: () => ipcRenderer.invoke("getOptiscalerGpu"),
   getOptiscalerStatus: (shop: GameShop, objectId: string, proxy?: string) =>
     ipcRenderer.invoke("getOptiscalerStatus", shop, objectId, proxy),
-  installOptiscaler: (shop: GameShop, objectId: string, proxy: string) =>
-    ipcRenderer.invoke("installOptiscaler", shop, objectId, proxy),
+  installOptiscaler: (
+    shop: GameShop,
+    objectId: string,
+    proxy: string,
+    version?: string
+  ) => ipcRenderer.invoke("installOptiscaler", shop, objectId, proxy, version),
   uninstallOptiscaler: (shop: GameShop, objectId: string) =>
     ipcRenderer.invoke("uninstallOptiscaler", shop, objectId),
   setOptiPatcher: (shop: GameShop, objectId: string, enabled: boolean) =>

@@ -461,8 +461,21 @@ declare global {
     installDxvk: (
       shop: GameShop,
       objectId: string,
-      build: "dxvk" | "gplasync"
+      build: "dxvk" | "gplasync",
+      version?: string
     ) => Promise<{ version: string }>;
+    getGraphicsReleases: (
+      tool: "optiscaler" | "dxvk" | "gplasync"
+    ) => Promise<{ tag: string; prerelease: boolean; date: string | null }[]>;
+    getGraphicsCache: () => Promise<
+      {
+        id: string;
+        tool: "optiscaler" | "fsr4" | "optipatcher" | "dxvk";
+        version: string;
+        size: number;
+      }[]
+    >;
+    deleteGraphicsCache: (id: string) => Promise<void>;
     uninstallDxvk: (shop: GameShop, objectId: string) => Promise<void>;
     getOptiscalerGpu: () => Promise<{
       detected: "native" | "desktop" | "igpu";
@@ -495,7 +508,8 @@ declare global {
     installOptiscaler: (
       shop: GameShop,
       objectId: string,
-      proxy: string
+      proxy: string,
+      version?: string
     ) => Promise<{ version: string }>;
     uninstallOptiscaler: (shop: GameShop, objectId: string) => Promise<void>;
     getOptiscalerProfiles: () => Promise<

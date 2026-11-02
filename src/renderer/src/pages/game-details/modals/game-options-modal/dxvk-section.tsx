@@ -5,6 +5,8 @@ import { Badge, Button, SelectField } from "@renderer/components";
 import type { LibraryGame } from "@types";
 
 // Same layout as the OptiScaler section above it; reuses its styles.
+import { VersionSelect } from "./version-select";
+
 import "./optiscaler-section.scss";
 
 type Status = Awaited<ReturnType<typeof window.electron.getDxvkStatus>>;
@@ -18,6 +20,7 @@ export function DxvkSection({
   const { t } = useTranslation("game_details");
   const [status, setStatus] = useState<Status | null>(null);
   const [build, setBuild] = useState<Build | null>(null);
+  const [version, setVersion] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
@@ -104,8 +107,19 @@ export function DxvkSection({
                   value: b,
                   label: t(`dxvk_build_${b}`),
                 }))}
-                onChange={(e) => setBuild(e.target.value as Build)}
+                onChange={(e) => {
+                  setBuild(e.target.value as Build);
+                  setVersion("");
+                }}
               />
+              {build && (
+                <VersionSelect
+                  tool={build}
+                  value={version}
+                  disabled={busy}
+                  onChange={setVersion}
+                />
+              )}
               {confirmUninstall && (
                 <p className="optiscaler__warning">
                   {t("dxvk_uninstall_confirm")}
@@ -120,7 +134,8 @@ export function DxvkSection({
                       window.electron.installDxvk(
                         game.shop,
                         game.objectId,
-                        build ?? "gplasync"
+                        build ?? "gplasync",
+                        version || undefined
                       )
                     )
                   }
