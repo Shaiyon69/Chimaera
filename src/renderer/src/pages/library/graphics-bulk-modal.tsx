@@ -20,6 +20,7 @@ import { findBundledGame } from "@shared";
 import type { LibraryGame } from "@types";
 
 import { resolveImageSource } from "./library-game-card";
+import { OptiscalerSettings } from "./optiscaler-settings";
 
 import "./graphics-bulk-modal.scss";
 
@@ -75,6 +76,7 @@ export function GraphicsBulkModal({
   onClose,
 }: Readonly<{ visible: boolean; games: LibraryGame[]; onClose: () => void }>) {
   const { t } = useTranslation("library");
+  const [view, setView] = useState<"games" | "settings">("games");
   const [mode, setMode] = useState<Mode>("auto");
   const [gpu, setGpu] = useState<Gpu | null>(null);
   const [tool, setTool] = useState<Tool>("optiscaler");
@@ -117,6 +119,7 @@ export function GraphicsBulkModal({
     // Each open starts from a clean slate, like the results.
     setSelected(new Set());
     setQuery("");
+    setView("games");
     void window.electron
       .getOptiscalerProfiles()
       .then(setProfiles)
@@ -388,237 +391,270 @@ export function GraphicsBulkModal({
           </ConfirmBar>
         )}
 
-        <div className="graphics-bulk__config">
-          {segmented(
-            t("graphics_mode_label"),
-            mode,
-            [
-              { value: "auto", label: t("graphics_mode_auto") },
-              { value: "manual", label: t("graphics_mode_manual") },
-            ],
-            (next) => {
-              if (running || next === mode) return;
-              setMode(next);
-              setResults({});
-            }
-          )}
-          {mode === "auto" ? (
-            <div className="graphics-bulk__auto">
-              <p className="graphics-bulk__auto-gpu">
-                {gpu?.name
-                  ? t("graphics_auto_gpu", { name: gpu.name })
-                  : t("graphics_auto_gpu_unknown")}
-              </p>
-              <ul className="graphics-bulk__auto-rules">
-                <li>{t("graphics_auto_rule_optiscaler")}</li>
-                <li>
-                  {gpu?.vendor === "nvidia"
-                    ? t("graphics_auto_rule_nvidia")
-                    : t("graphics_auto_rule_fg")}
-                </li>
-                <li>{t("graphics_auto_rule_dxvk")}</li>
-                <li>{t("graphics_auto_rule_safe")}</li>
-              </ul>
-            </div>
-          ) : (
-            <>
+        {segmented(
+          t("graphics_view_label"),
+          view,
+          [
+            { value: "games", label: t("graphics_view_games") },
+            { value: "settings", label: t("graphics_view_settings") },
+          ],
+          (next) => {
+            if (running) return;
+            setView(next);
+            // Profiles may have been renamed or deleted in Settings.
+            if (next === "games")
+              void window.electron
+                .getOptiscalerProfiles()
+                .then(setProfiles)
+                .catch(() => setProfiles([]));
+          }
+        )}
+
+        {view === "settings" ? (
+          <OptiscalerSettings />
+        ) : (
+          <>
+            <div className="graphics-bulk__config">
               {segmented(
-                t("graphics_bulk_tool"),
-                tool,
+                t("graphics_mode_label"),
+                mode,
                 [
-                  { value: "optiscaler", label: "OptiScaler" },
-                  { value: "dxvk", label: "DXVK" },
+                  { value: "auto", label: t("graphics_mode_auto") },
+                  { value: "manual", label: t("graphics_mode_manual") },
                 ],
-                switchTool
+                (next) => {
+                  if (running || next === mode) return;
+                  setMode(next);
+                  setResults({});
+                }
               )}
-              <div className="graphics-bulk__fields">
-                {tool === "dxvk" ? (
-                  <SelectField
-                    label={t("graphics_bulk_build")}
-                    value={build}
-                    disabled={running}
-                    options={[
-                      {
-                        key: "gplasync",
-                        value: "gplasync",
-                        label: "DXVK-gplasync",
-                      },
-                      { key: "dxvk", value: "dxvk", label: "DXVK" },
-                    ]}
-                    onChange={(e) => {
-                      setBuild(e.target.value as Build);
-                      setVersion("");
-                      setResults({});
-                    }}
-                  />
-                ) : (
-                  <SelectField
-                    label={t("graphics_bulk_profile")}
-                    value={profile}
-                    disabled={running}
-                    options={
-                      profiles.length
-                        ? profiles.map((p) => ({
-                            key: p.id,
-                            value: p.id,
-                            label: profileName(t, p),
-                          }))
-                        : [
-                            {
-                              key: "default",
-                              value: "default",
-                              label: t("optiscaler_profile_default", {
-                                ns: "game_details",
-                              }),
-                            },
-                          ]
-                    }
-                    onChange={(e) => setProfile(e.target.value)}
-                  />
-                )}
-                <VersionSelect
-                  tool={tool === "dxvk" ? build : "optiscaler"}
-                  value={version}
-                  disabled={running}
-                  onChange={setVersion}
+              {mode === "auto" ? (
+                <div className="graphics-bulk__auto">
+                  <p className="graphics-bulk__auto-gpu">
+                    {gpu?.name
+                      ? t("graphics_auto_gpu", { name: gpu.name })
+                      : t("graphics_auto_gpu_unknown")}
+                  </p>
+                  <ul className="graphics-bulk__auto-rules">
+                    <li>{t("graphics_auto_rule_optiscaler")}</li>
+                    <li>
+                      {gpu?.vendor === "nvidia"
+                        ? t("graphics_auto_rule_nvidia")
+                        : t("graphics_auto_rule_fg")}
+                    </li>
+                    <li>{t("graphics_auto_rule_dxvk")}</li>
+                    <li>{t("graphics_auto_rule_safe")}</li>
+                  </ul>
+                </div>
+              ) : (
+                <>
+                  {segmented(
+                    t("graphics_bulk_tool"),
+                    tool,
+                    [
+                      { value: "optiscaler", label: "OptiScaler" },
+                      { value: "dxvk", label: "DXVK" },
+                    ],
+                    switchTool
+                  )}
+                  <div className="graphics-bulk__fields">
+                    {tool === "dxvk" ? (
+                      <SelectField
+                        label={t("graphics_bulk_build")}
+                        value={build}
+                        disabled={running}
+                        options={[
+                          {
+                            key: "gplasync",
+                            value: "gplasync",
+                            label: "DXVK-gplasync",
+                          },
+                          { key: "dxvk", value: "dxvk", label: "DXVK" },
+                        ]}
+                        onChange={(e) => {
+                          setBuild(e.target.value as Build);
+                          setVersion("");
+                          setResults({});
+                        }}
+                      />
+                    ) : (
+                      <SelectField
+                        label={t("graphics_bulk_profile")}
+                        value={profile}
+                        disabled={running}
+                        options={
+                          profiles.length
+                            ? profiles.map((p) => ({
+                                key: p.id,
+                                value: p.id,
+                                label: profileName(t, p),
+                              }))
+                            : [
+                                {
+                                  key: "default",
+                                  value: "default",
+                                  label: t("optiscaler_profile_default", {
+                                    ns: "game_details",
+                                  }),
+                                },
+                              ]
+                        }
+                        onChange={(e) => setProfile(e.target.value)}
+                      />
+                    )}
+                    <VersionSelect
+                      tool={tool === "dxvk" ? build : "optiscaler"}
+                      value={version}
+                      disabled={running}
+                      onChange={setVersion}
+                    />
+                  </div>
+                </>
+              )}
+              <CheckboxField
+                label={t("graphics_bulk_only_installed")}
+                checked={onlyInstalled}
+                disabled={running}
+                onChange={(e) => setOnlyInstalled(e.target.checked)}
+              />
+            </div>
+
+            <div className="graphics-bulk__toolbar">
+              <div className="graphics-bulk__search">
+                <TextField
+                  theme="dark"
+                  value={query}
+                  placeholder={t("graphics_bulk_search")}
+                  aria-label={t("graphics_bulk_search")}
+                  onChange={(e) => setQuery(e.target.value)}
+                  rightContent={<SearchIcon size={16} />}
                 />
               </div>
-            </>
-          )}
-          <CheckboxField
-            label={t("graphics_bulk_only_installed")}
-            checked={onlyInstalled}
-            disabled={running}
-            onChange={(e) => setOnlyInstalled(e.target.checked)}
-          />
-        </div>
-
-        <div className="graphics-bulk__toolbar">
-          <div className="graphics-bulk__search">
-            <TextField
-              theme="dark"
-              value={query}
-              placeholder={t("graphics_bulk_search")}
-              aria-label={t("graphics_bulk_search")}
-              onChange={(e) => setQuery(e.target.value)}
-              rightContent={<SearchIcon size={16} />}
-            />
-          </div>
-          {segmented(
-            t("graphics_bulk_filter_label"),
-            filter,
-            [
-              { value: "all", label: t("graphics_bulk_filter_all") },
-              { value: "upscaler", label: t("graphics_bulk_filter_upscaler") },
-              {
-                value: "installed",
-                label: t("graphics_bulk_filter_installed"),
-              },
-            ],
-            setFilter
-          )}
-          <span className="graphics-bulk__summary" aria-live="polite">
-            {summary}
-          </span>
-          <div className="graphics-bulk__actions">
-            <Button
-              theme="outline"
-              aria-disabled={running || !shown.length}
-              onClick={() => !running && shown.length && toggleShown()}
-            >
-              {allShownSelected
-                ? t("graphics_bulk_select_none")
-                : t("graphics_bulk_select_all")}
-            </Button>
-            {running ? (
-              <Button theme="danger" onClick={() => (stop.current = true)}>
-                {t("graphics_bulk_stop")}
-              </Button>
-            ) : (
-              <Button
-                theme="primary"
-                aria-disabled={!selected.size}
-                onClick={() => selected.size && void run()}
-              >
-                <ZapIcon size={16} />
-                {t("graphics_bulk_run", { count: selected.size })}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {!candidates.length && (
-          <p className="graphics-bulk__empty">{t("graphics_bulk_none")}</p>
-        )}
-        {!!candidates.length && !shown.length && (
-          <p className="graphics-bulk__empty">{t("graphics_bulk_no_match")}</p>
-        )}
-        <ul className="graphics-bulk__grid">
-          {shown.map((g) => {
-            const key = keyOf(g);
-            const r = results[key];
-            const isSelected = selected.has(key);
-            const info = overview[key];
-            const ribbon = info?.optiscaler
-              ? `OptiScaler ${info.optiscaler}`
-              : info?.dxvk
-                ? `DXVK ${info.dxvk}`
-                : null;
-            return (
-              <li key={key}>
-                <button
-                  type="button"
-                  aria-pressed={isSelected}
-                  aria-disabled={running}
-                  className={cn("graphics-bulk__card", {
-                    "graphics-bulk__card--selected": isSelected,
-                  })}
-                  onClick={() => !running && toggle(key)}
+              {segmented(
+                t("graphics_bulk_filter_label"),
+                filter,
+                [
+                  { value: "all", label: t("graphics_bulk_filter_all") },
+                  {
+                    value: "upscaler",
+                    label: t("graphics_bulk_filter_upscaler"),
+                  },
+                  {
+                    value: "installed",
+                    label: t("graphics_bulk_filter_installed"),
+                  },
+                ],
+                setFilter
+              )}
+              <span className="graphics-bulk__summary" aria-live="polite">
+                {summary}
+              </span>
+              <div className="graphics-bulk__actions">
+                <Button
+                  theme="outline"
+                  aria-disabled={running || !shown.length}
+                  onClick={() => !running && shown.length && toggleShown()}
                 >
-                  <span className="graphics-bulk__cover">
-                    <Cover game={g} />
-                    <span className="graphics-bulk__check" aria-hidden="true">
-                      {isSelected && <CheckIcon size={14} />}
-                    </span>
-                    {ribbon && (
-                      <span className="graphics-bulk__ribbon">
-                        <ZapIcon size={12} />
-                        {ribbon}
-                      </span>
-                    )}
-                    {r?.state === "running" && (
-                      <span className="graphics-bulk__scrim">
-                        <span className="graphics-bulk__spinner" />
-                      </span>
-                    )}
-                  </span>
-                  <span className="graphics-bulk__title">{g.title}</span>
-                  {!!info?.upscalers.length && (
-                    <span className="graphics-bulk__chips">
-                      {CHIPS.filter((c) =>
-                        c.kinds.some((k) => info.upscalers.includes(k))
-                      ).map((c) => (
-                        <span
-                          key={c.label}
-                          className={`graphics-bulk__chip graphics-bulk__chip--${c.tone}`}
-                        >
-                          {c.label}
-                        </span>
-                      ))}
-                    </span>
-                  )}
-                  {r && r.state !== "running" && (
-                    <span
-                      className={`graphics-bulk__result graphics-bulk__result--${r.state}`}
+                  {allShownSelected
+                    ? t("graphics_bulk_select_none")
+                    : t("graphics_bulk_select_all")}
+                </Button>
+                {running ? (
+                  <Button theme="danger" onClick={() => (stop.current = true)}>
+                    {t("graphics_bulk_stop")}
+                  </Button>
+                ) : (
+                  <Button
+                    theme="primary"
+                    aria-disabled={!selected.size}
+                    onClick={() => selected.size && void run()}
+                  >
+                    <ZapIcon size={16} />
+                    {t("graphics_bulk_run", { count: selected.size })}
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {!candidates.length && (
+              <p className="graphics-bulk__empty">{t("graphics_bulk_none")}</p>
+            )}
+            {!!candidates.length && !shown.length && (
+              <p className="graphics-bulk__empty">
+                {t("graphics_bulk_no_match")}
+              </p>
+            )}
+            <ul className="graphics-bulk__grid">
+              {shown.map((g) => {
+                const key = keyOf(g);
+                const r = results[key];
+                const isSelected = selected.has(key);
+                const info = overview[key];
+                const ribbon = info?.optiscaler
+                  ? `OptiScaler ${info.optiscaler}`
+                  : info?.dxvk
+                    ? `DXVK ${info.dxvk}`
+                    : null;
+                return (
+                  <li key={key}>
+                    <button
+                      type="button"
+                      aria-pressed={isSelected}
+                      aria-disabled={running}
+                      className={cn("graphics-bulk__card", {
+                        "graphics-bulk__card--selected": isSelected,
+                      })}
+                      onClick={() => !running && toggle(key)}
                     >
-                      {r.text}
-                    </span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+                      <span className="graphics-bulk__cover">
+                        <Cover game={g} />
+                        <span
+                          className="graphics-bulk__check"
+                          aria-hidden="true"
+                        >
+                          {isSelected && <CheckIcon size={14} />}
+                        </span>
+                        {ribbon && (
+                          <span className="graphics-bulk__ribbon">
+                            <ZapIcon size={12} />
+                            {ribbon}
+                          </span>
+                        )}
+                        {r?.state === "running" && (
+                          <span className="graphics-bulk__scrim">
+                            <span className="graphics-bulk__spinner" />
+                          </span>
+                        )}
+                      </span>
+                      <span className="graphics-bulk__title">{g.title}</span>
+                      {!!info?.upscalers.length && (
+                        <span className="graphics-bulk__chips">
+                          {CHIPS.filter((c) =>
+                            c.kinds.some((k) => info.upscalers.includes(k))
+                          ).map((c) => (
+                            <span
+                              key={c.label}
+                              className={`graphics-bulk__chip graphics-bulk__chip--${c.tone}`}
+                            >
+                              {c.label}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                      {r && r.state !== "running" && (
+                        <span
+                          className={`graphics-bulk__result graphics-bulk__result--${r.state}`}
+                        >
+                          {r.text}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
       </div>
     </Modal>
   );

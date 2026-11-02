@@ -1,20 +1,29 @@
-import { useContext, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button, TextField } from "@renderer/components";
-import { settingsContext } from "@renderer/context";
-import { useAppSelector } from "@renderer/hooks";
+import { setUserPreferences } from "@renderer/features";
+import { useAppDispatch, useAppSelector } from "@renderer/hooks";
+import { levelDBService } from "@renderer/services/leveldb.service";
+import type { UserPreferences } from "@types";
 
-import { SettingsGraphicsCache } from "./settings-graphics-cache";
-import { SettingsOptiscalerProfiles } from "./settings-optiscaler-profiles";
+import { SettingsGraphicsCache } from "./optiscaler-settings-cache";
+import { SettingsOptiscalerProfiles } from "./optiscaler-settings-profiles";
 
 import "./settings-optiscaler.scss";
 
 type DllKey = "optiscalerFsr4ExactPath" | "optiscalerFsr4LossyPath";
 
-export function SettingsContextOptiscaler() {
+/** OptiScaler-wide settings, shown in the Library OptiScaler window (moved from Settings). */
+export function OptiscalerSettings() {
   const { t } = useTranslation("settings");
-  const { updateUserPreferences } = useContext(settingsContext);
+  const dispatch = useAppDispatch();
+  // Same as the Settings page's context: save, then refresh the store from disk.
+  const updateUserPreferences = async (values: Partial<UserPreferences>) => {
+    await window.electron.updateUserPreferences(values);
+    const saved = await levelDBService.get("userPreferences", null, "json");
+    dispatch(setUserPreferences(saved as UserPreferences | null));
+  };
   const prefs = useAppSelector((state) => state.userPreferences.value);
 
   const variant = prefs?.optiscalerFsr4Variant ?? "exact";

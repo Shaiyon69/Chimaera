@@ -26,7 +26,6 @@ import { SettingsContextDownloadSources } from "./settings-context-download-sour
 import { SettingsContextNotifications } from "./settings-context-notifications";
 import { SettingsContextContentGameplay } from "./settings-context-content-gameplay";
 import { SettingsContextIntegrations } from "./settings-context-integrations";
-import { SettingsContextOptiscaler } from "./settings-context-optiscaler";
 import { SettingsContextCompatibility } from "./settings-context-compatibility";
 import { SettingsContextBigPicture } from "./settings-context-big-picture";
 import { SettingsContextEmulation } from "./emulation/settings-context-emulation";
@@ -99,12 +98,6 @@ export default function Settings() {
         group: "games" as const,
       },
       {
-        id: "optiscaler" as const,
-        label: t("optiscaler"),
-        icon: <Wrench size={16} />,
-        group: "games" as const,
-      },
-      {
         id: "emulation" as const,
         label: t("emulation"),
         icon: <Gamepad2 size={16} />,
@@ -154,10 +147,6 @@ export default function Settings() {
 
             if (selectedCategoryId === "compatibility") {
               return <SettingsContextCompatibility />;
-            }
-
-            if (selectedCategoryId === "optiscaler") {
-              return <SettingsContextOptiscaler />;
             }
 
             if (selectedCategoryId === "big_picture") {
