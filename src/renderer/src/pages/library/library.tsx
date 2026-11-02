@@ -41,6 +41,7 @@ import {
   sortLibraryGames,
 } from "@renderer/helpers";
 import { useLocation, useSearchParams } from "react-router-dom";
+import { GraphicsBulkModal } from "./graphics-bulk-modal";
 import { ImportLauncherGamesModal } from "./import-launcher-games-modal";
 import { LibraryGameCard } from "./library-game-card";
 import { LibraryGameCardLarge } from "./library-game-card-large";
@@ -195,6 +196,7 @@ export default function Library() {
     position: { x: number; y: number };
   }>({ game: null, visible: false, position: { x: 0, y: 0 } });
   const [showImportLauncherGames, setShowImportLauncherGames] = useState(false);
+  const [showGraphicsBulk, setShowGraphicsBulk] = useState(false);
   const [showCreateCollectionModal, setShowCreateCollectionModal] =
     useState(false);
 
@@ -793,12 +795,20 @@ export default function Library() {
 
             <div className="library__controls-right">
               {window.electron.platform === "win32" && (
-                <Button
-                  theme="outline"
-                  onClick={() => setShowImportLauncherGames(true)}
-                >
-                  {t("import_launcher_games")}
-                </Button>
+                <>
+                  <Button
+                    theme="outline"
+                    onClick={() => setShowImportLauncherGames(true)}
+                  >
+                    {t("import_launcher_games")}
+                  </Button>
+                  <Button
+                    theme="outline"
+                    onClick={() => setShowGraphicsBulk(true)}
+                  >
+                    {t("graphics_bulk_open")}
+                  </Button>
+                </>
               )}
               <FilterOptions sortBy={sortBy} onSortChange={handleSortChange} />
               <ViewOptions
@@ -966,6 +976,13 @@ export default function Library() {
         />
       )}
 
+      {window.electron.platform === "win32" && (
+        <GraphicsBulkModal
+          visible={showGraphicsBulk}
+          games={library}
+          onClose={() => setShowGraphicsBulk(false)}
+        />
+      )}
       <ImportLauncherGamesModal
         visible={showImportLauncherGames}
         onClose={() => setShowImportLauncherGames(false)}

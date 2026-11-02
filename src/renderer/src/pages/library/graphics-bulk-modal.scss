@@ -1,0 +1,58 @@
+.graphics-bulk {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  &__options {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px 16px;
+    align-items: end;
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__summary {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  &__list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 45vh;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+  }
+
+  &__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px 12px;
+  }
+
+  &__result {
+    max-width: 60%;
+    font-size: 13px;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+
+    &--ok {
+      color: var(--text);
+    }
+
+    &--failed {
+      color: var(--danger);
+    }
+  }
+}
