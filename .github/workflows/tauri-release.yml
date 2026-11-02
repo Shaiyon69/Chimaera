@@ -3,9 +3,15 @@ name: Tauri release
 # Builds the signed Windows installer and the updater latest.json, then publishes them as the
 # chimaera-v<version> release on Shaiyon69/Skibidevs. Binaries ship only from the website, never from this repo.
 # SKIBIDEVS_TOKEN: fine-grained token with Contents read/write on Shaiyon69/Skibidevs only.
+# BROOD_SSH_KEY: read-only deploy key for Shaiyon69/Chimaera-Brood (the game companions).
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the release on Skibidevs (off = build and keep the artifact only)
+        type: boolean
+        default: true
 
 concurrency:
   group: tauri-release
@@ -26,11 +32,20 @@ jobs:
       MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ vars.MAIN_VITE_GOOGLE_CLIENT_SECRET }}
       RENDERER_VITE_EXTERNAL_RESOURCES_URL: ${{ vars.EXTERNAL_RESOURCES_URL }}
       RENDERER_VITE_TORBOX_REFERRAL_CODE: ${{ vars.RENDERER_VITE_TORBOX_REFERRAL_CODE }}
+      # scripts/fetch-companions.mjs builds the companions from this checkout.
+      CHIMAERA_COMPANIONS_DIR: ${{ github.workspace }}/brood
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check out the companions
+        uses: actions/checkout@v4
+        with:
+          repository: Shaiyon69/Chimaera-Brood
+          ssh-key: ${{ secrets.BROOD_SSH_KEY }}
+          path: brood
 
       - name: Check release configuration
         run: |
@@ -47,7 +62,22 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          workspaces: src-tauri -> target
+          workspaces: |
+            src-tauri -> target
+            brood -> target
+
+      # dx builds the companion web apps; rust-cache keeps ~/.cargo/bin, so this installs once.
+      - name: Install Dioxus CLI
+        run: |
+          rustup target add wasm32-unknown-unknown
+          dx --version 2>/dev/null | grep -q "0.7.10" || cargo install dioxus-cli --version 0.7.10 --locked
+
+      # The companion bundle downloads wiki pages and pictures; keep them between runs.
+      - uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/terraria-guide
+          key: companion-wiki-${{ hashFiles('brood/terraria-guide/assets/progression.json') }}
+          restore-keys: companion-wiki-
 
       # The postinstall hook builds the frozen Electron addon; Tauri only needs ludusavi from it.
       - name: Install dependencies
@@ -65,8 +95,11 @@ jobs:
           } > .env
 
       # Updater artifacts are switched on here only, so local `yarn tauri:build` needs no signing key.
+      # tauri:build builds and bundles the companions first.
       - name: Build signed installer
-        run: yarn tauri build --config '{"bundle":{"createUpdaterArtifacts":true}}'
+        run: |
+          yarn tauri:build --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          test -f resources/companions/terraria/_data/pages.json || { echo "::error::Terraria Guide bundle missing"; exit 1; }
 
       # Renamed to the site's download pattern (data/apptic.json: ^chimaera-.*-setup\.exe$).
       - name: Collect release files
@@ -104,6 +137,7 @@ jobs:
           path: release/*
 
       - name: Publish Skibidevs release
+        if: inputs.publish
         run: |
           TAG="chimaera-v$VERSION"
           if gh release view "$TAG" --repo "$SITE_REPO" >/dev/null 2>&1; then
@@ -114,4 +148,5 @@ jobs:
 
       # The site refreshes its download list and updater manifests on this event.
       - name: Tell Skibidevs to refresh
+        if: inputs.publish
         run: gh api "repos/$SITE_REPO/dispatches" -f event_type=app-released
