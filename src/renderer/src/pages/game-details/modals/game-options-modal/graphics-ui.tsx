@@ -7,6 +7,33 @@ import "./graphics-ui.scss";
 
 type Tone = "warn" | "danger";
 
+export type Upscaler = Awaited<
+  ReturnType<typeof window.electron.getGameUpscalers>
+>[number];
+
+/** One shared busy state for the tab: OptiScaler and DXVK both write dxgi.dll. */
+export type GraphicsBusy = {
+  owner: "optiscaler" | "dxvk";
+  label: string;
+} | null;
+
+/**
+ * Which tool fits this game best. DX9/DX10 is DXVK territory (OptiScaler does not
+ * cover it); a DX11 game with no upscaler DLLs gives OptiScaler nothing to replace.
+ * Null while the upscaler scan is still running.
+ */
+export function suggestedTool(
+  api: string,
+  upscalers: Upscaler[] | null
+): "optiscaler" | "dxvk" | null {
+  if (api === "dx9" || api === "dx10") return "dxvk";
+  if (api === "dx11") {
+    if (!upscalers) return null;
+    return upscalers.length ? "optiscaler" : "dxvk";
+  }
+  return api === "dx12" || api === "vulkan" ? "optiscaler" : null;
+}
+
 /** A tinted note; danger notes interrupt screen readers, warnings wait their turn. */
 export function Notice({
   tone,
@@ -48,10 +75,18 @@ export function ConfirmBar({
   const actions = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // Remember who opened the bar, so focus goes back there when it closes.
+    const opener =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     // Button does not forward refs (React 18); Cancel is the first button.
     actions.current?.querySelector("button")?.focus();
     const timer = setTimeout(() => setArmed(true), ARM_DELAY_MS);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      if (opener?.isConnected) opener.focus();
+    };
   }, []);
 
   return (

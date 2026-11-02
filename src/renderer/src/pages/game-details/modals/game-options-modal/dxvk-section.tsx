@@ -4,7 +4,15 @@ import { useTranslation } from "react-i18next";
 import { Badge, Button, SelectField } from "@renderer/components";
 import type { LibraryGame } from "@types";
 
-import { ConfirmBar, Disclosure, Notice, StatusLine } from "./graphics-ui";
+import {
+  ConfirmBar,
+  Disclosure,
+  Notice,
+  StatusLine,
+  suggestedTool,
+  type GraphicsBusy,
+  type Upscaler,
+} from "./graphics-ui";
 import { VersionSelect } from "./version-select";
 
 // Same layout as the OptiScaler section above it; reuses its styles.
@@ -17,13 +25,22 @@ export function DxvkSection({
   game,
   revision,
   onChanged,
-}: Readonly<{ game: LibraryGame; revision: number; onChanged: () => void }>) {
+  busy,
+  onBusy,
+  upscalers,
+}: Readonly<{
+  game: LibraryGame;
+  revision: number;
+  onChanged: () => void;
+  busy: GraphicsBusy;
+  onBusy: (busy: GraphicsBusy) => void;
+  upscalers: Upscaler[] | null;
+}>) {
   const { t } = useTranslation("game_details");
   const headingId = useId();
   const [status, setStatus] = useState<Status | null>(null);
   const [build, setBuild] = useState<Build | null>(null);
   const [version, setVersion] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
@@ -45,7 +62,7 @@ export function DxvkSection({
 
   const run = async (label: string, action: () => Promise<unknown>) => {
     if (busy) return;
-    setBusy(label);
+    onBusy({ owner: "dxvk", label });
     setError(null);
     setNotice(null);
     setConfirmUninstall(false);
@@ -54,7 +71,7 @@ export function DxvkSection({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(null);
+      onBusy(null);
       onChanged();
     }
   };
@@ -81,6 +98,8 @@ export function DxvkSection({
       status.updateAvailable && status.build === build
         ? t("dxvk_update", { version: status.latestTag })
         : t("dxvk_reinstall");
+
+  const suggestion = status ? suggestedTool(status.api, upscalers) : null;
 
   const install = () =>
     void run(t("dxvk_busy_install"), async () => {
@@ -130,7 +149,36 @@ export function DxvkSection({
             </Notice>
           ) : (
             <>
-              {confirmUninstall ? (
+              {suggestion === "dxvk" && !status.installed && (
+                <p className="optiscaler__hint">
+                  {t(
+                    status.api === "dx11"
+                      ? "dxvk_suggested_no_upscaler"
+                      : "dxvk_suggested_old_api"
+                  )}
+                </p>
+              )}
+              {/* The row stays mounted under a confirm, so focus can return to it. */}
+              <div className="optiscaler__actions">
+                {/* aria-disabled keeps focus on the button while busy. */}
+                <Button
+                  theme={suggestion === "optiscaler" ? "outline" : "primary"}
+                  aria-disabled={!!busy || confirmUninstall}
+                  onClick={() => !confirmUninstall && install()}
+                >
+                  {installLabel}
+                </Button>
+                {status.installed && (
+                  <Button
+                    theme="outline"
+                    aria-disabled={!!busy || confirmUninstall}
+                    onClick={() => !busy && setConfirmUninstall(true)}
+                  >
+                    {t("dxvk_uninstall")}
+                  </Button>
+                )}
+              </div>
+              {confirmUninstall && (
                 <ConfirmBar
                   tone="warn"
                   confirmLabel={t("dxvk_uninstall")}
@@ -143,28 +191,8 @@ export function DxvkSection({
                 >
                   <p>{t("dxvk_uninstall_confirm")}</p>
                 </ConfirmBar>
-              ) : (
-                <div className="optiscaler__actions">
-                  {/* aria-disabled keeps focus on the button while busy. */}
-                  <Button
-                    theme="primary"
-                    aria-disabled={!!busy}
-                    onClick={install}
-                  >
-                    {installLabel}
-                  </Button>
-                  {status.installed && (
-                    <Button
-                      theme="outline"
-                      aria-disabled={!!busy}
-                      onClick={() => !busy && setConfirmUninstall(true)}
-                    >
-                      {t("dxvk_uninstall")}
-                    </Button>
-                  )}
-                </div>
               )}
-              <StatusLine text={busy ?? notice} />
+              <StatusLine text={busy?.owner === "dxvk" ? busy.label : notice} />
 
               <Disclosure summary={t("dxvk_install_options")}>
                 <SelectField

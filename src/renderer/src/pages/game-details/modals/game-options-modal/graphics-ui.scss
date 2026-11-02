@@ -36,12 +36,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-
-    // Armed-but-waiting confirm: looks enabled-but-inert rather than vanishing.
-    [aria-disabled="true"] {
-      opacity: 0.6;
-      cursor: default;
-    }
   }
 }
 

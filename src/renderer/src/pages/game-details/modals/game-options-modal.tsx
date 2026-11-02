@@ -64,6 +64,7 @@ import { CreateSteamShortcutModal } from "./create-steam-shortcut-modal";
 import { OptiscalerSection } from "./game-options-modal/optiscaler-section";
 import { DxvkSection } from "./game-options-modal/dxvk-section";
 import { UpscalerBadges } from "./game-options-modal/upscaler-badges";
+import type { GraphicsBusy, Upscaler } from "./game-options-modal/graphics-ui";
 import { LocalSaveBackupsSection } from "./game-options-modal/local-save-backups-section";
 import {
   getAvailableGameSettingsCategory,
@@ -114,6 +115,8 @@ export function GameOptionsModal({
     () => setGraphicsRevision((n) => n + 1),
     []
   );
+  const [graphicsBusy, setGraphicsBusy] = useState<GraphicsBusy>(null);
+  const [upscalers, setUpscalers] = useState<Upscaler[] | null>(null);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showRemoveGameModal, setShowRemoveGameModal] = useState(false);
@@ -777,6 +780,22 @@ export function GameOptionsModal({
     !!game.executablePath &&
     globalThis.window.electron.platform === "win32" &&
     findBundledGame(game)?.optiscaler !== false; // Lantern is Vulkan with built-in FSR4
+
+  // Fetched once for the badges and both sections' tool suggestion.
+  useEffect(() => {
+    if (!visible || !showOptiscalerSettings) return;
+    window.electron
+      .getGameUpscalers(game.shop, game.objectId)
+      .then(setUpscalers)
+      .catch(() => setUpscalers(null));
+  }, [
+    visible,
+    showOptiscalerSettings,
+    game.shop,
+    game.objectId,
+    game.executablePath,
+    graphicsRevision,
+  ]);
   const showDownloadSettings = game.shop !== "custom";
   const shouldShowWinePrefixConfiguration =
     globalThis.window.electron.platform === "linux";
@@ -1093,16 +1112,22 @@ export function GameOptionsModal({
             )}
             {selectedCategory === "optiscaler" && showOptiscalerSettings && (
               <>
-                <UpscalerBadges game={game} revision={graphicsRevision} />
+                <UpscalerBadges found={upscalers} />
                 <OptiscalerSection
                   game={game}
                   revision={graphicsRevision}
                   onChanged={bumpGraphicsRevision}
+                  busy={graphicsBusy}
+                  onBusy={setGraphicsBusy}
+                  upscalers={upscalers}
                 />
                 <DxvkSection
                   game={game}
                   revision={graphicsRevision}
                   onChanged={bumpGraphicsRevision}
+                  busy={graphicsBusy}
+                  onBusy={setGraphicsBusy}
+                  upscalers={upscalers}
                 />
               </>
             )}

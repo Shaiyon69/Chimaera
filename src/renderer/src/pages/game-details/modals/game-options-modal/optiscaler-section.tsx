@@ -10,7 +10,15 @@ import {
 } from "@renderer/components";
 import type { LibraryGame } from "@types";
 
-import { ConfirmBar, Disclosure, Notice, StatusLine } from "./graphics-ui";
+import {
+  ConfirmBar,
+  Disclosure,
+  Notice,
+  StatusLine,
+  suggestedTool,
+  type GraphicsBusy,
+  type Upscaler,
+} from "./graphics-ui";
 import { OptiscalerConfig } from "./optiscaler-config";
 import { VersionSelect } from "./version-select";
 import {
@@ -30,12 +38,21 @@ export function OptiscalerSection({
   game,
   revision,
   onChanged,
-}: Readonly<{ game: LibraryGame; revision: number; onChanged: () => void }>) {
+  busy,
+  onBusy,
+  upscalers,
+}: Readonly<{
+  game: LibraryGame;
+  revision: number;
+  onChanged: () => void;
+  busy: GraphicsBusy;
+  onBusy: (busy: GraphicsBusy) => void;
+  upscalers: Upscaler[] | null;
+}>) {
   const { t } = useTranslation("game_details");
   const headingId = useId();
   const [status, setStatus] = useState<Status | null>(null);
   const [proxy, setProxy] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [profiles, setProfiles] = useState<OptiscalerProfile[]>([]);
@@ -77,7 +94,7 @@ export function OptiscalerSection({
   /** Runs one action; `label` is what the status line says meanwhile. */
   const run = async (label: string, action: () => Promise<unknown>) => {
     if (busy) return;
-    setBusy(label);
+    onBusy({ owner: "optiscaler", label });
     setError(null);
     setNotice(null);
     setConfirm(null);
@@ -86,7 +103,7 @@ export function OptiscalerSection({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(null);
+      onBusy(null);
       onChanged();
     }
   };
@@ -165,6 +182,7 @@ export function OptiscalerSection({
   const reshadeClash = !!status?.reshade && proxy === status.reshade;
   const hasLeftovers = !!status?.leftovers;
   const installBlocked = blockedByDxvk || reshadeClash || hasLeftovers;
+  const suggestion = status ? suggestedTool(status.api, upscalers) : null;
 
   let installLabel = t("optiscaler_install");
   if (status?.installed)
@@ -264,6 +282,31 @@ export function OptiscalerSection({
             <p className="optiscaler__hint">{t("optiscaler_no_fsr4")}</p>
           )}
 
+          {suggestion === "optiscaler" &&
+            status.api === "dx11" &&
+            !status.installed && (
+              <p className="optiscaler__hint">{t("optiscaler_suggested")}</p>
+            )}
+          {/* The row stays mounted under a confirm, so focus can return to it. */}
+          <div className="optiscaler__actions">
+            {/* aria-disabled keeps focus on the button while busy; disabled would drop it. */}
+            <Button
+              theme={suggestion === "dxvk" ? "outline" : "primary"}
+              aria-disabled={!!busy || !!confirm || installBlocked}
+              onClick={() => !busy && !confirm && !installBlocked && install()}
+            >
+              {installLabel}
+            </Button>
+            {status.installed && (
+              <Button
+                theme="outline"
+                aria-disabled={!!busy || !!confirm}
+                onClick={() => !busy && !confirm && setConfirm("uninstall")}
+              >
+                {t("optiscaler_uninstall")}
+              </Button>
+            )}
+          </div>
           {confirm === "install" && (
             <ConfirmBar
               confirmLabel={t("optiscaler_install_anyway")}
@@ -301,28 +344,9 @@ export function OptiscalerSection({
             </ConfirmBar>
           )}
 
-          {!confirm && (
-            <div className="optiscaler__actions">
-              {/* aria-disabled keeps focus on the button while busy; disabled would drop it. */}
-              <Button
-                theme="primary"
-                aria-disabled={!!busy || installBlocked}
-                onClick={() => !busy && !installBlocked && install()}
-              >
-                {installLabel}
-              </Button>
-              {status.installed && (
-                <Button
-                  theme="outline"
-                  aria-disabled={!!busy}
-                  onClick={() => !busy && setConfirm("uninstall")}
-                >
-                  {t("optiscaler_uninstall")}
-                </Button>
-              )}
-            </div>
-          )}
-          <StatusLine text={busy ?? notice} />
+          <StatusLine
+            text={busy?.owner === "optiscaler" ? busy.label : notice}
+          />
 
           <Disclosure summary={t("optiscaler_install_options")}>
             <SelectField

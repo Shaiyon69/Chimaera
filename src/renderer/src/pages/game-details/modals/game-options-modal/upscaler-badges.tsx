@@ -1,31 +1,16 @@
-import { useEffect, useId, useState } from "react";
+import { useId } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@renderer/components";
-import type { LibraryGame } from "@types";
-
-import { Disclosure } from "./graphics-ui";
+import { Disclosure, type Upscaler } from "./graphics-ui";
 
 import "./optiscaler-section.scss";
 
-type Upscaler = Awaited<
-  ReturnType<typeof window.electron.getGameUpscalers>
->[number];
-
 export function UpscalerBadges({
-  game,
-  revision,
-}: Readonly<{ game: LibraryGame; revision: number }>) {
+  found,
+}: Readonly<{ found: Upscaler[] | null }>) {
   const { t } = useTranslation("game_details");
   const headingId = useId();
-  const [found, setFound] = useState<Upscaler[] | null>(null);
-
-  useEffect(() => {
-    void window.electron
-      .getGameUpscalers(game.shop, game.objectId)
-      .then(setFound)
-      .catch(() => setFound(null));
-  }, [game.shop, game.objectId, game.executablePath, revision]);
 
   if (!found) return null;
 
