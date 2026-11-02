@@ -56,6 +56,8 @@ export function GraphicsBulkModal({
   useEffect(() => {
     if (!visible) return;
     setResults({});
+    // Each open starts from a clean slate, like the results.
+    setSelected(new Set());
     void window.electron.getOptiscalerProfiles().then(setProfiles);
   }, [visible]);
 
@@ -103,8 +105,23 @@ export function GraphicsBulkModal({
       };
     // Keep the game's current proxy; new installs follow the Graphics tab default.
     const proxy = s.proxy ?? (s.api === "vulkan" ? "winmm.dll" : "dxgi.dll");
-    if (!s.installed && s.reshade === proxy)
-      return { state: "skipped", text: t("graphics_bulk_blocked_reshade") };
+    if (!s.installed) {
+      if (s.reshade === proxy)
+        return { state: "skipped", text: t("graphics_bulk_blocked_reshade") };
+      if (s.leftovers)
+        return { state: "skipped", text: t("graphics_bulk_blocked_leftovers") };
+      // The single-game flow asks before moving a foreign DLL to backup; bulk cannot ask, so it skips.
+      const withProxy = await window.electron.getOptiscalerStatus(
+        game.shop,
+        game.objectId,
+        proxy
+      );
+      if (withProxy.proxyConflict)
+        return {
+          state: "skipped",
+          text: t("graphics_bulk_blocked_conflict", { proxy }),
+        };
+    }
     const { version: v } = await window.electron.installOptiscaler(
       game.shop,
       game.objectId,
@@ -217,7 +234,7 @@ export function GraphicsBulkModal({
         <div className="graphics-bulk__actions">
           <Button
             theme="outline"
-            disabled={running}
+            disabled={running || !candidates.length}
             onClick={() =>
               setSelected(
                 selected.size === candidates.length
@@ -247,7 +264,7 @@ export function GraphicsBulkModal({
         </div>
 
         {candidates.length ? (
-          <ul className="graphics-bulk__list">
+          <ul className="graphics-bulk__list" aria-live="polite">
             {candidates.map((g) => {
               const key = keyOf(g);
               const r = results[key];
