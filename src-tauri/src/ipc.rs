@@ -146,6 +146,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             themes::close_editor(app, arg_str(args, 0));
             Ok(Value::Null)
         }
+        "getGraphicsOverview" => Ok(graphics_scan::overview(app, args.first().unwrap_or(&Value::Null)).await),
         "getGameUpscalers" => graphics_scan::upscalers(app, shop(args), object_id(args)).await,
         "getDxvkStatus" => dxvk::status(app, shop(args), object_id(args)).await,
         "installDxvk" => dxvk::install_for_game(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default(), arg_str(args, 3)).await,

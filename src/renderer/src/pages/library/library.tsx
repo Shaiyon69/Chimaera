@@ -25,6 +25,7 @@ import {
   FileDirectoryIcon,
   SearchIcon,
   SyncIcon,
+  ZapIcon,
 } from "@primer/octicons-react";
 import { useTranslation } from "react-i18next";
 import { removeDiacritics } from "@shared";
@@ -806,6 +807,7 @@ export default function Library() {
                     theme="outline"
                     onClick={() => setShowGraphicsBulk(true)}
                   >
+                    <ZapIcon size={16} />
                     {t("graphics_bulk_open")}
                   </Button>
                 </>

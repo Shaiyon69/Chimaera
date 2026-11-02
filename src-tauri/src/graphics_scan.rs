@@ -66,6 +66,57 @@ pub(crate) fn reshade_dll(exe_dir: &Path) -> Option<String> {
     RESHADE_NAMES.iter().find(|name| fs::read(exe_dir.join(name)).is_ok_and(|b| b.windows(needle.len()).any(|w| w == needle.as_slice()))).map(|n| n.to_string())
 }
 
+/// Upscaler kinds under `root` from file names only (no reads), shipped by the game itself.
+fn kinds(root: &Path, exe_dir: &Path) -> Vec<&'static str> {
+    let ours: Vec<String> = crate::optiscaler::read_marker(exe_dir)
+        .map(|m| m["files"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|f| f.to_lowercase()).collect())
+        .unwrap_or_default();
+    let mut out: Vec<&'static str> = Vec::new();
+    walk(root, 6, &mut |dir, e| {
+        let lower = e.file_name().to_string_lossy().to_lowercase();
+        // Files our OptiScaler install added say nothing about what the game supports.
+        let added = dir == exe_dir && ours.contains(&lower);
+        if let Some(k) = kind(&lower).filter(|_| !added && e.file_type().is_ok_and(|t| t.is_file())) {
+            if !out.contains(&k) {
+                out.push(k);
+            }
+        }
+        true
+    });
+    out
+}
+
+/// `getGraphicsOverview`: per game, the installed OptiScaler/DXVK versions and the upscaler
+/// kinds it ships. Cheap enough for the whole library: markers and file names only.
+pub async fn overview(app: &AppHandle, games: &Value) -> Value {
+    let dirs: Vec<(String, Option<std::path::PathBuf>)> = games
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|g| {
+            let (shop, id) = (g["shop"].as_str()?, g["objectId"].as_str()?);
+            Some((format!("{shop}:{id}"), context(app, shop, id).ok().map(|(_, d)| d)))
+        })
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out = serde_json::Map::new();
+        for (key, dir) in dirs {
+            let Some(dir) = dir.filter(|d| d.is_dir()) else { continue };
+            out.insert(
+                key,
+                json!({
+                    "optiscaler": crate::optiscaler::read_marker(&dir).and_then(|m| m["version"].as_str().map(str::to_string)),
+                    "dxvk": crate::dxvk::installed_version(&dir),
+                    "upscalers": kinds(&game_root_from_exe_dir(&dir), &dir),
+                }),
+            );
+        }
+        Value::Object(out)
+    })
+    .await
+    .unwrap_or(Value::Null)
+}
+
 /// `getGameUpscalers`.
 pub async fn upscalers(app: &AppHandle, shop: &str, object_id: &str) -> Result<Value, String> {
     let dir = context(app, shop, object_id)?.1;
@@ -110,6 +161,18 @@ mod tests {
         fs::write(dir.join("d3d11.dll"), wide).unwrap();
         assert_eq!(reshade_dll(&dir).as_deref(), Some("d3d11.dll"));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn kinds_skip_files_our_install_added() {
+        let root = std::env::temp_dir().join(format!("chimaera-kinds-{}", crate::library::now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("nvngx_dlss.dll"), b"x").unwrap();
+        fs::write(root.join("nvngx_dlssg.dll"), b"x").unwrap();
+        fs::write(root.join("amd_fidelityfx_dx12.dll"), b"x").unwrap();
+        fs::write(root.join("optiscaler_manager.json"), r#"{"proxy":"dxgi.dll","files":["amd_fidelityfx_dx12.dll"]}"#).unwrap();
+        assert_eq!(kinds(&root, &root), ["dlss", "dlssg"]);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

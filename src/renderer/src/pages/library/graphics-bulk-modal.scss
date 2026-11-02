@@ -1,58 +1,308 @@
+// Graphics bulk install: a selectable cover grid in the library's own language,
+// with the config above it and the run controls in one toolbar.
+// Doubled class: must beat .modal and .modal--large regardless of stylesheet order.
+.modal.graphics-bulk-modal {
+  width: min(1120px, 94vw);
+  max-width: min(1120px, 94vw);
+}
+
 .graphics-bulk {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
+  min-height: 0;
 
-  &__options {
+  &__config {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    border-radius: var(--radius);
+    background: var(--bg-2);
+    box-shadow: var(--rim);
+  }
+
+  &__fields {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 12px 16px;
     align-items: end;
   }
 
-  &__actions {
+  &__segmented {
+    display: inline-flex;
+    align-self: flex-start;
+    padding: 2px;
+    border-radius: 11px;
+    background: var(--fill);
+    box-shadow: var(--rim);
+  }
+
+  &__segment {
+    min-height: 32px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 0.18s var(--ease),
+      color 0.18s var(--ease);
+
+    &:hover {
+      color: var(--text);
+    }
+
+    &--active {
+      background: var(--accent);
+      color: var(--on-accent);
+
+      &:hover {
+        color: var(--on-accent);
+      }
+    }
+  }
+
+  &__toolbar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
+    gap: 8px 12px;
+  }
+
+  &__search {
+    flex: 1 1 220px;
+    max-width: 320px;
   }
 
   &__summary {
-    color: var(--muted);
+    margin-left: auto;
     font-size: 13px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
 
-  &__list {
+  &__actions {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-    max-height: 45vh;
+    gap: 8px;
+  }
+
+  &__empty {
     margin: 0;
-    padding: 0;
+    padding: 32px 0;
+    text-align: center;
+    color: var(--muted);
+  }
+
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 16px;
+    max-height: 52vh;
+    margin: 0;
+    padding: 4px;
     overflow-y: auto;
     list-style: none;
   }
 
-  &__row {
+  &__card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+
+    &[aria-disabled="true"] {
+      cursor: default;
+    }
+
+    &:focus-visible {
+      outline: none;
+
+      .graphics-bulk__cover {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+    }
+
+    &:hover:not([aria-disabled="true"]) .graphics-bulk__cover {
+      transform: translateY(-2px);
+    }
+
+    &--selected .graphics-bulk__cover {
+      box-shadow:
+        0 0 0 2px var(--accent),
+        0 6px 18px rgb(var(--shade) / 0.45);
+    }
+  }
+
+  &__cover {
+    position: relative;
+    display: block;
+    aspect-ratio: 2 / 3;
+    overflow: hidden;
+    border-radius: 10px;
+    background: var(--glass-2);
+    box-shadow: var(--rim);
+    transition:
+      transform 0.18s var(--ease),
+      box-shadow 0.18s var(--ease);
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+  }
+
+  &__cover-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 12px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  &__check {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background: rgb(var(--shade) / 0.55);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.5);
+    color: var(--on-accent);
+
+    .graphics-bulk__card--selected & {
+      background: var(--accent);
+      box-shadow: none;
+    }
+  }
+
+  &__ribbon {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgb(var(--shade) / 0.72);
+    box-shadow: inset 0 0 0 0.5px
+      color-mix(in srgb, var(--accent) 60%, transparent);
+    color: var(--accent-text);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__scrim {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgb(var(--shade) / 0.55);
+  }
+
+  &__spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    border: 2px solid rgb(255 255 255 / 0.25);
+    border-top-color: var(--text);
+    animation: graphics-bulk-spin 0.9s linear infinite;
+  }
+
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__chips {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 4px 12px;
+    gap: 4px;
+  }
+
+  &__chip {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+
+    @each $tone in nvidia, amd, intel {
+      &--#{$tone} {
+        color: var(--vendor-#{$tone});
+        background: color-mix(in srgb, var(--vendor-#{$tone}) 12%, transparent);
+        box-shadow: inset
+          0
+          0
+          0
+          0.5px
+          color-mix(in srgb, var(--vendor-#{$tone}) 40%, transparent);
+      }
+    }
   }
 
   &__result {
-    max-width: 60%;
-    font-size: 13px;
+    font-size: 12px;
+    line-height: 1.4;
     color: var(--muted);
-    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 
     &--ok {
-      color: var(--text);
+      color: var(--good);
     }
 
     &--failed {
       color: var(--danger);
     }
+  }
+}
+
+@keyframes graphics-bulk-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graphics-bulk__cover {
+    transition: none;
+  }
+
+  .graphics-bulk__spinner {
+    animation-duration: 2.4s;
   }
 }

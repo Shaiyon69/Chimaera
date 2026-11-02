@@ -194,6 +194,11 @@ pub(crate) fn installed(dir: &Path) -> bool {
     read_marker(dir).is_some()
 }
 
+/// Installed DXVK version, for the bulk overview.
+pub(crate) fn installed_version(dir: &Path) -> Option<String> {
+    read_marker(dir)?["version"].as_str().map(str::to_string)
+}
+
 fn write_marker(dir: &Path, build: &str, tag: &str, files: &[String], backed: &[String]) -> Result<(), String> {
     let marker = json!({ "build": build, "version": tag, "files": files, "backed_up": backed });
     fs::write(dir.join(MARKER), serde_json::to_string_pretty(&marker).unwrap()).map_err(|e| e.to_string())

@@ -161,6 +161,7 @@ async function renderLibrary(
         "FileDirectoryIcon",
         "SearchIcon",
         "SyncIcon",
+        "ZapIcon",
       ].map((name) => [name, () => null])
     ),
     "react-i18next": { useTranslation: () => ({ t: translate }) },

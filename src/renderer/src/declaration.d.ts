@@ -432,6 +432,26 @@ declare global {
     ) => Promise<boolean>;
     loadMessappKey: (accessToken: string) => Promise<string | null>;
     clearMessappKey: (accessToken: string) => Promise<void>;
+    getGraphicsOverview: (
+      games: { shop: GameShop; objectId: string }[]
+    ) => Promise<
+      Record<
+        string,
+        {
+          optiscaler: string | null;
+          dxvk: string | null;
+          upscalers: (
+            | "dlss"
+            | "dlssg"
+            | "dlssd"
+            | "fsr"
+            | "fsrfg"
+            | "xess"
+            | "xefg"
+          )[];
+        }
+      >
+    >;
     getGameUpscalers: (
       shop: GameShop,
       objectId: string

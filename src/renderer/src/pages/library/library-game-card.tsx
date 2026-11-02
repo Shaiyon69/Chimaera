@@ -45,6 +45,44 @@ interface LibraryGameCardProps {
   onHideTooltip?: () => void;
 }
 
+/** Turns a stored cover URL or path into something an <img> can load. */
+export const resolveImageSource = (
+  imageUrl: string | null | undefined
+): string => {
+  if (!imageUrl) return "";
+
+  const trimmedImageUrl = imageUrl.trim();
+  if (!trimmedImageUrl) return "";
+
+  if (
+    trimmedImageUrl.startsWith("http://") ||
+    trimmedImageUrl.startsWith("https://")
+  ) {
+    return cachedImage(trimmedImageUrl);
+  }
+
+  if (
+    trimmedImageUrl.startsWith("data:") ||
+    trimmedImageUrl.startsWith("blob:")
+  ) {
+    return trimmedImageUrl;
+  }
+
+  if (trimmedImageUrl.startsWith("local:")) {
+    const normalizedLocalPath = trimmedImageUrl
+      .slice("local:".length)
+      .replaceAll("\\", "/");
+    return `local:${normalizedLocalPath}`;
+  }
+
+  const normalizedPath = trimmedImageUrl.replaceAll("\\", "/");
+  if (/^[A-Za-z]:\//.test(normalizedPath) || normalizedPath.startsWith("/")) {
+    return `local:${normalizedPath}`;
+  }
+
+  return normalizedPath;
+};
+
 export const LibraryGameCard = memo(function LibraryGameCard({
   game,
   onContextMenu,
@@ -94,41 +132,6 @@ export const LibraryGameCard = memo(function LibraryGameCard({
 
   const [fallbackIndex, setFallbackIndex] = useState(0);
   const [imageError, setImageError] = useState(false);
-
-  const resolveImageSource = (imageUrl: string | null | undefined): string => {
-    if (!imageUrl) return "";
-
-    const trimmedImageUrl = imageUrl.trim();
-    if (!trimmedImageUrl) return "";
-
-    if (
-      trimmedImageUrl.startsWith("http://") ||
-      trimmedImageUrl.startsWith("https://")
-    ) {
-      return cachedImage(trimmedImageUrl);
-    }
-
-    if (
-      trimmedImageUrl.startsWith("data:") ||
-      trimmedImageUrl.startsWith("blob:")
-    ) {
-      return trimmedImageUrl;
-    }
-
-    if (trimmedImageUrl.startsWith("local:")) {
-      const normalizedLocalPath = trimmedImageUrl
-        .slice("local:".length)
-        .replaceAll("\\", "/");
-      return `local:${normalizedLocalPath}`;
-    }
-
-    const normalizedPath = trimmedImageUrl.replaceAll("\\", "/");
-    if (/^[A-Za-z]:\//.test(normalizedPath) || normalizedPath.startsWith("/")) {
-      return `local:${normalizedPath}`;
-    }
-
-    return normalizedPath;
-  };
 
   const activeImageSource = resolveImageSource(sources[fallbackIndex]);
   const isChosenCoverActive = Boolean(candidates[fallbackIndex]?.isChosenCover);

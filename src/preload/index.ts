@@ -864,6 +864,8 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("loadMessappKey", accessToken),
   clearMessappKey: (accessToken: string) =>
     ipcRenderer.invoke("clearMessappKey", accessToken),
+  getGraphicsOverview: (games: { shop: GameShop; objectId: string }[]) =>
+    ipcRenderer.invoke("getGraphicsOverview", games),
   getGameUpscalers: (shop: GameShop, objectId: string) =>
     ipcRenderer.invoke("getGameUpscalers", shop, objectId),
   getDxvkStatus: (shop: GameShop, objectId: string) =>

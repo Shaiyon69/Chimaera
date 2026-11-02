@@ -31,6 +31,11 @@
   --good: #30d158;
   --warn: #ffb340;
 
+  // Upscaler vendor hues for DLSS/FSR/XeSS chips, lifted for a dark ground.
+  --vendor-nvidia: #8fd14f;
+  --vendor-amd: #ff6b5e;
+  --vendor-intel: #5aaeff;
+
   --radius: 16px;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
