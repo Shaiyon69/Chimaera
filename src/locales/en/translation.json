@@ -1156,6 +1156,8 @@
     "graphics_version_label": "Version",
     "graphics_version_latest": "Latest (updates automatically)",
     "graphics_version_prerelease": "{{tag}} (pre-release)",
+    "optiscaler_compat_hint": "Check the game's entry for tested settings and known issues:",
+    "optiscaler_compat_link": "OptiScaler compatibility list",
     "optiscaler_blocked_dxvk": "DXVK is installed in this game. Uninstall it below to use OptiScaler.",
     "dxvk_title": "DXVK",
     "dxvk_not_installed": "Not installed",

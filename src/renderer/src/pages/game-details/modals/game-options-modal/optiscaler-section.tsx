@@ -5,6 +5,7 @@ import {
   Badge,
   Button,
   CheckboxField,
+  Link,
   SelectField,
 } from "@renderer/components";
 import type { LibraryGame } from "@types";
@@ -20,6 +21,9 @@ import "./optiscaler-section.scss";
 
 type Status = Awaited<ReturnType<typeof window.electron.getOptiscalerStatus>>;
 type Confirm = "install" | "uninstall" | null;
+
+const COMPAT_URL =
+  "https://github.com/optiscaler/OptiScaler/wiki/Compatibility-List";
 
 export function OptiscalerSection({
   game,
@@ -176,6 +180,10 @@ export function OptiscalerSection({
   return (
     <div className="optiscaler">
       <h3>{t("optiscaler_title")}</h3>
+      <p className="optiscaler__hint">
+        {t("optiscaler_compat_hint")}{" "}
+        <Link to={COMPAT_URL}>{t("optiscaler_compat_link")}</Link>
+      </p>
       {status && (
         <>
           <div className="optiscaler__badges">
