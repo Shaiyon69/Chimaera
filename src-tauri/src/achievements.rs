@@ -78,6 +78,11 @@ pub async fn catalogue(app: &AppHandle, shop: &str, object_id: &str, fresh: bool
             let _ = store.put(CATALOGUE, &key, &json!({ "language": lang, "achievements": list, "updatedAt": now_ms() }));
             list
         }
+        // Remember "no achievements" so the startup backfill does not ask again every launch.
+        Ok(Value::Array(_)) if cached.is_null() => {
+            let _ = store.put(CATALOGUE, &key, &json!({ "language": lang, "achievements": [], "updatedAt": now_ms() }));
+            Vec::new()
+        }
         Ok(_) => cached_list(),
         Err(error) => {
             eprintln!("[achievements] catalogue for {key} failed: {error}");
@@ -95,13 +100,39 @@ pub fn unlocked(store: &Store, key: &str) -> Vec<Value> {
 
 /// Rewrites every game's stored counts from its deduplicated unlocks and cached catalogue.
 fn recount_all(store: &Store) -> Result<(), String> {
-    for (key, _) in store.entries(UNLOCKED)? {
-        let catalogue = store.get(CATALOGUE, &key).ok().and_then(|c| c["achievements"].as_array().cloned()).unwrap_or_default();
+    // A catalogue cached before the game joined the library never reached the game record.
+    for (key, cached) in store.entries(CATALOGUE)? {
+        let catalogue = cached["achievements"].as_array().cloned().unwrap_or_default();
         if !catalogue.is_empty() {
             store_counts(store, &key, &unlocked(store, &key), &catalogue)?;
         }
     }
     Ok(())
+}
+
+/// Library games whose catalogue was never fetched; the profile hides games with no count.
+fn missing_catalogues(store: &Store) -> Vec<(String, String)> {
+    live_games(store)
+        .into_iter()
+        .filter(|(key, g)| g["shop"] != "custom" && store.get(CATALOGUE, key).map_or(true, |c| c.is_null()))
+        .filter_map(|(_, g)| Some((g["shop"].as_str()?.to_string(), g["objectId"].as_str()?.to_string())))
+        .collect()
+}
+
+/// Fetches each missing catalogue once, one at a time, and stores the game's counts.
+async fn backfill_catalogues(app: &AppHandle) {
+    let missing = missing_catalogues(&app.state::<Store>());
+    for (shop, id) in missing {
+        let catalogue = catalogue(app, &shop, &id, false).await;
+        if catalogue.is_empty() {
+            continue;
+        }
+        let store = app.state::<Store>();
+        let key = game_key(&shop, &id);
+        if let Err(error) = store_counts(&store, &key, &unlocked(&store, &key), &catalogue) {
+            eprintln!("[achievements] backfill {key} failed: {error}");
+        }
+    }
 }
 
 fn upper(v: &Value) -> String {
@@ -316,6 +347,9 @@ pub fn spawn(app: AppHandle) {
         if let Err(err) = recount_all(&app.state::<Store>()) {
             eprintln!("[achievements] recount failed: {err}");
         }
+        // Network work; kept off the watcher's loop so file scans start right away.
+        let backfill_app = app.clone();
+        tauri::async_runtime::spawn(async move { backfill_catalogues(&backfill_app).await });
         let mut first = true;
         loop {
             let (games, steam) = {
@@ -467,6 +501,27 @@ mod tests {
         recount_all(&store).unwrap();
         let game = store.get("games", "steam:1").unwrap();
         assert_eq!((game["unlockedAchievementCount"].as_i64(), game["achievementCount"].as_i64()), (Some(2), Some(3)));
+    }
+
+    #[test]
+    fn recount_covers_games_with_a_catalogue_but_no_unlocks() {
+        let store = Store::memory().unwrap();
+        store.put("games", "steam:2", &json!({ "title": "G" })).unwrap();
+        store.put(CATALOGUE, "steam:2", &json!({ "achievements": [{ "name": "A" }, { "name": "B" }] })).unwrap();
+        recount_all(&store).unwrap();
+        let game = store.get("games", "steam:2").unwrap();
+        assert_eq!((game["unlockedAchievementCount"].as_i64(), game["achievementCount"].as_i64()), (Some(0), Some(2)));
+    }
+
+    #[test]
+    fn backfill_skips_custom_deleted_and_already_fetched() {
+        let store = Store::memory().unwrap();
+        store.put("games", "steam:1", &json!({ "shop": "steam", "objectId": "1" })).unwrap();
+        store.put("games", "steam:2", &json!({ "shop": "steam", "objectId": "2" })).unwrap();
+        store.put("games", "steam:3", &json!({ "shop": "steam", "objectId": "3", "isDeleted": true })).unwrap();
+        store.put("games", "custom:4", &json!({ "shop": "custom", "objectId": "4" })).unwrap();
+        store.put(CATALOGUE, "steam:2", &json!({ "achievements": [] })).unwrap();
+        assert_eq!(missing_catalogues(&store), vec![("steam".to_string(), "1".to_string())]);
     }
 
     #[test]
