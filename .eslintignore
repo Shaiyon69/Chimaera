@@ -6,3 +6,5 @@ migration.stub
 hydra-python-rpc/
 hydra-native/
 chimaera-next/
+src-tauri/target/
+resources/companions/
