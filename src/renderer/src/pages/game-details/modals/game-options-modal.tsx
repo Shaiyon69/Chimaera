@@ -63,6 +63,7 @@ import type { GameSettingsCategoryId } from "./game-options-modal/types";
 import { CreateSteamShortcutModal } from "./create-steam-shortcut-modal";
 import { OptiscalerSection } from "./game-options-modal/optiscaler-section";
 import { DxvkSection } from "./game-options-modal/dxvk-section";
+import { UpscalerBadges } from "./game-options-modal/upscaler-badges";
 import { LocalSaveBackupsSection } from "./game-options-modal/local-save-backups-section";
 import {
   getAvailableGameSettingsCategory,
@@ -1092,6 +1093,7 @@ export function GameOptionsModal({
             )}
             {selectedCategory === "optiscaler" && showOptiscalerSettings && (
               <>
+                <UpscalerBadges game={game} revision={graphicsRevision} />
                 <OptiscalerSection
                   game={game}
                   revision={graphicsRevision}

@@ -432,6 +432,17 @@ declare global {
     ) => Promise<boolean>;
     loadMessappKey: (accessToken: string) => Promise<string | null>;
     clearMessappKey: (accessToken: string) => Promise<void>;
+    getGameUpscalers: (
+      shop: GameShop,
+      objectId: string
+    ) => Promise<
+      {
+        kind: "dlss" | "dlssg" | "dlssd" | "fsr" | "fsrfg" | "xess" | "xefg";
+        file: string;
+        version: string | null;
+        added: boolean;
+      }[]
+    >;
     getDxvkStatus: (
       shop: GameShop,
       objectId: string

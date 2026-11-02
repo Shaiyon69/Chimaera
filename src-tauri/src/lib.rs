@@ -26,6 +26,7 @@ mod game_installer;
 mod games;
 mod genres;
 mod google_drive;
+mod graphics_scan;
 mod hosters;
 mod http_download;
 mod hydra_api;
