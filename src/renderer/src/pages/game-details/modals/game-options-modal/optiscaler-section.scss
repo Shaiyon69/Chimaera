@@ -1,11 +1,40 @@
+// Graphics tab sections (upscalers, OptiScaler, DXVK). Notes, confirms and
+// collapsible groups live in graphics-ui.scss.
 .optiscaler {
   display: flex;
   flex-direction: column;
   gap: 12px;
 
-  h3,
-  h4 {
+  // A section is separated from the one above by space, not by a rule.
+  & + & {
+    margin-top: 12px;
+  }
+
+  h3 {
     margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+  }
+
+  &--compact {
+    gap: 4px;
+  }
+
+  &__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 12px;
+  }
+
+  &__state {
+    font-size: 13px;
+    color: var(--muted);
+
+    &--on {
+      color: var(--good);
+    }
   }
 
   &__badges,
@@ -15,33 +44,13 @@
     gap: 8px;
   }
 
-  &__warning,
-  &__error {
-    margin: 0;
-    padding: 8px 12px;
-    border-left: 3px solid var(--danger);
-    border-radius: 4px;
-    background: var(--bg-2);
-    font-size: 13px;
-    line-height: 1.5;
-  }
-
-  &__config {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 16px;
-    border-radius: 12px;
-    background: var(--bg-2);
-    box-shadow: inset 0 0 0 0.5px var(--line-strong);
-  }
-
   &__extras {
     display: flex;
     flex-direction: column;
     gap: 4px;
   }
 
+  // File paths are data, so a code face is earned here.
   &__files {
     margin: 0;
     padding-left: 20px;
@@ -58,17 +67,17 @@
     line-height: 1.5;
   }
 
-  &__config-group {
+  &__config {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
 
-    h5 {
-      margin: 0;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--muted);
+    &:disabled {
+      opacity: 0.6;
     }
   }
 

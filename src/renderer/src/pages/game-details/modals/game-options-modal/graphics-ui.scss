@@ -1,0 +1,112 @@
+// Notes and groups for the Graphics tab. Tints come from the status tokens so themes
+// recolour them; edges are the system's 0.5px rim, never a side stripe.
+.graphics-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+
+  &--warn {
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+    box-shadow: inset 0 0 0 0.5px
+      color-mix(in srgb, var(--warn) 45%, transparent);
+  }
+
+  &--danger {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    box-shadow: inset 0 0 0 0.5px
+      color-mix(in srgb, var(--danger) 50%, transparent);
+  }
+
+  p {
+    margin: 0;
+  }
+
+  &__body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    // Armed-but-waiting confirm: looks enabled-but-inert rather than vanishing.
+    [aria-disabled="true"] {
+      opacity: 0.6;
+      cursor: default;
+    }
+  }
+}
+
+.graphics-disclosure {
+  border-radius: 10px;
+  box-shadow: var(--rim);
+
+  &__summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+    list-style: none;
+    border-radius: 10px;
+    transition: background 0.18s var(--ease);
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+
+    &::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-right: 1.5px solid var(--muted);
+      border-bottom: 1.5px solid var(--muted);
+      transform: rotate(-45deg);
+      transition: transform 0.18s var(--ease);
+    }
+
+    &:hover {
+      background: var(--fill);
+    }
+  }
+
+  &[open] > &__summary::before {
+    transform: rotate(45deg);
+  }
+
+  &__body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 4px 12px 12px;
+  }
+}
+
+.graphics-status {
+  margin: 0;
+  min-height: 1lh;
+  font-size: 13px;
+  color: var(--muted);
+
+  &:empty {
+    min-height: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graphics-disclosure__summary,
+  .graphics-disclosure__summary::before {
+    transition: none;
+  }
+}

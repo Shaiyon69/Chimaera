@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { SelectField, TextField } from "@renderer/components";
 import type { LibraryGame } from "@types";
 
+import { Disclosure, Notice } from "./graphics-ui";
+
 // Virtual-key codes OptiScaler accepts for its menu key; names are not translated.
 const KEY_NAMES: Record<string, string> = {
   "0x2D": "Insert",
@@ -28,7 +30,14 @@ type Field = Awaited<
 export function OptiscalerConfig({
   game,
   native,
-}: Readonly<{ game: LibraryGame; native: boolean }>) {
+  revision,
+  disabled,
+}: Readonly<{
+  game: LibraryGame;
+  native: boolean;
+  revision: number;
+  disabled: boolean;
+}>) {
   const { t } = useTranslation("game_details");
   const [fields, setFields] = useState<Field[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -43,12 +52,15 @@ export function OptiscalerConfig({
     }
   }, [game.shop, game.objectId]);
 
+  // Reloads after installs, profile applies and OptiPatcher toggles elsewhere in the tab.
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, revision]);
 
   const save = async (key: string, value: string) => {
     setError(null);
+    // Show the new value at once; the file write follows.
+    setFields((list) => list.map((f) => (f.key === key ? { ...f, value } : f)));
     try {
       await window.electron.setOptiscalerConfig(
         game.shop,
@@ -58,8 +70,8 @@ export function OptiscalerConfig({
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      void load();
     }
-    void load();
   };
 
   if (!fields.length && !error) return null;
@@ -77,13 +89,24 @@ export function OptiscalerConfig({
     (f) => !(native && f.key === "Fsr4ForceEnableInt8")
   );
   const groups = [...new Set(shown.map((f) => f.group))];
+  const menuKey = fields.find((f) => f.key === "ShortcutKey")?.value;
+  // "auto" is OptiScaler's default, Insert.
+  const menuKeyName =
+    menuKey && menuKey !== "auto" ? (KEY_NAMES[menuKey] ?? menuKey) : "Insert";
 
   return (
-    <div className="optiscaler__config">
-      <h4>{t("optiscaler_config_title")}</h4>
-      {groups.map((group) => (
-        <div key={group} className="optiscaler__config-group">
-          <h5>{t(`optiscaler_group_${group}`)}</h5>
+    <fieldset className="optiscaler__config" disabled={disabled}>
+      <p className="optiscaler__hint">
+        {menuKey === "-1"
+          ? t("optiscaler_menu_key_none")
+          : t("optiscaler_menu_key_hint", { key: menuKeyName })}
+      </p>
+      {groups.map((group, i) => (
+        <Disclosure
+          key={group}
+          summary={t(`optiscaler_group_${group}`)}
+          defaultOpen={i === 0}
+        >
           <div className="optiscaler__config-grid">
             {shown
               .filter((f) => f.group === group)
@@ -124,9 +147,13 @@ export function OptiscalerConfig({
                 );
               })}
           </div>
-        </div>
+        </Disclosure>
       ))}
-      {error && <p className="optiscaler__error">{error}</p>}
-    </div>
+      {error && (
+        <Notice tone="danger">
+          <p>{t("graphics_error", { message: error })}</p>
+        </Notice>
+      )}
+    </fieldset>
   );
 }

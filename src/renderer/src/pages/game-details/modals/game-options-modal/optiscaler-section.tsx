@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -10,6 +10,7 @@ import {
 } from "@renderer/components";
 import type { LibraryGame } from "@types";
 
+import { ConfirmBar, Disclosure, Notice, StatusLine } from "./graphics-ui";
 import { OptiscalerConfig } from "./optiscaler-config";
 import { VersionSelect } from "./version-select";
 import {
@@ -31,9 +32,10 @@ export function OptiscalerSection({
   onChanged,
 }: Readonly<{ game: LibraryGame; revision: number; onChanged: () => void }>) {
   const { t } = useTranslation("game_details");
+  const headingId = useId();
   const [status, setStatus] = useState<Status | null>(null);
   const [proxy, setProxy] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [profiles, setProfiles] = useState<OptiscalerProfile[]>([]);
@@ -72,8 +74,10 @@ export function OptiscalerSection({
     void refresh();
   }, [refresh, game.executablePath, revision]);
 
-  const run = async (action: () => Promise<unknown>) => {
-    setBusy(true);
+  /** Runs one action; `label` is what the status line says meanwhile. */
+  const run = async (label: string, action: () => Promise<unknown>) => {
+    if (busy) return;
+    setBusy(label);
     setError(null);
     setNotice(null);
     setConfirm(null);
@@ -82,26 +86,9 @@ export function OptiscalerSection({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
       onChanged();
     }
-  };
-
-  const install = () => {
-    // Anti-cheat injection can get the account banned; a foreign proxy DLL gets moved to backup: ask first.
-    if ((status?.anticheat || status?.proxyConflict) && confirm !== "install") {
-      setConfirm("install");
-      return;
-    }
-    void run(async () => {
-      await window.electron.installOptiscaler(
-        game.shop,
-        game.objectId,
-        proxy ?? "dxgi.dll",
-        version || undefined
-      );
-      if (profile !== "default") await applyProfile();
-    });
   };
 
   const applyProfile = async () => {
@@ -114,8 +101,30 @@ export function OptiscalerSection({
       setNotice(t("optiscaler_profile_skipped", { keys: skipped.join(", ") }));
   };
 
+  const doInstall = () =>
+    void run(t("optiscaler_busy_install"), async () => {
+      const { version: installed } = await window.electron.installOptiscaler(
+        game.shop,
+        game.objectId,
+        proxy ?? "dxgi.dll",
+        version || undefined
+      );
+      if (profile !== "default") await applyProfile();
+      setNotice((skipped) =>
+        [t("optiscaler_installed_notice", { version: installed }), skipped]
+          .filter(Boolean)
+          .join(" ")
+      );
+    });
+
+  // Anti-cheat injection can get the account banned; a foreign proxy DLL gets moved to backup: ask first.
+  const install = () =>
+    status?.anticheat || status?.proxyConflict
+      ? setConfirm("install")
+      : doInstall();
+
   const saveProfile = (name: string) =>
-    void run(async () => {
+    void run(t("optiscaler_busy_save"), async () => {
       const fields = await window.electron.getOptiscalerConfig(
         game.shop,
         game.objectId
@@ -126,20 +135,11 @@ export function OptiscalerSection({
       );
       await window.electron.saveOptiscalerProfile(null, name, values);
       await loadProfiles();
+      setNotice(t("optiscaler_profile_saved", { name }));
     });
 
-  const uninstall = () => {
-    if (confirm !== "uninstall") {
-      setConfirm("uninstall");
-      return;
-    }
-    void run(() =>
-      window.electron.uninstallOptiscaler(game.shop, game.objectId)
-    );
-  };
-
   const findLeftovers = () =>
-    void run(async () => {
+    void run(t("optiscaler_busy_scan"), async () => {
       const { files } = await window.electron.cleanupOptiscaler(
         game.shop,
         game.objectId,
@@ -149,7 +149,7 @@ export function OptiscalerSection({
     });
 
   const moveLeftovers = () =>
-    void run(async () => {
+    void run(t("optiscaler_busy_cleanup"), async () => {
       const { files } = await window.electron.cleanupOptiscaler(
         game.shop,
         game.objectId,
@@ -160,6 +160,11 @@ export function OptiscalerSection({
     });
 
   if (!status && !error) return null;
+
+  const blockedByDxvk = !!status?.dxvkInstalled && !status.installed;
+  const reshadeClash = !!status?.reshade && proxy === status.reshade;
+  const hasLeftovers = !!status?.leftovers;
+  const installBlocked = blockedByDxvk || reshadeClash || hasLeftovers;
 
   let installLabel = t("optiscaler_install");
   if (status?.installed)
@@ -178,23 +183,27 @@ export function OptiscalerSection({
         });
 
   return (
-    <div className="optiscaler">
-      <h3>{t("optiscaler_title")}</h3>
-      <p className="optiscaler__hint">
-        {t("optiscaler_compat_hint")}{" "}
-        <Link to={COMPAT_URL}>{t("optiscaler_compat_link")}</Link>
-      </p>
+    <section className="optiscaler" aria-labelledby={headingId}>
+      <div className="optiscaler__head">
+        <h3 id={headingId}>{t("optiscaler_title")}</h3>
+        {status && (
+          <span
+            className={`optiscaler__state${status.installed ? " optiscaler__state--on" : ""}`}
+          >
+            {status.installed
+              ? t("optiscaler_installed", {
+                  version: status.version,
+                  proxy: status.proxy,
+                })
+              : t("optiscaler_not_installed")}
+          </span>
+        )}
+      </div>
+      <p className="optiscaler__hint">{t("optiscaler_lead")}</p>
+
       {status && (
         <>
           <div className="optiscaler__badges">
-            <Badge>
-              {status.installed
-                ? t("optiscaler_installed", {
-                    version: status.version,
-                    proxy: status.proxy,
-                  })
-                : t("optiscaler_not_installed")}
-            </Badge>
             <Badge>{t("optiscaler_api", { api: status.api })}</Badge>
             <Badge>{fsr4Label}</Badge>
             {status.loaded && (
@@ -207,72 +216,25 @@ export function OptiscalerSection({
               </Badge>
             )}
           </div>
-          <SelectField
-            label={t("optiscaler_proxy_label")}
-            value={proxy ?? ""}
-            disabled={busy}
-            options={status.proxies.map((p) => ({
-              key: p,
-              value: p,
-              label: p,
-            }))}
-            onChange={(e) => {
-              setProxy(e.target.value);
-              setConfirm(null);
-            }}
-          />
-          <VersionSelect
-            tool="optiscaler"
-            value={version}
-            disabled={busy}
-            onChange={setVersion}
-          />
-          <OptiscalerProfilePicker
-            profiles={profiles}
-            value={profile}
-            installed={status.installed}
-            busy={busy}
-            onChange={setProfile}
-            onApply={() => void run(applyProfile)}
-            onSave={saveProfile}
-          />
-          {!status.fsr4Available && (
-            <p className="optiscaler__warning">{t("optiscaler_no_fsr4")}</p>
+
+          {blockedByDxvk && (
+            <Notice tone="warn">
+              <p>{t("optiscaler_blocked_dxvk")}</p>
+            </Notice>
           )}
-          {confirm === "install" && status.anticheat && (
-            <p className="optiscaler__warning">
-              {t("optiscaler_anticheat_warning", { name: status.anticheat })}
-            </p>
-          )}
-          {confirm === "install" && status.proxyConflict && (
-            <p className="optiscaler__warning">
-              {t("optiscaler_proxy_conflict_warning", {
-                proxy: status.proxyConflict,
-              })}
-            </p>
-          )}
-          {confirm === "uninstall" && (
-            <p className="optiscaler__warning">
-              {t("optiscaler_uninstall_confirm")}
-            </p>
-          )}
-          {status.reshade && proxy === status.reshade && (
-            <p className="optiscaler__warning">
-              {t("optiscaler_reshade_conflict", { proxy: status.reshade })}
-            </p>
-          )}
-          {status.leftovers && (
-            <div className="optiscaler__extras">
-              <p className="optiscaler__warning">
-                {t("optiscaler_cleanup_hint")}
+          {reshadeClash && (
+            <Notice tone="warn">
+              <p>
+                {t("optiscaler_reshade_conflict", { proxy: status.reshade })}
               </p>
+            </Notice>
+          )}
+          {hasLeftovers && (
+            <Notice tone="warn">
+              <p>{t("optiscaler_cleanup_hint")}</p>
               {leftovers === null ? (
-                <div className="optiscaler__actions">
-                  <Button
-                    theme="outline"
-                    disabled={busy}
-                    onClick={findLeftovers}
-                  >
+                <div className="graphics-notice__actions">
+                  <Button theme="outline" onClick={findLeftovers}>
                     {t("optiscaler_cleanup_find")}
                   </Button>
                 </div>
@@ -283,11 +245,11 @@ export function OptiscalerSection({
                       <li key={f}>{f}</li>
                     ))}
                   </ul>
-                  <div className="optiscaler__actions">
+                  <div className="graphics-notice__actions">
                     <Button
                       theme="danger"
-                      disabled={busy || !leftovers.length}
-                      onClick={moveLeftovers}
+                      aria-disabled={!leftovers.length}
+                      onClick={() => leftovers.length && moveLeftovers()}
                     >
                       {t("optiscaler_cleanup_move", {
                         count: leftovers.length,
@@ -296,57 +258,150 @@ export function OptiscalerSection({
                   </div>
                 </>
               )}
+            </Notice>
+          )}
+          {!status.fsr4Available && (
+            <p className="optiscaler__hint">{t("optiscaler_no_fsr4")}</p>
+          )}
+
+          {confirm === "install" && (
+            <ConfirmBar
+              confirmLabel={t("optiscaler_install_anyway")}
+              onConfirm={doInstall}
+              onCancel={() => setConfirm(null)}
+            >
+              {status.anticheat && (
+                <p>
+                  {t("optiscaler_anticheat_warning", {
+                    name: status.anticheat,
+                  })}
+                </p>
+              )}
+              {status.proxyConflict && (
+                <p>
+                  {t("optiscaler_proxy_conflict_warning", {
+                    proxy: status.proxyConflict,
+                  })}
+                </p>
+              )}
+            </ConfirmBar>
+          )}
+          {confirm === "uninstall" && (
+            <ConfirmBar
+              tone="warn"
+              confirmLabel={t("optiscaler_uninstall")}
+              onConfirm={() =>
+                void run(t("optiscaler_busy_uninstall"), () =>
+                  window.electron.uninstallOptiscaler(game.shop, game.objectId)
+                )
+              }
+              onCancel={() => setConfirm(null)}
+            >
+              <p>{t("optiscaler_uninstall_confirm")}</p>
+            </ConfirmBar>
+          )}
+
+          {!confirm && (
+            <div className="optiscaler__actions">
+              {/* aria-disabled keeps focus on the button while busy; disabled would drop it. */}
+              <Button
+                theme="primary"
+                aria-disabled={!!busy || installBlocked}
+                onClick={() => !busy && !installBlocked && install()}
+              >
+                {installLabel}
+              </Button>
+              {status.installed && (
+                <Button
+                  theme="outline"
+                  aria-disabled={!!busy}
+                  onClick={() => !busy && setConfirm("uninstall")}
+                >
+                  {t("optiscaler_uninstall")}
+                </Button>
+              )}
             </div>
           )}
-          {status.dxvkInstalled && !status.installed && (
-            <p className="optiscaler__warning">
-              {t("optiscaler_blocked_dxvk")}
-            </p>
-          )}
-          <div className="optiscaler__actions">
-            <Button
-              theme="primary"
-              disabled={
-                busy ||
-                (status.dxvkInstalled && !status.installed) ||
-                (!!status.reshade && proxy === status.reshade)
+          <StatusLine text={busy ?? notice} />
+
+          <Disclosure summary={t("optiscaler_install_options")}>
+            <SelectField
+              label={t("optiscaler_proxy_label")}
+              value={proxy ?? ""}
+              disabled={!!busy}
+              options={status.proxies.map((p) => ({
+                key: p,
+                value: p,
+                label: p,
+              }))}
+              onChange={(e) => {
+                setProxy(e.target.value);
+                setConfirm(null);
+              }}
+            />
+            <p className="optiscaler__hint">{t("optiscaler_proxy_hint")}</p>
+            <VersionSelect
+              tool="optiscaler"
+              value={version}
+              disabled={!!busy}
+              onChange={setVersion}
+            />
+            <OptiscalerProfilePicker
+              profiles={profiles}
+              value={profile}
+              installed={status.installed}
+              busy={!!busy}
+              onChange={setProfile}
+              onApply={() =>
+                void run(t("optiscaler_busy_apply"), async () => {
+                  await applyProfile();
+                  setNotice(
+                    (skipped) => skipped ?? t("optiscaler_profile_applied")
+                  );
+                })
               }
-              onClick={install}
-            >
-              {installLabel}
-            </Button>
-            {status.installed && (
-              <Button theme="danger" disabled={busy} onClick={uninstall}>
-                {t("optiscaler_uninstall")}
-              </Button>
-            )}
-          </div>
+              onSave={saveProfile}
+            />
+          </Disclosure>
+
+          {status.installed && (
+            <Disclosure summary={t("optiscaler_advanced")}>
+              <CheckboxField
+                label={t("optiscaler_optipatcher")}
+                checked={status.optipatcher}
+                onChange={(e) =>
+                  void run(t("optiscaler_busy_optipatcher"), () =>
+                    window.electron.setOptiPatcher(
+                      game.shop,
+                      game.objectId,
+                      e.target.checked
+                    )
+                  )
+                }
+              />
+              <p className="optiscaler__hint">
+                {t("optiscaler_optipatcher_hint")}
+              </p>
+              <OptiscalerConfig
+                game={game}
+                native={status.fsr4Gpu === "native"}
+                revision={revision}
+                disabled={!!busy}
+              />
+            </Disclosure>
+          )}
+
+          <p className="optiscaler__hint">
+            {t("optiscaler_compat_hint")}{" "}
+            <Link to={COMPAT_URL}>{t("optiscaler_compat_link")}</Link>
+          </p>
         </>
       )}
-      {status?.installed && (
-        <div className="optiscaler__extras">
-          <CheckboxField
-            label={t("optiscaler_optipatcher")}
-            checked={status.optipatcher}
-            disabled={busy}
-            onChange={(e) =>
-              void run(() =>
-                window.electron.setOptiPatcher(
-                  game.shop,
-                  game.objectId,
-                  e.target.checked
-                )
-              )
-            }
-          />
-          <p className="optiscaler__hint">{t("optiscaler_optipatcher_hint")}</p>
-        </div>
+      {error && (
+        <Notice tone="danger">
+          <p>{t("graphics_error", { message: error })}</p>
+        </Notice>
       )}
-      {status?.installed && !busy && (
-        <OptiscalerConfig game={game} native={status.fsr4Gpu === "native"} />
-      )}
-      {notice && <p className="optiscaler__hint">{notice}</p>}
-      {error && <p className="optiscaler__error">{error}</p>}
-    </div>
+    </section>
   );
 }

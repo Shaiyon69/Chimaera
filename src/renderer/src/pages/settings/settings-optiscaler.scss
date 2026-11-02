@@ -84,14 +84,16 @@
     }
   }
 
+  // Tint and 0.5px rim from the status token, matching the Graphics tab notes.
   &__warning {
     margin: 0;
-    padding: globals.$spacing-unit calc(globals.$spacing-unit * 1.5);
-    border-left: 3px solid globals.$warning-color;
-    border-radius: 4px;
-    background: rgba(255, 193, 7, 0.08);
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+    box-shadow: inset 0 0 0 0.5px
+      color-mix(in srgb, var(--warn) 45%, transparent);
     font-size: globals.$hint-font-size;
     line-height: 1.5;
-    color: globals.$muted-color;
+    color: var(--text);
   }
 }
