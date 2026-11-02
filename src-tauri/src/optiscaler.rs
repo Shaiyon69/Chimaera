@@ -167,6 +167,27 @@ async fn gpu_names() -> &'static [String] {
         .await
 }
 
+/// Vendor of the strongest card and its name. Discrete cards win over integrated ones,
+/// so a Ryzen iGPU next to a GeForce or an Arc does not decide.
+fn gpu_vendor(names: &[String]) -> (&'static str, Option<String>) {
+    let lows: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
+    let find = |pred: &dyn Fn(&str) -> bool| lows.iter().position(|n| pred(n)).map(|i| names[i].clone());
+    let order: [(&'static str, &dyn Fn(&str) -> bool); 5] = [
+        ("nvidia", &|n| ["nvidia", "geforce", "rtx", "gtx", "quadro"].iter().any(|k| n.contains(k))),
+        ("intel", &has_arc),
+        ("amd", &|n| has_rx(n, |_| true) || n.contains("radeon pro") || n.contains("radeon ai pro")),
+        ("amd", &|n| n.contains("radeon") || n.contains("amd")),
+        ("intel", &|n| n.contains("intel")),
+    ];
+    order.iter().find_map(|(vendor, pred)| find(*pred).map(|name| (*vendor, Some(name)))).unwrap_or(("unknown", names.first().cloned()))
+}
+
+/// `getGpuVendor`: cheap, no downloads; for the OptiScaler window's Auto mode.
+pub async fn vendor() -> Value {
+    let (vendor, name) = gpu_vendor(gpu_names().await);
+    json!({ "vendor": vendor, "name": name })
+}
+
 async fn detect_gpu() -> &'static str {
     classify_gpus(gpu_names().await)
 }
@@ -1269,6 +1290,18 @@ mod tests {
         assert_eq!(c(&["Intel(R) Arc(TM) Graphics"]), "igpu");
         assert_eq!(c(&["AMD Radeon 780M"]), "igpu");
         assert_eq!(c(&[]), "desktop");
+    }
+
+    #[test]
+    fn picks_the_discrete_gpu_vendor() {
+        let v = |n: &[&str]| gpu_vendor(&n.iter().map(|s| s.to_string()).collect::<Vec<_>>()).0;
+        assert_eq!(v(&["AMD Radeon(TM) Graphics", "NVIDIA GeForce RTX 4070"]), "nvidia");
+        assert_eq!(v(&["AMD Radeon RX 6600"]), "amd");
+        assert_eq!(v(&["AMD Radeon(TM) Graphics", "Intel Arc A770 Graphics"]), "intel");
+        assert_eq!(v(&["Intel(R) UHD Graphics 770", "AMD Radeon RX 7800 XT"]), "amd");
+        assert_eq!(v(&["AMD Radeon 780M"]), "amd");
+        assert_eq!(v(&["Intel(R) Iris(R) Xe Graphics"]), "intel");
+        assert_eq!(v(&[]), "unknown");
     }
 
     #[test]

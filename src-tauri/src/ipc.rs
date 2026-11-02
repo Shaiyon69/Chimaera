@@ -158,6 +158,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "getGraphicsCache" => optiscaler::cache_list(app).await,
         "deleteGraphicsCache" => optiscaler::cache_delete(app, arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null),
         "uninstallDxvk" => dxvk::uninstall_for_game(app, shop(args), object_id(args)).map(|_| Value::Null),
+        "getGpuVendor" => Ok(optiscaler::vendor().await),
         "getOptiscalerGpu" => Ok(optiscaler::gpu(app).await),
         "getOptiscalerStatus" => optiscaler::status(app, shop(args), object_id(args), arg_str(args, 2)).await,
         "installOptiscaler" => optiscaler::install_for_game(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default(), arg_str(args, 3)).await,

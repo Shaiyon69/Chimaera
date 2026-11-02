@@ -883,6 +883,7 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("deleteGraphicsCache", id),
   uninstallDxvk: (shop: GameShop, objectId: string) =>
     ipcRenderer.invoke("uninstallDxvk", shop, objectId),
+  getGpuVendor: () => ipcRenderer.invoke("getGpuVendor"),
   getOptiscalerGpu: () => ipcRenderer.invoke("getOptiscalerGpu"),
   getOptiscalerStatus: (shop: GameShop, objectId: string, proxy?: string) =>
     ipcRenderer.invoke("getOptiscalerStatus", shop, objectId, proxy),

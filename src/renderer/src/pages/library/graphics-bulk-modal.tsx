@@ -24,6 +24,9 @@ import { resolveImageSource } from "./library-game-card";
 import "./graphics-bulk-modal.scss";
 
 type Tool = "optiscaler" | "dxvk";
+type Mode = "auto" | "manual";
+type Gpu = Awaited<ReturnType<typeof window.electron.getGpuVendor>>;
+type Plan = { tool: Tool; profile: string; note?: string } | { skip: string };
 type Build = "gplasync" | "dxvk";
 type Filter = "all" | "upscaler" | "installed";
 type Result = { state: "running" | "ok" | "skipped" | "failed"; text: string };
@@ -72,6 +75,8 @@ export function GraphicsBulkModal({
   onClose,
 }: Readonly<{ visible: boolean; games: LibraryGame[]; onClose: () => void }>) {
   const { t } = useTranslation("library");
+  const [mode, setMode] = useState<Mode>("auto");
+  const [gpu, setGpu] = useState<Gpu | null>(null);
   const [tool, setTool] = useState<Tool>("optiscaler");
   const [build, setBuild] = useState<Build>("gplasync");
   const [version, setVersion] = useState("");
@@ -117,12 +122,19 @@ export function GraphicsBulkModal({
       .then(setProfiles)
       .catch(() => setProfiles([]));
     void loadOverview();
+    void window.electron
+      .getGpuVendor()
+      .then(setGpu)
+      .catch(() => setGpu(null));
     // loadOverview only reads candidates, which is already a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, candidates]);
 
-  const installedVersion = (key: string) =>
-    tool === "dxvk" ? overview[key]?.dxvk : overview[key]?.optiscaler;
+  const installedVersion = (key: string) => {
+    if (mode === "auto")
+      return overview[key]?.optiscaler ?? overview[key]?.dxvk;
+    return tool === "dxvk" ? overview[key]?.dxvk : overview[key]?.optiscaler;
+  };
 
   const shown = candidates.filter((g) => {
     const key = keyOf(g);
@@ -154,11 +166,67 @@ export function GraphicsBulkModal({
   const setResult = (key: string, result: Result) =>
     setResults((r) => ({ ...r, [key]: result }));
 
+  /**
+   * Auto mode's pick for one game, from its API, the upscalers it ships and the GPU:
+   * DXVK where OptiScaler has nothing to work with, OptiScaler elsewhere, and the
+   * NukemFG frame-gen profile on AMD/Intel when the game has DLSS frame generation.
+   */
+  const autoPlan = async (game: LibraryGame): Promise<Plan> => {
+    const kinds = overview[keyOf(game)]?.upscalers ?? [];
+    const { api } = await window.electron.getDxvkStatus(
+      game.shop,
+      game.objectId
+    );
+    if (api === "dx9" || api === "dx10" || (api === "dx11" && !kinds.length))
+      return { tool: "dxvk", profile: "default" };
+    if (api !== "dx11" && api !== "dx12" && api !== "vulkan")
+      return { skip: t("graphics_auto_skip_api") };
+    const nvidia = gpu?.vendor === "nvidia";
+    // An Nvidia card already runs the game's own DLSS; OptiScaler adds nothing there.
+    if (nvidia && kinds.includes("dlss"))
+      return { skip: t("graphics_auto_skip_dlss") };
+    return !nvidia && kinds.includes("dlssg")
+      ? {
+          tool: "optiscaler",
+          profile: "amd-fg",
+          note: t("graphics_auto_note_fg"),
+        }
+      : { tool: "optiscaler", profile: "default" };
+  };
+
   const runOne = async (game: LibraryGame): Promise<Result> => {
-    const tag = version || undefined;
+    if (mode === "manual")
+      return runTool(game, tool, profile, build, version || undefined);
+    const plan = await autoPlan(game);
+    if ("skip" in plan) return { state: "skipped", text: plan.skip };
+    return runTool(
+      game,
+      plan.tool,
+      plan.profile,
+      "gplasync",
+      undefined,
+      plan.note
+    );
+  };
+
+  const runTool = async (
+    game: LibraryGame,
+    tool: Tool,
+    profile: string,
+    build: Build,
+    tag: string | undefined,
+    note?: string
+  ): Promise<Result> => {
     const ok = (v: string): Result => ({
       state: "ok",
-      text: t("graphics_bulk_ok", { version: v }),
+      text:
+        mode === "auto"
+          ? t("graphics_bulk_ok_auto", {
+              tool: tool === "dxvk" ? "DXVK" : "OptiScaler",
+              version: v,
+              note: note ? ` · ${note}` : "",
+            })
+          : t("graphics_bulk_ok", { version: v }),
     });
     if (tool === "dxvk") {
       const s = await window.electron.getDxvkStatus(game.shop, game.objectId);
@@ -322,66 +390,101 @@ export function GraphicsBulkModal({
 
         <div className="graphics-bulk__config">
           {segmented(
-            t("graphics_bulk_tool"),
-            tool,
+            t("graphics_mode_label"),
+            mode,
             [
-              { value: "optiscaler", label: "OptiScaler" },
-              { value: "dxvk", label: "DXVK" },
+              { value: "auto", label: t("graphics_mode_auto") },
+              { value: "manual", label: t("graphics_mode_manual") },
             ],
-            switchTool
+            (next) => {
+              if (running || next === mode) return;
+              setMode(next);
+              setResults({});
+            }
           )}
-          <div className="graphics-bulk__fields">
-            {tool === "dxvk" ? (
-              <SelectField
-                label={t("graphics_bulk_build")}
-                value={build}
-                disabled={running}
-                options={[
-                  {
-                    key: "gplasync",
-                    value: "gplasync",
-                    label: "DXVK-gplasync",
-                  },
-                  { key: "dxvk", value: "dxvk", label: "DXVK" },
-                ]}
-                onChange={(e) => {
-                  setBuild(e.target.value as Build);
-                  setVersion("");
-                  setResults({});
-                }}
-              />
-            ) : (
-              <SelectField
-                label={t("graphics_bulk_profile")}
-                value={profile}
-                disabled={running}
-                options={
-                  profiles.length
-                    ? profiles.map((p) => ({
-                        key: p.id,
-                        value: p.id,
-                        label: profileName(t, p),
-                      }))
-                    : [
-                        {
-                          key: "default",
-                          value: "default",
-                          label: t("optiscaler_profile_default", {
-                            ns: "game_details",
-                          }),
-                        },
-                      ]
-                }
-                onChange={(e) => setProfile(e.target.value)}
-              />
-            )}
-            <VersionSelect
-              tool={tool === "dxvk" ? build : "optiscaler"}
-              value={version}
-              disabled={running}
-              onChange={setVersion}
-            />
-          </div>
+          {mode === "auto" ? (
+            <div className="graphics-bulk__auto">
+              <p className="graphics-bulk__auto-gpu">
+                {gpu?.name
+                  ? t("graphics_auto_gpu", { name: gpu.name })
+                  : t("graphics_auto_gpu_unknown")}
+              </p>
+              <ul className="graphics-bulk__auto-rules">
+                <li>{t("graphics_auto_rule_optiscaler")}</li>
+                <li>
+                  {gpu?.vendor === "nvidia"
+                    ? t("graphics_auto_rule_nvidia")
+                    : t("graphics_auto_rule_fg")}
+                </li>
+                <li>{t("graphics_auto_rule_dxvk")}</li>
+                <li>{t("graphics_auto_rule_safe")}</li>
+              </ul>
+            </div>
+          ) : (
+            <>
+              {segmented(
+                t("graphics_bulk_tool"),
+                tool,
+                [
+                  { value: "optiscaler", label: "OptiScaler" },
+                  { value: "dxvk", label: "DXVK" },
+                ],
+                switchTool
+              )}
+              <div className="graphics-bulk__fields">
+                {tool === "dxvk" ? (
+                  <SelectField
+                    label={t("graphics_bulk_build")}
+                    value={build}
+                    disabled={running}
+                    options={[
+                      {
+                        key: "gplasync",
+                        value: "gplasync",
+                        label: "DXVK-gplasync",
+                      },
+                      { key: "dxvk", value: "dxvk", label: "DXVK" },
+                    ]}
+                    onChange={(e) => {
+                      setBuild(e.target.value as Build);
+                      setVersion("");
+                      setResults({});
+                    }}
+                  />
+                ) : (
+                  <SelectField
+                    label={t("graphics_bulk_profile")}
+                    value={profile}
+                    disabled={running}
+                    options={
+                      profiles.length
+                        ? profiles.map((p) => ({
+                            key: p.id,
+                            value: p.id,
+                            label: profileName(t, p),
+                          }))
+                        : [
+                            {
+                              key: "default",
+                              value: "default",
+                              label: t("optiscaler_profile_default", {
+                                ns: "game_details",
+                              }),
+                            },
+                          ]
+                    }
+                    onChange={(e) => setProfile(e.target.value)}
+                  />
+                )}
+                <VersionSelect
+                  tool={tool === "dxvk" ? build : "optiscaler"}
+                  value={version}
+                  disabled={running}
+                  onChange={setVersion}
+                />
+              </div>
+            </>
+          )}
           <CheckboxField
             label={t("graphics_bulk_only_installed")}
             checked={onlyInstalled}

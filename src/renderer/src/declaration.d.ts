@@ -497,6 +497,10 @@ declare global {
     >;
     deleteGraphicsCache: (id: string) => Promise<void>;
     uninstallDxvk: (shop: GameShop, objectId: string) => Promise<void>;
+    getGpuVendor: () => Promise<{
+      vendor: "nvidia" | "amd" | "intel" | "unknown";
+      name: string | null;
+    }>;
     getOptiscalerGpu: () => Promise<{
       detected: "native" | "desktop" | "igpu";
       effective: "native" | "desktop" | "igpu";
