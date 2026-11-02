@@ -55,10 +55,13 @@ fn files_for(api: &str) -> Option<&'static [&'static str]> {
     }
 }
 
-/// Why install is refused, if it is: "optiscaler", "anticheat" or "api".
+/// Why install is refused, if it is: "optiscaler", "reshade", "anticheat" or "api".
 fn blocked(exe: &Path, dir: &Path, api: &str) -> Option<&'static str> {
     if crate::optiscaler::read_marker(dir).is_some() {
         Some("optiscaler")
+    } else if crate::graphics_scan::reshade_dll(dir).is_some_and(|r| files_for(api).is_some_and(|f| f.contains(&r.as_str()))) {
+        // DXVK would move ReShade's DLL to backup and silently turn it off.
+        Some("reshade")
     } else if detect_anticheat(&game_root_from_exe_dir(dir)).is_some() {
         // Swapping the game's own graphics DLLs trips anti-cheat; never offer it there.
         Some("anticheat")
@@ -282,6 +285,7 @@ pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, buil
     match blocked(&exe, &dir, api) {
         Some("optiscaler") => return Err("OptiScaler is installed in this game; uninstall it first".into()),
         Some("anticheat") => return Err("This game uses anti-cheat; DXVK is not allowed here".into()),
+        Some("reshade") => return Err("ReShade uses one of the DLLs DXVK replaces; remove ReShade or install it under another name".into()),
         Some(_) => return Err(format!("DXVK supports DirectX 9-11 games only (detected: {api})")),
         None => {}
     }
@@ -425,6 +429,12 @@ mod tests {
         fs::write(dir.join(crate::optiscaler::MARKER), r#"{"proxy":"dxgi.dll"}"#).unwrap();
         assert_eq!(blocked(&exe, &dir, "dx11"), Some("optiscaler"));
         fs::remove_file(dir.join(crate::optiscaler::MARKER)).unwrap();
+        let reshade: Vec<u8> = "ReShade".bytes().flat_map(|b| [b, 0]).collect();
+        fs::write(dir.join("dxgi.dll"), reshade).unwrap();
+        assert_eq!(blocked(&exe, &dir, "dx11"), Some("reshade"));
+        // DX9 only replaces d3d9.dll, so ReShade as dxgi.dll is fine there.
+        assert_eq!(blocked(&exe, &dir, "dx9"), None);
+        fs::remove_file(dir.join("dxgi.dll")).unwrap();
         fs::create_dir_all(dir.join("EasyAntiCheat")).unwrap();
         assert_eq!(blocked(&exe, &dir, "dx11"), Some("anticheat"));
         fs::remove_dir_all(dir).unwrap();

@@ -217,6 +217,11 @@ export function OptiscalerSection({
               {t("optiscaler_uninstall_confirm")}
             </p>
           )}
+          {status.reshade && proxy === status.reshade && (
+            <p className="optiscaler__warning">
+              {t("optiscaler_reshade_conflict", { proxy: status.reshade })}
+            </p>
+          )}
           {status.dxvkInstalled && !status.installed && (
             <p className="optiscaler__warning">
               {t("optiscaler_blocked_dxvk")}
@@ -225,7 +230,11 @@ export function OptiscalerSection({
           <div className="optiscaler__actions">
             <Button
               theme="primary"
-              disabled={busy || (status.dxvkInstalled && !status.installed)}
+              disabled={
+                busy ||
+                (status.dxvkInstalled && !status.installed) ||
+                (!!status.reshade && proxy === status.reshade)
+              }
               onClick={install}
             >
               {installLabel}

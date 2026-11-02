@@ -455,7 +455,7 @@ declare global {
       api: string;
       bits: 32 | 64 | null;
       anticheat: string | null;
-      blockedBy: "optiscaler" | "anticheat" | "api" | null;
+      blockedBy: "optiscaler" | "reshade" | "anticheat" | "api" | null;
       loaded: boolean;
     }>;
     installDxvk: (
@@ -489,6 +489,7 @@ declare global {
       proxyConflict: string | null;
       dxvkInstalled: boolean;
       optipatcher: boolean;
+      reshade: string | null;
     }>;
     installOptiscaler: (
       shop: GameShop,

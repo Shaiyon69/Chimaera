@@ -982,6 +982,8 @@ pub async fn status(app: &AppHandle, shop: &str, object_id: &str, proxy: Option<
         "proxyConflict": conflict,
         "dxvkInstalled": crate::dxvk::installed(&dir),
         "optipatcher": has_tracked_file(&dir, OPTIPATCHER_REL),
+        // Ours never counts: after an install the proxy is OptiScaler, not ReShade.
+        "reshade": if marker.is_some() { None } else { crate::graphics_scan::reshade_dll(&dir) },
     }))
 }
 
@@ -1006,6 +1008,9 @@ pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, prox
     // One per game: DXVK replaces dxgi.dll too, and chaining the two is not supported.
     if crate::dxvk::installed(&dir) {
         return Err("DXVK is installed in this game; uninstall it first".into());
+    }
+    if read_marker(&dir).is_none() && crate::graphics_scan::reshade_dll(&dir).as_deref() == Some(proxy) {
+        return Err(format!("ReShade is installed as {proxy}; pick another injection DLL"));
     }
     let prefs = prefs(app);
     let (tag, payload) = fetch_latest(app, nightly(&prefs)).await?;

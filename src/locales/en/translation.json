@@ -1145,6 +1145,8 @@
     "upscalers_kind_fsrfg": "FSR frame gen",
     "upscalers_kind_xess": "XeSS",
     "upscalers_kind_xefg": "XeSS frame gen",
+    "optiscaler_reshade_conflict": "ReShade is installed as {{proxy}}. Pick another injection DLL above. To keep ReShade working through OptiScaler, rename its DLL to ReShade64.dll and turn on Load ReShade after installing.",
+    "dxvk_blocked_reshade": "ReShade uses one of the DLLs DXVK replaces. Remove ReShade or install it under another DLL name to use DXVK.",
     "optiscaler_blocked_dxvk": "DXVK is installed in this game. Uninstall it below to use OptiScaler.",
     "dxvk_title": "DXVK",
     "dxvk_not_installed": "Not installed",

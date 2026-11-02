@@ -56,6 +56,16 @@ fn scan(root: &Path, exe_dir: &Path) -> Vec<Value> {
     out
 }
 
+/// DLL names ReShade can be installed as.
+const RESHADE_NAMES: &[&str] = &["dxgi.dll", "d3d9.dll", "d3d11.dll", "d3d12.dll", "opengl32.dll", "dinput8.dll", "winmm.dll", "version.dll", "dbghelp.dll", "wininet.dll", "winhttp.dll"];
+
+/// The DLL ReShade is installed as next to the exe, found by its "ReShade" version
+/// strings (UTF-16). A leftover ReShade.ini alone does not count.
+pub(crate) fn reshade_dll(exe_dir: &Path) -> Option<String> {
+    let needle: Vec<u8> = "ReShade".bytes().flat_map(|b| [b, 0]).collect();
+    RESHADE_NAMES.iter().find(|name| fs::read(exe_dir.join(name)).is_ok_and(|b| b.windows(needle.len()).any(|w| w == needle.as_slice()))).map(|n| n.to_string())
+}
+
 /// `getGameUpscalers`.
 pub async fn upscalers(app: &AppHandle, shop: &str, object_id: &str) -> Result<Value, String> {
     let dir = context(app, shop, object_id)?.1;
@@ -87,6 +97,19 @@ mod tests {
         bytes.extend(((1u32 << 16) | 0).to_le_bytes());
         assert_eq!(file_version(&bytes).as_deref(), Some("310.2.1.0"));
         assert_eq!(file_version(b"no version here"), None);
+    }
+
+    #[test]
+    fn finds_reshade_by_its_version_strings() {
+        let dir = std::env::temp_dir().join(format!("chimaera-reshade-{}", crate::library::now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("dxgi.dll"), b"plain dll").unwrap();
+        fs::write(dir.join("ReShade.ini"), b"[GENERAL]").unwrap();
+        assert_eq!(reshade_dll(&dir), None);
+        let wide: Vec<u8> = "ProductName\0ReShade".bytes().flat_map(|b| [b, 0]).collect();
+        fs::write(dir.join("d3d11.dll"), wide).unwrap();
+        assert_eq!(reshade_dll(&dir).as_deref(), Some("d3d11.dll"));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
