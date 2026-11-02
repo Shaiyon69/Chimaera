@@ -12,6 +12,7 @@ import {
   type OptiscalerProfile,
 } from "@renderer/pages/game-details/modals/game-options-modal/optiscaler-profiles";
 import { VersionSelect } from "@renderer/pages/game-details/modals/game-options-modal/version-select";
+import { ConfirmBar } from "@renderer/pages/game-details/modals/game-options-modal/graphics-ui";
 import { findBundledGame } from "@shared";
 import type { LibraryGame } from "@types";
 
@@ -40,6 +41,7 @@ export function GraphicsBulkModal({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [results, setResults] = useState<Record<string, Result>>({});
   const [running, setRunning] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
   const stop = useRef(false);
 
   // Same rule as the Graphics tab: an exe, Windows, and not a bundled game that opts out.
@@ -88,7 +90,7 @@ export function GraphicsBulkModal({
         build,
         tag
       );
-      return { state: "ok", text: v };
+      return { state: "ok", text: t("graphics_bulk_ok", { version: v }) };
     }
     const s = await window.electron.getOptiscalerStatus(
       game.shop,
@@ -134,7 +136,7 @@ export function GraphicsBulkModal({
         game.objectId,
         profile
       );
-    return { state: "ok", text: v };
+    return { state: "ok", text: t("graphics_bulk_ok", { version: v }) };
   };
 
   const run = async () => {
@@ -149,7 +151,10 @@ export function GraphicsBulkModal({
       try {
         setResult(key, await runOne(game));
       } catch (err) {
-        setResult(key, { state: "failed", text: errorText(err) });
+        setResult(key, {
+          state: "failed",
+          text: t("graphics_bulk_failed", { message: errorText(err) }),
+        });
       }
     }
     setRunning(false);
@@ -170,12 +175,27 @@ export function GraphicsBulkModal({
       title={t("graphics_bulk_title")}
       description={t("graphics_bulk_description")}
       onClose={() => {
-        stop.current = true;
+        // Closing mid-run would hide a game that is still installing; ask first.
+        if (running) return setConfirmClose(true);
         onClose();
       }}
       large
     >
       <div className="graphics-bulk">
+        {confirmClose && (
+          <ConfirmBar
+            tone="warn"
+            confirmLabel={t("graphics_bulk_close_anyway")}
+            onConfirm={() => {
+              stop.current = true;
+              setConfirmClose(false);
+              onClose();
+            }}
+            onCancel={() => setConfirmClose(false)}
+          >
+            <p>{t("graphics_bulk_close_confirm")}</p>
+          </ConfirmBar>
+        )}
         <div className="graphics-bulk__options">
           <SelectField
             label={t("graphics_bulk_tool")}
@@ -188,6 +208,8 @@ export function GraphicsBulkModal({
             onChange={(e) => {
               setTool(e.target.value as Tool);
               setVersion("");
+              // Results belong to the tool that produced them.
+              setResults({});
             }}
           />
           {tool === "dxvk" ? (
@@ -202,6 +224,7 @@ export function GraphicsBulkModal({
               onChange={(e) => {
                 setBuild(e.target.value as Build);
                 setVersion("");
+                setResults({});
               }}
             />
           ) : (
@@ -260,11 +283,14 @@ export function GraphicsBulkModal({
               {t("graphics_bulk_run", { count: selected.size })}
             </Button>
           )}
-          {summary && <span className="graphics-bulk__summary">{summary}</span>}
+          {/* Always mounted so screen readers announce each new total, not each row. */}
+          <span className="graphics-bulk__summary" aria-live="polite">
+            {summary}
+          </span>
         </div>
 
         {candidates.length ? (
-          <ul className="graphics-bulk__list" aria-live="polite">
+          <ul className="graphics-bulk__list">
             {candidates.map((g) => {
               const key = keyOf(g);
               const r = results[key];
