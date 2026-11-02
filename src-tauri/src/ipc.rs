@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, genres, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, dxvk, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, genres, google_drive, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -146,6 +146,9 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             themes::close_editor(app, arg_str(args, 0));
             Ok(Value::Null)
         }
+        "getDxvkStatus" => dxvk::status(app, shop(args), object_id(args)).await,
+        "installDxvk" => dxvk::install_for_game(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()).await,
+        "uninstallDxvk" => dxvk::uninstall_for_game(app, shop(args), object_id(args)).map(|_| Value::Null),
         "getOptiscalerGpu" => Ok(optiscaler::gpu(app).await),
         "getOptiscalerStatus" => optiscaler::status(app, shop(args), object_id(args), arg_str(args, 2)).await,
         "installOptiscaler" => optiscaler::install_for_game(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()).await,

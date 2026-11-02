@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, OnceCell};
 use crate::games::game_key;
 use crate::store::Store;
 
-const MARKER: &str = "optiscaler_manager.json";
+pub(crate) const MARKER: &str = "optiscaler_manager.json";
 const BACKUP: &str = ".optiscaler_backup";
 const FSR4_DLL: &str = "amd_fidelityfx_upscaler_dx12.dll";
 const PROXIES: &[&str] = &["dxgi.dll", "winmm.dll", "version.dll", "dbghelp.dll", "d3d12.dll", "wininet.dll", "winhttp.dll"];
@@ -30,7 +30,7 @@ const TAG_TTL: Duration = Duration::from_secs(60 * 60);
 
 // ---------- detection ----------
 
-fn walk(root: &Path, max_depth: usize, visit: &mut dyn FnMut(&Path, &fs::DirEntry) -> bool) {
+pub(crate) fn walk(root: &Path, max_depth: usize, visit: &mut dyn FnMut(&Path, &fs::DirEntry) -> bool) {
     fn rec(dir: &Path, depth: usize, max: usize, visit: &mut dyn FnMut(&Path, &fs::DirEntry) -> bool) -> bool {
         let Ok(entries) = fs::read_dir(dir) else { return true };
         for e in entries.flatten() {
@@ -66,7 +66,8 @@ fn find_main_exe(game_dir: &Path) -> Option<PathBuf> {
 }
 
 /// Heuristic graphics API from the DLL names embedded in the exe.
-fn detect_api(exe: &Path) -> &'static str {
+/// dx10/dx9 come after vulkan so Vulkan games that also name d3d9 keep their OptiScaler default.
+pub(crate) fn detect_api(exe: &Path) -> &'static str {
     let Ok(bytes) = fs::read(exe) else { return "unknown" };
     let lower = bytes.to_ascii_lowercase();
     let has = |name: &str| {
@@ -74,11 +75,11 @@ fn detect_api(exe: &Path) -> &'static str {
         let wide: Vec<u8> = name.bytes().flat_map(|b| [b, 0]).collect();
         [ascii, wide].iter().any(|n| lower.windows(n.len()).any(|w| w == n.as_slice()))
     };
-    [("d3d12", "dx12"), ("d3d11", "dx11"), ("vulkan-1", "vulkan")].into_iter().find(|(n, _)| has(n)).map_or("unknown", |(_, a)| a)
+    [("d3d12", "dx12"), ("d3d11", "dx11"), ("vulkan-1", "vulkan"), ("d3d10", "dx10"), ("d3d9", "dx9")].into_iter().find(|(n, _)| has(n)).map_or("unknown", |(_, a)| a)
 }
 
 /// Name of the first anti-cheat file or folder within 4 levels.
-fn detect_anticheat(game_dir: &Path) -> Option<String> {
+pub(crate) fn detect_anticheat(game_dir: &Path) -> Option<String> {
     let mut hit = None;
     walk(game_dir, 4, &mut |_, e| {
         let name = e.file_name().to_string_lossy().into_owned();
@@ -92,7 +93,7 @@ fn detect_anticheat(game_dir: &Path) -> Option<String> {
 }
 
 /// Unreal puts the exe in `<root>/<Game>/Binaries/Win64`; anti-cheat lives at the root.
-fn game_root_from_exe_dir(exe_dir: &Path) -> PathBuf {
+pub(crate) fn game_root_from_exe_dir(exe_dir: &Path) -> PathBuf {
     let parts: Vec<_> = exe_dir.components().collect();
     match parts.iter().position(|p| p.as_os_str().to_string_lossy().eq_ignore_ascii_case("binaries")) {
         Some(i) if i > 1 => parts[..i - 1].iter().collect(),
@@ -194,7 +195,7 @@ fn github() -> Result<reqwest::Client, String> {
     reqwest::Client::builder().user_agent("Chimaera").build().map_err(|e| e.to_string())
 }
 
-async fn github_json(url: &str, timeout: u64) -> Result<Value, String> {
+pub(crate) async fn github_json(url: &str, timeout: u64) -> Result<Value, String> {
     github()?
         .get(url)
         .header("Accept", "application/vnd.github+json")
@@ -208,7 +209,7 @@ async fn github_json(url: &str, timeout: u64) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
-async fn download(url: &str, dest: &Path, timeout: u64) -> Result<(), String> {
+pub(crate) async fn download(url: &str, dest: &Path, timeout: u64) -> Result<(), String> {
     let bytes = github()?.get(url).timeout(Duration::from_secs(timeout)).send().await.and_then(|r| r.error_for_status()).map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?;
     fs::write(dest, bytes).map_err(|e| e.to_string())
 }
@@ -301,7 +302,7 @@ fn newest_cached_release(cache: &Path) -> Option<(String, PathBuf)> {
 }
 
 /// localeCompare with `numeric: true`, enough for version tags.
-fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+pub(crate) fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     fn chunks(s: &str) -> Vec<(bool, String)> {
         let mut out: Vec<(bool, String)> = Vec::new();
         for c in s.chars() {
@@ -438,7 +439,7 @@ fn resolve_fsr4_dll(app: &AppHandle, prefs: &Value, gpu: &str) -> Option<PathBuf
 
 // ---------- install ----------
 
-fn read_marker(exe_dir: &Path) -> Option<Value> {
+pub(crate) fn read_marker(exe_dir: &Path) -> Option<Value> {
     let marker: Value = serde_json::from_str(&fs::read_to_string(exe_dir.join(MARKER)).ok()?).ok()?;
     // Other tools (the Bloodborne port) write a marker of the same name.
     marker["proxy"].as_str().filter(|p| PROXIES.contains(p))?;
@@ -469,7 +470,7 @@ fn list_files(root: &Path) -> Vec<String> {
 }
 
 /// A marker entry must stay inside the game folder; the marker file is not trusted blindly.
-fn inside(exe_dir: &Path, rel: &str) -> Option<PathBuf> {
+pub(crate) fn inside(exe_dir: &Path, rel: &str) -> Option<PathBuf> {
     let path = Path::new(rel);
     path.components().all(|c| matches!(c, std::path::Component::Normal(_))).then(|| exe_dir.join(path))
 }
@@ -708,7 +709,7 @@ fn resolve_injected_exe(exe: PathBuf) -> PathBuf {
     }
 }
 
-fn context(app: &AppHandle, shop: &str, object_id: &str) -> Result<(PathBuf, PathBuf), String> {
+pub(crate) fn context(app: &AppHandle, shop: &str, object_id: &str) -> Result<(PathBuf, PathBuf), String> {
     let game = app.state::<Store>().get("games", &game_key(shop, object_id))?;
     let exe = game["executablePath"].as_str().filter(|p| !p.is_empty()).ok_or("Game has no executable path")?;
     // A .bat launcher is not the injected process; target the tracked exe.
@@ -755,6 +756,7 @@ pub async fn status(app: &AppHandle, shop: &str, object_id: &str, proxy: Option<
         "fsr4Gpu": gpu,
         "fsr4Variant": variant(&prefs),
         "proxyConflict": conflict,
+        "dxvkInstalled": crate::dxvk::installed(&dir),
     }))
 }
 
@@ -776,6 +778,10 @@ pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, prox
         return Err(format!("Invalid proxy: {proxy}"));
     }
     let (exe, dir) = context(app, shop, object_id)?;
+    // One per game: DXVK replaces dxgi.dll too, and chaining the two is not supported.
+    if crate::dxvk::installed(&dir) {
+        return Err("DXVK is installed in this game; uninstall it first".into());
+    }
     let prefs = prefs(app);
     let (tag, payload) = fetch_latest(app, nightly(&prefs)).await?;
     let gpu = resolve_gpu(&prefs).await;

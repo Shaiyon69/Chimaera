@@ -62,6 +62,7 @@ import { DangerZoneSection } from "./game-options-modal/danger-zone-section";
 import type { GameSettingsCategoryId } from "./game-options-modal/types";
 import { CreateSteamShortcutModal } from "./create-steam-shortcut-modal";
 import { OptiscalerSection } from "./game-options-modal/optiscaler-section";
+import { DxvkSection } from "./game-options-modal/dxvk-section";
 import { LocalSaveBackupsSection } from "./game-options-modal/local-save-backups-section";
 import {
   getAvailableGameSettingsCategory,
@@ -106,6 +107,12 @@ export function GameOptionsModal({
   const [transferSpeed, setTransferSpeed] = useState(0);
   const [transferETA, setTransferETA] = useState(0);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  // OptiScaler and DXVK block each other, so a change in one refreshes both.
+  const [graphicsRevision, setGraphicsRevision] = useState(0);
+  const bumpGraphicsRevision = useCallback(
+    () => setGraphicsRevision((n) => n + 1),
+    []
+  );
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showRemoveGameModal, setShowRemoveGameModal] = useState(false);
@@ -1084,7 +1091,18 @@ export function GameOptionsModal({
               />
             )}
             {selectedCategory === "optiscaler" && showOptiscalerSettings && (
-              <OptiscalerSection game={game} />
+              <>
+                <OptiscalerSection
+                  game={game}
+                  revision={graphicsRevision}
+                  onChanged={bumpGraphicsRevision}
+                />
+                <DxvkSection
+                  game={game}
+                  revision={graphicsRevision}
+                  onChanged={bumpGraphicsRevision}
+                />
+              </>
             )}
             {selectedCategory === "save_backups" && (
               <LocalSaveBackupsSection

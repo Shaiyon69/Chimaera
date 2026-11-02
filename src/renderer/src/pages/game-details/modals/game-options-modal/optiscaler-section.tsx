@@ -11,7 +11,11 @@ import "./optiscaler-section.scss";
 type Status = Awaited<ReturnType<typeof window.electron.getOptiscalerStatus>>;
 type Confirm = "install" | "uninstall" | null;
 
-export function OptiscalerSection({ game }: Readonly<{ game: LibraryGame }>) {
+export function OptiscalerSection({
+  game,
+  revision,
+  onChanged,
+}: Readonly<{ game: LibraryGame; revision: number; onChanged: () => void }>) {
   const { t } = useTranslation("game_details");
   const [status, setStatus] = useState<Status | null>(null);
   const [proxy, setProxy] = useState<string | null>(null);
@@ -39,7 +43,7 @@ export function OptiscalerSection({ game }: Readonly<{ game: LibraryGame }>) {
 
   useEffect(() => {
     void refresh();
-  }, [refresh, game.executablePath]);
+  }, [refresh, game.executablePath, revision]);
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -51,7 +55,7 @@ export function OptiscalerSection({ game }: Readonly<{ game: LibraryGame }>) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
-      void refresh();
+      onChanged();
     }
   };
 
@@ -158,8 +162,17 @@ export function OptiscalerSection({ game }: Readonly<{ game: LibraryGame }>) {
               {t("optiscaler_uninstall_confirm")}
             </p>
           )}
+          {status.dxvkInstalled && !status.installed && (
+            <p className="optiscaler__warning">
+              {t("optiscaler_blocked_dxvk")}
+            </p>
+          )}
           <div className="optiscaler__actions">
-            <Button theme="primary" disabled={busy} onClick={install}>
+            <Button
+              theme="primary"
+              disabled={busy || (status.dxvkInstalled && !status.installed)}
+              onClick={install}
+            >
               {installLabel}
             </Button>
             {status.installed && (

@@ -15,6 +15,7 @@ mod debrid;
 mod decky;
 mod download_sources;
 mod downloads;
+mod dxvk;
 mod electron_import;
 mod emulator_install;
 mod emulators;

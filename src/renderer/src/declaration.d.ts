@@ -432,6 +432,27 @@ declare global {
     ) => Promise<boolean>;
     loadMessappKey: (accessToken: string) => Promise<string | null>;
     clearMessappKey: (accessToken: string) => Promise<void>;
+    getDxvkStatus: (
+      shop: GameShop,
+      objectId: string
+    ) => Promise<{
+      installed: boolean;
+      build: "dxvk" | "gplasync" | null;
+      version: string | null;
+      latestTag: string | null;
+      updateAvailable: boolean;
+      api: string;
+      bits: 32 | 64 | null;
+      anticheat: string | null;
+      blockedBy: "optiscaler" | "anticheat" | "api" | null;
+      loaded: boolean;
+    }>;
+    installDxvk: (
+      shop: GameShop,
+      objectId: string,
+      build: "dxvk" | "gplasync"
+    ) => Promise<{ version: string }>;
+    uninstallDxvk: (shop: GameShop, objectId: string) => Promise<void>;
     getOptiscalerGpu: () => Promise<{
       detected: "native" | "desktop" | "igpu";
       effective: "native" | "desktop" | "igpu";
@@ -455,6 +476,7 @@ declare global {
       fsr4Gpu: "native" | "desktop" | "igpu";
       fsr4Variant: "exact" | "lossy";
       proxyConflict: string | null;
+      dxvkInstalled: boolean;
     }>;
     installOptiscaler: (
       shop: GameShop,
