@@ -454,7 +454,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "isMainWindowOpen" => Ok(json!(app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false)))),
         "getImageDataUrl" => Ok(launch::image_data_url(arg_str(args, 0).unwrap_or_default()).await),
         // null = "no still poster", so the renderer shows the original cover.
-        // shortcut: animated covers play instead of a still first frame until the local: protocol (F1) can serve built posters.
+        // shortcut: animated covers play instead of a still first frame; build posters and serve them through local: if the motion bothers people.
         "getCoverPoster" => Ok(Value::Null),
         "getClassicsImportStatus" => Ok(json!(app.state::<classics_import::ClassicsImports>().is_importing())),
         "getGameShopDetails" => {

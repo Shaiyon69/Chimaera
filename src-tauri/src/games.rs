@@ -38,7 +38,7 @@ fn set(field: &'static str, value: Value) -> impl FnOnce(&mut Map<String, Value>
 }
 
 /// `getGameByObjectId`.
-// shortcut: achievement counts come from the record as stored; the achievement memory store arrives with achievements (F6).
+// shortcut: achievement counts come from the record as stored, not recounted from the unlock store; recount here if they drift.
 pub fn get_by_object_id(store: &Store, shop: &str, object_id: &str) -> Result<Value, String> {
     let key = game_key(shop, object_id);
     let Value::Object(mut game) = store.get("games", &key)? else { return Ok(Value::Null) };
@@ -51,7 +51,7 @@ pub fn get_by_object_id(store: &Store, shop: &str, object_id: &str) -> Result<Va
 }
 
 /// `addGameToLibrary`: revives a removed game or creates one from its cached shop assets.
-// shortcut: finished-download cleanup and the launchbox platform lookup arrive with downloads (F4) and emulators.
+// shortcut: no finished-download cleanup and no LaunchBox platform lookup on add; the platform comes from the caller.
 pub fn add_to_library(store: &Store, shop: &str, object_id: &str, title: &str, platform: Option<&str>) -> Result<(), String> {
     let key = game_key(shop, object_id);
     let revived = update(store, &key, |game| {
@@ -264,7 +264,7 @@ pub fn reset_playtime(store: &Store, shop: &str, object_id: &str) -> Result<(), 
 }
 
 /// `updateExecutablePath`; `path` is already resolved from a .lnk.
-// shortcut: no background installedSizeInBytes scan of the game folder; it arrives with downloads (F4).
+// shortcut: no background installedSizeInBytes scan of the game folder; only extraction, scans and transfers set it.
 pub fn set_executable_path(store: &Store, shop: &str, object_id: &str, path: Option<&str>) -> Result<(), String> {
     let key = game_key(shop, object_id);
     let game = store.get("games", &key)?;

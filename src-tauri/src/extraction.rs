@@ -127,7 +127,7 @@ impl Job {
         }
         self.last_sent = None;
         self.last_value = 0.0;
-        // shortcut: classics disc auto-linking after extraction waits for the emulators milestone.
+        // shortcut: extracted classics discs are not auto-linked to their game; the user runs a ROM rescan. Link them here if people ask.
     }
 
     /// The outer archive or the root archives after extraction: delete when the download or the

@@ -376,7 +376,7 @@ async fn send_public(version: &str, method: &str, url: &str, payload: &Map<Strin
         "delete" => client.delete(&full),
         other => return Err(format!("Unsupported HTTP method: {other}")),
     };
-    // shortcut: Hydra-If-Modified-Since is not sent, so the API returns full data instead of 304s; add it with the catalogue cache (F3).
+    // shortcut: Hydra-If-Modified-Since is not sent, so the API returns full data instead of 304s; add it with a catalogue cache.
     let response = request.send().await.map_err(|e| e.to_string())?;
     let status = response.status().as_u16();
     let text = response.text().await.map_err(|e| e.to_string())?;
