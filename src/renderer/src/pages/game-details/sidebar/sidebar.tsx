@@ -32,6 +32,7 @@ import { RetroAchievementsConnectBanner } from "@renderer/components/retro-achie
 import "./sidebar.scss";
 import { GameLanguageSection } from "./game-language-section";
 import { ControllerSupportSection } from "./controller-support-section";
+import { CompanionSection } from "../companion/companion-section";
 
 const ProtonDBSection = lazy(async () => {
   const mod = await import("./protondb-section");
@@ -182,6 +183,7 @@ export function Sidebar() {
 
   return (
     <aside className="content-sidebar">
+      <CompanionSection shop={shop} objectId={objectId} />
       {shouldShowProtonFeatures && (
         <Suspense fallback={null}>
           <ProtonDBSection

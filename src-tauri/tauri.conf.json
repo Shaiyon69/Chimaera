@@ -29,6 +29,7 @@
     "resources": {
       "../resources/bloodborne": "bloodborne",
       "../resources/horizon": "horizon",
+      "../resources/companions": "companions",
       "../ludusavi/ludusavi.exe": "ludusavi/ludusavi.exe",
       "../ludusavi/config.yaml": "ludusavi/config.yaml",
       "../binaries/7z.exe": "binaries/7z.exe",

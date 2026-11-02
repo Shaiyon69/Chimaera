@@ -11,6 +11,7 @@ mod bundled_games;
 mod classics_import;
 mod classics_launch;
 mod common_redist;
+mod companion;
 mod debrid;
 mod decky;
 mod download_sources;
@@ -116,6 +117,37 @@ pub fn run() {
             let path = request.uri().path().to_string();
             // Off the webview thread: a large hero image would stall the UI.
             std::thread::spawn(move || responder.respond(local_files::handle(&path)));
+        })
+        .register_asynchronous_uri_scheme_protocol("companion", |ctx, request, responder| {
+            let root = ctx.app_handle().path().resource_dir().map(|dir| dir.join("companions"));
+            if let Some(target) = companion::proxy_target(request.uri().path(), request.uri().query()) {
+                // Pictures shipped with the companion skip the network entirely.
+                if target.image {
+                    if let Some(response) = root.as_deref().ok().and_then(|r| companion::bundled(r, request.uri().path())) {
+                        responder.respond(response);
+                        return;
+                    }
+                }
+                let app_data = ctx.app_handle().path().app_data_dir().ok();
+                let images = app_data.as_deref().map(image_cache::cache_dir);
+                tauri::async_runtime::spawn(async move {
+                    let response = if target.image {
+                        companion::proxy_image(images, &target).await
+                    } else {
+                        companion::proxy(app_data, &target).await
+                    };
+                    responder.respond(response);
+                });
+                return;
+            }
+            let path = request.uri().path().to_string();
+            // Off the webview thread: the wasm bundle is a few MB.
+            std::thread::spawn(move || {
+                responder.respond(match root {
+                    Ok(root) => companion::handle(&root, &path),
+                    Err(_) => image_cache::status(tauri::http::StatusCode::INTERNAL_SERVER_ERROR),
+                })
+            });
         })
         .register_asynchronous_uri_scheme_protocol("cached-image", |ctx, request, responder| {
             let dir = ctx.app_handle().path().app_data_dir().map(|dir| image_cache::cache_dir(&dir));

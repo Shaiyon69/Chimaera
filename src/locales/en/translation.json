@@ -247,6 +247,10 @@
     "platforms": "Platforms"
   },
   "game_details": {
+    "companion": "Companion",
+    "companion_hint": "Wiki and progression guide for this game.",
+    "companion_terraria": "Terraria Guide",
+    "open_companion": "Open {{title}}",
     "show_copies_separately": "Show copies separately",
     "group_with_copies": "Group with copies",
     "failed_update_game_grouping": "Couldn't update how this game is grouped",

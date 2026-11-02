@@ -24,7 +24,8 @@
     "dev:big-picture": "vite dev src/big-picture",
     "prepare": "husky",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+    "tauri:build": "node scripts/fetch-companions.mjs && tauri build",
+    "companions": "node scripts/fetch-companions.mjs",
     "tauri:parity": "node scripts/tauri-parity.mjs",
     "dev": "tauri dev",
     "build": "npm run typecheck && tauri build"

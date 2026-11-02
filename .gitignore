@@ -37,3 +37,7 @@ hydra-backup/
 
 # Separate scratch project with its own git history
 /chimaera-next/
+
+# Companion web builds (scripts/fetch-companions.mjs)
+resources/companions/*
+!resources/companions/README.md

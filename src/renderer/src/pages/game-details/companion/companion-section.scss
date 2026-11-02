@@ -1,0 +1,34 @@
+@use "../../../scss/globals.scss";
+
+.companion-section {
+  display: flex;
+  flex-direction: column;
+  gap: globals.$spacing-unit;
+  padding: calc(globals.$spacing-unit * 2);
+
+  &__hint {
+    margin: 0;
+    color: globals.$muted-color;
+    font-size: globals.$small-font-size;
+  }
+}
+
+.companion-modal {
+  width: 92vw;
+  max-width: 1400px;
+  height: 88vh;
+
+  &__frame {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+}
+
+.companion-modal .modal__content {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}

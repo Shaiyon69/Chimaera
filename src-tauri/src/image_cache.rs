@@ -9,6 +9,9 @@ use tauri::http::{header, Response, StatusCode};
 
 const MAX_CACHE_BYTES: u64 = 1024 * 1024 * 1024;
 
+// One client so requests reuse the HTTPS connection instead of a new handshake each.
+pub(crate) static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(reqwest::Client::new);
+
 const EXTENSIONS: &[(&str, &str)] = &[
     ("image/webp", "webp"),
     ("image/png", "png"),
@@ -25,7 +28,7 @@ pub fn cache_dir(app_data: &Path) -> PathBuf {
     app_data.join("image-cache").join("assets")
 }
 
-fn cache_key(url: &str) -> String {
+pub(crate) fn cache_key(url: &str) -> String {
     format!("{:x}", Sha256::digest(url.as_bytes()))
 }
 
@@ -77,7 +80,13 @@ fn store(dir: &Path, key: &str, ext: &str, bytes: &[u8]) -> std::io::Result<()> 
 /// Serves from disk, fetching once on a miss. Non-images pass straight through uncached.
 pub async fn handle(dir: &Path, path: &str) -> Response<Vec<u8>> {
     let Some(url) = original_url(path) else { return status(StatusCode::BAD_REQUEST) };
-    let key = cache_key(&url);
+    serve(dir, &url, None).await
+}
+
+/// Serves `url` from the disk cache, fetching once on a miss. `user_agent` names the
+/// client for hosts that refuse anonymous requests (companion wiki pictures).
+pub async fn serve(dir: &Path, url: &str, user_agent: Option<&str>) -> Response<Vec<u8>> {
+    let key = cache_key(url);
 
     if let Some(file) = find_cached(dir, &key) {
         if let Ok(bytes) = std::fs::read(&file) {
@@ -88,7 +97,11 @@ pub async fn handle(dir: &Path, path: &str) -> Response<Vec<u8>> {
         }
     }
 
-    let response = match reqwest::get(&url).await {
+    let mut request = CLIENT.get(url);
+    if let Some(agent) = user_agent {
+        request = request.header(header::USER_AGENT, agent);
+    }
+    let response = match request.send().await {
         Ok(response) if response.status().is_success() => response,
         _ => return status(StatusCode::NOT_FOUND),
     };
