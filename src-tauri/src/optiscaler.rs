@@ -17,6 +17,9 @@ use crate::store::Store;
 
 pub(crate) const MARKER: &str = "optiscaler_manager.json";
 const BACKUP: &str = ".optiscaler_backup";
+const CLEANUP: &str = ".optiscaler_cleanup";
+// Files OptiScaler writes or ships that a game never has on its own.
+const LEFTOVER_NAMES: &[&str] = &["OptiScaler.ini", "OptiScaler.log", "fakenvapi.ini", "fakenvapi.log"];
 const FSR4_DLL: &str = "amd_fidelityfx_upscaler_dx12.dll";
 const PROXIES: &[&str] = &["dxgi.dll", "winmm.dll", "version.dll", "dbghelp.dll", "d3d12.dll", "wininet.dll", "winhttp.dll"];
 const SKIP: &[&str] = &["unins", "crash", "launcher", "redist", "unitycrash", "vc_redist", "dxsetup", "eac", "easyanticheat", "benchmark"];
@@ -538,6 +541,79 @@ pub async fn set_optipatcher(app: &AppHandle, shop: &str, object_id: &str, enabl
     Ok(())
 }
 
+// ---------- cleanup ----------
+
+/// Cheap hint for the UI: no marker of ours, but OptiScaler's own files are there.
+fn has_leftovers(exe_dir: &Path) -> bool {
+    read_marker(exe_dir).is_none() && (LEFTOVER_NAMES[..2].iter().any(|n| exe_dir.join(n).is_file()) || exe_dir.join("D3D12_Optiscaler").is_dir())
+}
+
+/// Files in `exe_dir` byte-identical to a file in one of `releases` (OptiScaler.dll may sit
+/// under any proxy name), plus OptiScaler's own ini/log files. Relative paths with `/`.
+fn find_leftovers(exe_dir: &Path, releases: &[PathBuf]) -> Vec<String> {
+    let mut known: HashMap<u64, Vec<(PathBuf, Option<String>)>> = HashMap::new();
+    let mut names: Vec<(String, u64)> = Vec::new();
+    for release in releases {
+        for rel in list_files(release) {
+            let src = release.join(&rel);
+            let Ok(size) = fs::metadata(&src).map(|m| m.len()) else { continue };
+            known.entry(size).or_default().push((src, None));
+            let rel = if rel.eq_ignore_ascii_case("optiscaler.dll") { String::new() } else { rel };
+            names.push((rel, size));
+        }
+    }
+    let mut candidates: Vec<String> = names.iter().filter(|(r, _)| !r.is_empty()).map(|(r, _)| r.clone()).collect();
+    candidates.extend(PROXIES.iter().map(|p| p.to_string()));
+    candidates.sort();
+    candidates.dedup();
+    let mut out: Vec<String> = LEFTOVER_NAMES.iter().filter(|n| exe_dir.join(n).is_file()).map(|n| n.to_string()).collect();
+    for rel in candidates {
+        let Some(path) = inside(exe_dir, &rel).filter(|p| p.is_file()) else { continue };
+        let Ok(size) = fs::metadata(&path).map(|m| m.len()) else { continue };
+        let Some(same_size) = known.get_mut(&size) else { continue };
+        // Hash only files whose size matches something we shipped.
+        let Some(hash) = sha256_file(&path) else { continue };
+        if same_size.iter_mut().any(|(src, h)| h.get_or_insert_with(|| sha256_file(src).unwrap_or_default()) == &hash) && !out.contains(&rel) {
+            out.push(rel);
+        }
+    }
+    out
+}
+
+/// Moves leftovers into `.optiscaler_cleanup/`, so a file the game needed can be put back.
+fn move_leftovers(exe_dir: &Path, files: &[String]) -> Result<(), String> {
+    let target = exe_dir.join(CLEANUP);
+    for rel in files {
+        let (Some(src), Some(dst)) = (inside(exe_dir, rel), inside(&target, rel)) else { continue };
+        fs::create_dir_all(dst.parent().unwrap()).map_err(|e| e.to_string())?;
+        fs::rename(&src, &dst).map_err(|e| e.to_string())?;
+    }
+    let _ = fs::remove_dir(exe_dir.join("D3D12_Optiscaler"));
+    Ok(())
+}
+
+/// `cleanupOptiscaler`: lists leftovers, or moves them when `apply` is true.
+pub async fn cleanup(app: &AppHandle, shop: &str, object_id: &str, apply: bool) -> Result<Value, String> {
+    let dir = context(app, shop, object_id)?.1;
+    if read_marker(&dir).is_some() {
+        return Err("OptiScaler is installed by Chimaera here; use Uninstall instead".into());
+    }
+    let mut releases: Vec<PathBuf> = fs::read_dir(cache_root(app)?.join("cache")).into_iter().flatten().flatten().map(|e| e.path()).filter_map(|p| find_payload(&p)).collect();
+    let fsr4 = cache_root(app)?.join("fsr4");
+    if fsr4.is_dir() {
+        releases.push(fsr4);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let files = find_leftovers(&dir, &releases);
+        if apply {
+            move_leftovers(&dir, &files)?;
+        }
+        Ok(json!({ "files": files }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ---------- install ----------
 
 pub(crate) fn read_marker(exe_dir: &Path) -> Option<Value> {
@@ -982,6 +1058,7 @@ pub async fn status(app: &AppHandle, shop: &str, object_id: &str, proxy: Option<
         "proxyConflict": conflict,
         "dxvkInstalled": crate::dxvk::installed(&dir),
         "optipatcher": has_tracked_file(&dir, OPTIPATCHER_REL),
+        "leftovers": has_leftovers(&dir),
         // Ours never counts: after an install the proxy is OptiScaler, not ReShade.
         "reshade": if marker.is_some() { None } else { crate::graphics_scan::reshade_dll(&dir) },
     }))
@@ -1207,6 +1284,35 @@ mod tests {
         assert!(clean_values(&json!({ "Unknown": "1" })).is_err());
         assert!(clean_values(&json!({ "Sharpness": "auto" })).is_ok());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn finds_and_moves_only_identical_leftovers() {
+        let root = temp("leftovers");
+        let (payload, game) = (root.join("payload"), root.join("game"));
+        fs::create_dir_all(payload.join("D3D12_Optiscaler")).unwrap();
+        fs::create_dir_all(game.join("D3D12_Optiscaler")).unwrap();
+        fs::write(payload.join("OptiScaler.dll"), b"opti").unwrap();
+        fs::write(payload.join("D3D12_Optiscaler").join("D3D12Core.dll"), b"core").unwrap();
+        fs::write(payload.join("libxess.dll"), b"xess-ours").unwrap();
+        // Left behind by an untracked install: OptiScaler.dll renamed to winmm.dll.
+        fs::write(game.join("winmm.dll"), b"opti").unwrap();
+        fs::write(game.join("D3D12_Optiscaler").join("D3D12Core.dll"), b"core").unwrap();
+        fs::write(game.join("OptiScaler.ini"), b"[x]").unwrap();
+        // The game's own files: same name or same size, different bytes.
+        fs::write(game.join("libxess.dll"), b"xess-game").unwrap();
+        fs::write(game.join("dxgi.dll"), b"game").unwrap();
+        assert!(has_leftovers(&game));
+
+        let mut found = find_leftovers(&game, &[payload]);
+        found.sort();
+        assert_eq!(found, ["D3D12_Optiscaler/D3D12Core.dll", "OptiScaler.ini", "winmm.dll"]);
+        move_leftovers(&game, &found).unwrap();
+        assert!(!game.join("winmm.dll").exists() && !game.join("D3D12_Optiscaler").exists());
+        assert_eq!(fs::read(game.join(CLEANUP).join("winmm.dll")).unwrap(), b"opti");
+        assert_eq!(fs::read(game.join("libxess.dll")).unwrap(), b"xess-game");
+        assert!(game.join("dxgi.dll").exists() && !has_leftovers(&game));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

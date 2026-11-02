@@ -891,6 +891,8 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("deleteOptiscalerProfile", id),
   applyOptiscalerProfile: (shop: GameShop, objectId: string, id: string) =>
     ipcRenderer.invoke("applyOptiscalerProfile", shop, objectId, id),
+  cleanupOptiscaler: (shop: GameShop, objectId: string, apply: boolean) =>
+    ipcRenderer.invoke("cleanupOptiscaler", shop, objectId, apply),
   getOptiscalerConfig: (shop: GameShop, objectId: string) =>
     ipcRenderer.invoke("getOptiscalerConfig", shop, objectId),
   setOptiscalerConfig: (

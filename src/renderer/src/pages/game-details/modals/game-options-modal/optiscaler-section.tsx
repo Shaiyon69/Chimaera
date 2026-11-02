@@ -34,6 +34,7 @@ export function OptiscalerSection({
   const [profiles, setProfiles] = useState<OptiscalerProfile[]>([]);
   const [profile, setProfile] = useState("default");
   const [notice, setNotice] = useState<string | null>(null);
+  const [leftovers, setLeftovers] = useState<string[] | null>(null);
 
   const loadProfiles = useCallback(async () => {
     setProfiles(await window.electron.getOptiscalerProfiles());
@@ -130,6 +131,27 @@ export function OptiscalerSection({
     );
   };
 
+  const findLeftovers = () =>
+    void run(async () => {
+      const { files } = await window.electron.cleanupOptiscaler(
+        game.shop,
+        game.objectId,
+        false
+      );
+      setLeftovers(files);
+    });
+
+  const moveLeftovers = () =>
+    void run(async () => {
+      const { files } = await window.electron.cleanupOptiscaler(
+        game.shop,
+        game.objectId,
+        true
+      );
+      setLeftovers(null);
+      setNotice(t("optiscaler_cleanup_done", { count: files.length }));
+    });
+
   if (!status && !error) return null;
 
   let installLabel = t("optiscaler_install");
@@ -221,6 +243,43 @@ export function OptiscalerSection({
             <p className="optiscaler__warning">
               {t("optiscaler_reshade_conflict", { proxy: status.reshade })}
             </p>
+          )}
+          {status.leftovers && (
+            <div className="optiscaler__extras">
+              <p className="optiscaler__warning">
+                {t("optiscaler_cleanup_hint")}
+              </p>
+              {leftovers === null ? (
+                <div className="optiscaler__actions">
+                  <Button
+                    theme="outline"
+                    disabled={busy}
+                    onClick={findLeftovers}
+                  >
+                    {t("optiscaler_cleanup_find")}
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <ul className="optiscaler__files">
+                    {leftovers.map((f) => (
+                      <li key={f}>{f}</li>
+                    ))}
+                  </ul>
+                  <div className="optiscaler__actions">
+                    <Button
+                      theme="danger"
+                      disabled={busy || !leftovers.length}
+                      onClick={moveLeftovers}
+                    >
+                      {t("optiscaler_cleanup_move", {
+                        count: leftovers.length,
+                      })}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
           {status.dxvkInstalled && !status.installed && (
             <p className="optiscaler__warning">

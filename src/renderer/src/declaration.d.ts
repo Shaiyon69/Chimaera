@@ -490,6 +490,7 @@ declare global {
       dxvkInstalled: boolean;
       optipatcher: boolean;
       reshade: string | null;
+      leftovers: boolean;
     }>;
     installOptiscaler: (
       shop: GameShop,
@@ -516,6 +517,11 @@ declare global {
       objectId: string,
       id: string
     ) => Promise<{ skipped: string[] }>;
+    cleanupOptiscaler: (
+      shop: GameShop,
+      objectId: string,
+      apply: boolean
+    ) => Promise<{ files: string[] }>;
     setOptiPatcher: (
       shop: GameShop,
       objectId: string,
