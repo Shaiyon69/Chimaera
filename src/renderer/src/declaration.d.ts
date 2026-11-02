@@ -488,10 +488,9 @@ declare global {
       shop: GameShop,
       objectId: string
     ) => Promise<
-      ({ key: string; value: string } & (
-        | { type: "toggle" }
+      ({ group: string; key: string; value: string } & (
         | { type: "select"; options: string[] }
-        | { type: "number"; min: number; max: number }
+        | { type: "number"; min: number; max: number; step: number }
       ))[]
     >;
     setOptiscalerConfig: (

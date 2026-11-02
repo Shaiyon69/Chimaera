@@ -640,20 +640,40 @@ fn configure_ini(ini: &Path, api: &str, fsr4: Option<&str>) -> Vec<(String, Stri
     done
 }
 
-const UPSCALERS: &[&str] = &["auto", "fsr31", "fsr31_12", "fsr21", "fsr21_12", "xess", "dlss"];
+const TRISTATE: &[&str] = &["auto", "true", "false"];
 
 /// Allowlist of user-editable keys; the renderer can only touch these.
+/// Option lists follow the comments in OptiScaler 0.9.4's OptiScaler.ini; booleans keep
+/// "auto" because OptiScaler picks those per GPU vendor.
 fn config_fields() -> Vec<Value> {
+    let select = |group: &str, key: &str, options: &[&str]| json!({ "group": group, "key": key, "type": "select", "options": options });
+    let tristate = |group: &str, key: &str| select(group, key, TRISTATE);
+    let number = |group: &str, key: &str, min: f64, max: f64, step: f64| json!({ "group": group, "key": key, "type": "number", "min": min, "max": max, "step": step });
+    let keys = ["auto", "0x2D", "0x24", "0x23", "0x2E", "0x21", "0x22", "0x70", "0x71", "0x72", "0x73", "0x74", "0x75", "0x76", "0x77", "0x78", "0x79", "0x7A", "0x7B", "-1"];
     vec![
-        json!({ "key": "Dx12Upscaler", "type": "select", "options": UPSCALERS }),
-        json!({ "key": "Dx11Upscaler", "type": "select", "options": UPSCALERS }),
-        json!({ "key": "VulkanUpscaler", "type": "select", "options": UPSCALERS }),
-        json!({ "key": "FGType", "type": "select", "options": ["auto", "nofg", "optifg"] }),
-        json!({ "key": "Sharpness", "type": "number", "min": 0, "max": 1 }),
-        json!({ "key": "Fsr4Update", "type": "toggle" }),
-        json!({ "key": "Fsr4ForceEnableInt8", "type": "toggle" }),
-        json!({ "key": "LogToFile", "type": "toggle" }),
-        json!({ "key": "LogLevel", "type": "select", "options": ["0", "1", "2", "3", "4"] }),
+        select("upscalers", "Dx12Upscaler", &["auto", "xess", "fsr21", "fsr22", "fsr31", "dlss"]),
+        select("upscalers", "Dx11Upscaler", &["auto", "fsr22", "fsr31", "xess", "xess_12", "fsr21_12", "fsr22_12", "fsr31_12", "dlss"]),
+        select("upscalers", "VulkanUpscaler", &["auto", "fsr21", "fsr22", "fsr31", "xess", "fsr21_12", "fsr31_12", "dlss"]),
+        tristate("upscalers", "Fsr4Update"),
+        tristate("upscalers", "Fsr4ForceEnableInt8"),
+        tristate("upscalers", "OverrideSharpness"),
+        number("upscalers", "Sharpness", 0.0, 1.3, 0.05),
+        // 0.9.4 split the old FGType into an input and an output.
+        select("framegen", "FGInput", &["auto", "nofg", "dlssg", "nukems", "fsrfg", "upscaler", "fsrfg30"]),
+        select("framegen", "FGOutput", &["auto", "nofg", "fsrfg", "xefg", "nukems"]),
+        number("framegen", "FramerateLimit", 0.0, 1000.0, 1.0),
+        select("overlay", "ShortcutKey", &keys),
+        tristate("overlay", "ShowFps"),
+        select("overlay", "FpsOverlayType", &["auto", "0", "1", "2", "3", "4", "5", "6"]),
+        tristate("overlay", "DisableOverlays"),
+        tristate("spoofing", "Dxgi"),
+        tristate("spoofing", "StreamlineSpoofing"),
+        tristate("spoofing", "OverrideNvapiDll"),
+        tristate("plugins", "LoadAsiPlugins"),
+        tristate("plugins", "LoadReshade"),
+        tristate("plugins", "LoadSpecialK"),
+        tristate("log", "LogToFile"),
+        select("log", "LogLevel", &["auto", "0", "1", "2", "3", "4"]),
     ]
 }
 
@@ -673,7 +693,6 @@ fn read_config(ini: &Path) -> Value {
 fn write_config_value(ini: &Path, key: &str, value: &str) -> Result<(), String> {
     let field = config_fields().into_iter().find(|f| f["key"] == key).filter(|_| ini_get_set(ini, key, None).is_some()).ok_or(format!("Unsupported setting: {key}"))?;
     let valid = match field["type"].as_str() {
-        Some("toggle") => value == "true" || value == "false",
         Some("select") => field["options"].as_array().is_some_and(|o| o.iter().any(|v| v == value)),
         _ => value.trim().parse::<f64>().is_ok_and(|n| n >= field["min"].as_f64().unwrap_or(0.0) && n <= field["max"].as_f64().unwrap_or(0.0)),
     };
@@ -921,6 +940,10 @@ mod tests {
         write_config_value(&game.join("OptiScaler.ini"), "Dx12Upscaler", "xess").unwrap();
         assert!(write_config_value(&game.join("OptiScaler.ini"), "Dx12Upscaler", "bogus").is_err());
         assert!(write_config_value(&game.join("OptiScaler.ini"), "Unknown", "1").is_err());
+        // Booleans can go back to "auto"; numbers stay in range.
+        write_config_value(&game.join("OptiScaler.ini"), "Fsr4Update", "auto").unwrap();
+        assert!(write_config_value(&game.join("OptiScaler.ini"), "Fsr4Update", "yes").is_err());
+        write_config_value(&game.join("OptiScaler.ini"), "Fsr4Update", "true").unwrap();
         install(&payload, &game, "dxgi.dll", "v2", None, None, "dx12").unwrap();
         assert_eq!(ini_get_set(&game.join("OptiScaler.ini"), "Dx12Upscaler", None).as_deref(), Some("xess"));
         assert_eq!(fs::read(game.join(BACKUP).join("dxgi.dll")).unwrap(), b"original");
