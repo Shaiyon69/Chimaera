@@ -153,6 +153,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "getOptiscalerStatus" => optiscaler::status(app, shop(args), object_id(args), arg_str(args, 2)).await,
         "installOptiscaler" => optiscaler::install_for_game(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()).await,
         "uninstallOptiscaler" => optiscaler::uninstall_for_game(app, shop(args), object_id(args)).map(|_| Value::Null),
+        "setOptiPatcher" => optiscaler::set_optipatcher(app, shop(args), object_id(args), args.get(2).and_then(Value::as_bool).unwrap_or(false)).await.map(|_| Value::Null),
         "getOptiscalerConfig" => optiscaler::get_config(app, shop(args), object_id(args)),
         "setOptiscalerConfig" => optiscaler::set_config(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default(), arg_str(args, 3).unwrap_or_default()).map(|_| Value::Null),
         // Electron tells the download orchestrator and souvenir worker; neither exists here yet (F4, F6).

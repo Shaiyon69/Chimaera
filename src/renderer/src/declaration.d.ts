@@ -477,6 +477,7 @@ declare global {
       fsr4Variant: "exact" | "lossy";
       proxyConflict: string | null;
       dxvkInstalled: boolean;
+      optipatcher: boolean;
     }>;
     installOptiscaler: (
       shop: GameShop,
@@ -484,6 +485,11 @@ declare global {
       proxy: string
     ) => Promise<{ version: string }>;
     uninstallOptiscaler: (shop: GameShop, objectId: string) => Promise<void>;
+    setOptiPatcher: (
+      shop: GameShop,
+      objectId: string,
+      enabled: boolean
+    ) => Promise<void>;
     getOptiscalerConfig: (
       shop: GameShop,
       objectId: string

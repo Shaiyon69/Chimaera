@@ -27,6 +27,9 @@ const RELEASES_API: &str = "https://api.github.com/repos/optiscaler/OptiScaler/r
 const FSR4_API: &str = "https://api.github.com/repos/zgauthier2000/fsr4-shader-performance-overrides/releases?per_page=100";
 const FSR4_TAG_PREFIX: &str = "dll-";
 const TAG_TTL: Duration = Duration::from_secs(60 * 60);
+const OPTIPATCHER_API: &str = "https://api.github.com/repos/optiscaler/OptiPatcher/releases/latest";
+// OptiDllPath defaults to the exe folder, so OptiScaler looks for ASI files in `<exe dir>/plugins`.
+const OPTIPATCHER_REL: &str = "plugins/OptiPatcher.asi";
 
 // ---------- detection ----------
 
@@ -437,6 +440,104 @@ fn resolve_fsr4_dll(app: &AppHandle, prefs: &Value, gpu: &str) -> Option<PathBuf
     chosen.map(PathBuf::from).filter(|p| p.exists()).or_else(|| cached_fsr4_dll(app, gpu, v))
 }
 
+// ---------- OptiPatcher ----------
+
+/// Newest OptiPatcher.asi (a rolling release, so the asset id is the version); the newest cached one offline.
+async fn ensure_optipatcher(app: &AppHandle) -> Result<PathBuf, String> {
+    static LOCK: Mutex<()> = Mutex::const_new(());
+    let _guard = LOCK.lock().await;
+    let root = cache_root(app)?.join("optipatcher");
+    match fetch_optipatcher(&root).await {
+        Ok(file) => Ok(file),
+        Err(err) => {
+            let mut ids: Vec<String> = fs::read_dir(&root).ok().into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|d| root.join(d).join("OptiPatcher.asi").is_file()).collect();
+            ids.sort_by(|a, b| natural_cmp(b, a));
+            ids.first().map(|d| root.join(d).join("OptiPatcher.asi")).ok_or(err)
+        }
+    }
+}
+
+async fn fetch_optipatcher(root: &Path) -> Result<PathBuf, String> {
+    let release = github_json(OPTIPATCHER_API, 15).await?;
+    let asset = release["assets"].as_array().into_iter().flatten().find(|a| a["name"] == "OptiPatcher.asi").ok_or("No OptiPatcher.asi in the release")?;
+    let (Some(id), Some(url)) = (asset["id"].as_u64(), asset["browser_download_url"].as_str()) else { return Err("Bad OptiPatcher asset".into()) };
+    let file = root.join(id.to_string()).join("OptiPatcher.asi");
+    if file.is_file() {
+        return Ok(file);
+    }
+    let tmp = root.join(format!("{id}.tmp"));
+    fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let staged = tmp.join("OptiPatcher.asi");
+    download(url, &staged, 60).await?;
+    // GitHub publishes "sha256:<hex>" for each asset; older assets may lack it.
+    if let Some(want) = asset["digest"].as_str().and_then(|d| d.strip_prefix("sha256:")) {
+        if sha256_file(&staged).as_deref() != Some(want.to_lowercase().as_str()) {
+            let _ = fs::remove_dir_all(&tmp);
+            return Err("Checksum mismatch for OptiPatcher.asi".into());
+        }
+    }
+    fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
+    fs::rename(&staged, &file).map_err(|e| e.to_string())?;
+    let _ = fs::remove_dir_all(&tmp);
+    Ok(file)
+}
+
+/// Adds one file to an existing install, backing up a foreign file it replaces.
+fn add_tracked_file(exe_dir: &Path, rel: &str, src: &Path) -> Result<(), String> {
+    let marker = read_marker(exe_dir).ok_or("OptiScaler is not installed")?;
+    let (mut files, mut backed) = (strings(&marker["files"]), strings(&marker["backed_up"]));
+    let dst = inside(exe_dir, rel).ok_or("Bad path")?;
+    fs::create_dir_all(dst.parent().unwrap()).map_err(|e| e.to_string())?;
+    if dst.exists() && !files.iter().any(|f| f == rel) {
+        let b = exe_dir.join(BACKUP).join(rel);
+        fs::create_dir_all(b.parent().unwrap()).map_err(|e| e.to_string())?;
+        fs::rename(&dst, &b).map_err(|e| e.to_string())?;
+        backed.push(rel.into());
+    }
+    fs::copy(src, &dst).map_err(|e| e.to_string())?;
+    if !files.iter().any(|f| f == rel) {
+        files.push(rel.into());
+    }
+    write_marker(exe_dir, marker["version"].as_str().unwrap_or_default(), marker["proxy"].as_str().unwrap_or_default(), &files, &backed)
+}
+
+/// Removes one tracked file and restores what it replaced.
+fn remove_tracked_file(exe_dir: &Path, rel: &str) -> Result<(), String> {
+    let marker = read_marker(exe_dir).ok_or("OptiScaler is not installed")?;
+    let (mut files, mut backed) = (strings(&marker["files"]), strings(&marker["backed_up"]));
+    if let Some(p) = inside(exe_dir, rel) {
+        let _ = fs::remove_file(&p);
+        if backed.iter().any(|b| b == rel) {
+            if let Some(src) = inside(&exe_dir.join(BACKUP), rel) {
+                fs::rename(src, &p).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    files.retain(|f| f != rel);
+    backed.retain(|b| b != rel);
+    write_marker(exe_dir, marker["version"].as_str().unwrap_or_default(), marker["proxy"].as_str().unwrap_or_default(), &files, &backed)
+}
+
+fn has_tracked_file(exe_dir: &Path, rel: &str) -> bool {
+    read_marker(exe_dir).is_some_and(|m| strings(&m["files"]).iter().any(|f| f == rel))
+}
+
+/// `setOptiPatcher`: adds or removes OptiPatcher.asi; adding also turns on ASI loading.
+pub async fn set_optipatcher(app: &AppHandle, shop: &str, object_id: &str, enabled: bool) -> Result<(), String> {
+    let dir = context(app, shop, object_id)?.1;
+    read_marker(&dir).ok_or("OptiScaler is not installed")?;
+    if !enabled {
+        return remove_tracked_file(&dir, OPTIPATCHER_REL);
+    }
+    let asi = ensure_optipatcher(app).await?;
+    add_tracked_file(&dir, OPTIPATCHER_REL, &asi)?;
+    let ini = dir.join("OptiScaler.ini");
+    if ini_get_set(&ini, "LoadAsiPlugins", None).is_some() {
+        ini_get_set(&ini, "LoadAsiPlugins", Some("true"));
+    }
+    Ok(())
+}
+
 // ---------- install ----------
 
 pub(crate) fn read_marker(exe_dir: &Path) -> Option<Value> {
@@ -776,6 +877,7 @@ pub async fn status(app: &AppHandle, shop: &str, object_id: &str, proxy: Option<
         "fsr4Variant": variant(&prefs),
         "proxyConflict": conflict,
         "dxvkInstalled": crate::dxvk::installed(&dir),
+        "optipatcher": has_tracked_file(&dir, OPTIPATCHER_REL),
     }))
 }
 
@@ -811,9 +913,17 @@ pub async fn install_for_game(app: &AppHandle, shop: &str, object_id: &str, prox
     let mode = if gpu == "native" { Some("native") } else if dll.is_some() { Some("dll") } else { None };
     let api = detect_api(&exe);
     let proxy = proxy.to_string();
-    tauri::async_runtime::spawn_blocking(move || install(&payload, &dir, &proxy, &tag, dll.as_deref(), mode, api).map(|_| json!({ "version": tag })))
+    // A reinstall removes every tracked file, OptiPatcher included; put it back afterwards.
+    let had_optipatcher = has_tracked_file(&dir, OPTIPATCHER_REL);
+    let result = tauri::async_runtime::spawn_blocking(move || install(&payload, &dir, &proxy, &tag, dll.as_deref(), mode, api).map(|_| json!({ "version": tag })))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    if had_optipatcher {
+        if let Err(err) = set_optipatcher(app, shop, object_id, true).await {
+            eprintln!("[optiscaler] could not restore OptiPatcher: {err}");
+        }
+    }
+    Ok(result)
 }
 
 /// `uninstallOptiscaler`.
@@ -962,6 +1072,41 @@ mod tests {
         // Another tool's marker blocks the install.
         fs::write(game.join(MARKER), r#"{"proxy":"bloodborne"}"#).unwrap();
         assert!(install(&payload, &game, "dxgi.dll", "v4", None, None, "dx12").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn adds_and_removes_tracked_files() {
+        let root = temp("tracked");
+        let (payload, game) = (root.join("payload"), root.join("game"));
+        fs::create_dir_all(&payload).unwrap();
+        fs::create_dir_all(game.join("plugins")).unwrap();
+        fs::write(payload.join("OptiScaler.dll"), b"opti").unwrap();
+        install(&payload, &game, "dxgi.dll", "v1", None, None, "dx12").unwrap();
+        let asi = root.join("op.asi");
+        fs::write(&asi, b"patch").unwrap();
+        fs::write(game.join(OPTIPATCHER_REL), b"theirs").unwrap();
+
+        add_tracked_file(&game, OPTIPATCHER_REL, &asi).unwrap();
+        assert!(has_tracked_file(&game, OPTIPATCHER_REL));
+        assert_eq!(fs::read(game.join(OPTIPATCHER_REL)).unwrap(), b"patch");
+        remove_tracked_file(&game, OPTIPATCHER_REL).unwrap();
+        assert!(!has_tracked_file(&game, OPTIPATCHER_REL));
+        assert_eq!(fs::read(game.join(OPTIPATCHER_REL)).unwrap(), b"theirs");
+
+        // Uninstall removes it and restores the foreign file.
+        add_tracked_file(&game, OPTIPATCHER_REL, &asi).unwrap();
+        uninstall(&game, false).unwrap();
+        assert_eq!(fs::read(game.join(OPTIPATCHER_REL)).unwrap(), b"theirs");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "network: downloads OptiPatcher.asi and checks its digest"]
+    fn fetches_live_optipatcher() {
+        let root = temp("optipatcher-live");
+        let file = tauri::async_runtime::block_on(fetch_optipatcher(&root)).unwrap();
+        assert!(fs::metadata(&file).unwrap().len() > 10_000);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Badge, Button, SelectField } from "@renderer/components";
+import {
+  Badge,
+  Button,
+  CheckboxField,
+  SelectField,
+} from "@renderer/components";
 import type { LibraryGame } from "@types";
 
 import { OptiscalerConfig } from "./optiscaler-config";
@@ -182,6 +187,25 @@ export function OptiscalerSection({
             )}
           </div>
         </>
+      )}
+      {status?.installed && (
+        <div className="optiscaler__extras">
+          <CheckboxField
+            label={t("optiscaler_optipatcher")}
+            checked={status.optipatcher}
+            disabled={busy}
+            onChange={(e) =>
+              void run(() =>
+                window.electron.setOptiPatcher(
+                  game.shop,
+                  game.objectId,
+                  e.target.checked
+                )
+              )
+            }
+          />
+          <p className="optiscaler__hint">{t("optiscaler_optipatcher_hint")}</p>
+        </div>
       )}
       {status?.installed && !busy && (
         <OptiscalerConfig game={game} native={status.fsr4Gpu === "native"} />

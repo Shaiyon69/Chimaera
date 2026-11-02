@@ -1122,6 +1122,8 @@
     "optiscaler_cfg_Fsr4ForceEnableInt8": "Force FSR4 INT8",
     "optiscaler_cfg_LogToFile": "Log to file",
     "optiscaler_cfg_LogLevel": "Log level",
+    "optiscaler_optipatcher": "OptiPatcher",
+    "optiscaler_optipatcher_hint": "ASI plugin that exposes DLSS and DLSS-FG inputs without GPU spoofing in supported games. Helps AMD and Intel cards avoid D3D12 errors. Turns on ASI loading.",
     "optiscaler_blocked_dxvk": "DXVK is installed in this game. Uninstall it below to use OptiScaler.",
     "dxvk_title": "DXVK",
     "dxvk_not_installed": "Not installed",

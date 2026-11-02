@@ -877,6 +877,8 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("installOptiscaler", shop, objectId, proxy),
   uninstallOptiscaler: (shop: GameShop, objectId: string) =>
     ipcRenderer.invoke("uninstallOptiscaler", shop, objectId),
+  setOptiPatcher: (shop: GameShop, objectId: string, enabled: boolean) =>
+    ipcRenderer.invoke("setOptiPatcher", shop, objectId, enabled),
   getOptiscalerConfig: (shop: GameShop, objectId: string) =>
     ipcRenderer.invoke("getOptiscalerConfig", shop, objectId),
   setOptiscalerConfig: (
