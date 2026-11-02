@@ -10,6 +10,10 @@ import {
 import type { LibraryGame } from "@types";
 
 import { OptiscalerConfig } from "./optiscaler-config";
+import {
+  OptiscalerProfilePicker,
+  type OptiscalerProfile,
+} from "./optiscaler-profiles";
 
 import "./optiscaler-section.scss";
 
@@ -27,6 +31,17 @@ export function OptiscalerSection({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
+  const [profiles, setProfiles] = useState<OptiscalerProfile[]>([]);
+  const [profile, setProfile] = useState("default");
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const loadProfiles = useCallback(async () => {
+    setProfiles(await window.electron.getOptiscalerProfiles());
+  }, []);
+
+  useEffect(() => {
+    void loadProfiles();
+  }, [loadProfiles]);
 
   const refresh = useCallback(async () => {
     try {
@@ -53,6 +68,7 @@ export function OptiscalerSection({
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
+    setNotice(null);
     setConfirm(null);
     try {
       await action();
@@ -70,14 +86,39 @@ export function OptiscalerSection({
       setConfirm("install");
       return;
     }
-    void run(() =>
-      window.electron.installOptiscaler(
+    void run(async () => {
+      await window.electron.installOptiscaler(
         game.shop,
         game.objectId,
         proxy ?? "dxgi.dll"
-      )
-    );
+      );
+      if (profile !== "default") await applyProfile();
+    });
   };
+
+  const applyProfile = async () => {
+    const { skipped } = await window.electron.applyOptiscalerProfile(
+      game.shop,
+      game.objectId,
+      profile
+    );
+    if (skipped.length)
+      setNotice(t("optiscaler_profile_skipped", { keys: skipped.join(", ") }));
+  };
+
+  const saveProfile = (name: string) =>
+    void run(async () => {
+      const fields = await window.electron.getOptiscalerConfig(
+        game.shop,
+        game.objectId
+      );
+      // Only what differs from OptiScaler's defaults, so a profile stays portable.
+      const values = Object.fromEntries(
+        fields.filter((f) => f.value !== "auto").map((f) => [f.key, f.value])
+      );
+      await window.electron.saveOptiscalerProfile(null, name, values);
+      await loadProfiles();
+    });
 
   const uninstall = () => {
     if (confirm !== "uninstall") {
@@ -147,6 +188,15 @@ export function OptiscalerSection({
               setConfirm(null);
             }}
           />
+          <OptiscalerProfilePicker
+            profiles={profiles}
+            value={profile}
+            installed={status.installed}
+            busy={busy}
+            onChange={setProfile}
+            onApply={() => void run(applyProfile)}
+            onSave={saveProfile}
+          />
           {!status.fsr4Available && (
             <p className="optiscaler__warning">{t("optiscaler_no_fsr4")}</p>
           )}
@@ -210,6 +260,7 @@ export function OptiscalerSection({
       {status?.installed && !busy && (
         <OptiscalerConfig game={game} native={status.fsr4Gpu === "native"} />
       )}
+      {notice && <p className="optiscaler__hint">{notice}</p>}
       {error && <p className="optiscaler__error">{error}</p>}
     </div>
   );

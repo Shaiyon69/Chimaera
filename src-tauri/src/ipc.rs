@@ -154,6 +154,10 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "installOptiscaler" => optiscaler::install_for_game(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()).await,
         "uninstallOptiscaler" => optiscaler::uninstall_for_game(app, shop(args), object_id(args)).map(|_| Value::Null),
         "setOptiPatcher" => optiscaler::set_optipatcher(app, shop(args), object_id(args), args.get(2).and_then(Value::as_bool).unwrap_or(false)).await.map(|_| Value::Null),
+        "getOptiscalerProfiles" => Ok(optiscaler::profiles(app)),
+        "saveOptiscalerProfile" => optiscaler::save_profile(app, arg_str(args, 0), arg_str(args, 1).unwrap_or_default(), args.get(2).unwrap_or(&Value::Null)),
+        "deleteOptiscalerProfile" => optiscaler::delete_profile(app, arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null),
+        "applyOptiscalerProfile" => optiscaler::apply_profile(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default()),
         "getOptiscalerConfig" => optiscaler::get_config(app, shop(args), object_id(args)),
         "setOptiscalerConfig" => optiscaler::set_config(app, shop(args), object_id(args), arg_str(args, 2).unwrap_or_default(), arg_str(args, 3).unwrap_or_default()).map(|_| Value::Null),
         // Electron tells the download orchestrator and souvenir worker; neither exists here yet (F4, F6).

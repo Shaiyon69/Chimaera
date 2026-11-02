@@ -88,7 +88,10 @@ export function OptiscalerConfig({
             {shown
               .filter((f) => f.group === group)
               .map((field) => {
-                const label = t(`optiscaler_cfg_${field.key}`);
+                // i18next treats "." as a key separator.
+                const label = t(
+                  `optiscaler_cfg_${field.key.replace(".", "_")}`
+                );
                 if (field.type === "select")
                   return (
                     <SelectField

@@ -683,28 +683,49 @@ fn install(payload: &Path, exe_dir: &Path, proxy: &str, tag: &str, fsr4_dll: Opt
 
 // ---------- OptiScaler.ini ----------
 
-/// Reads a key (any section); with `value`, sets it, appending when missing.
+/// Reads a key. `Section.Key` matches only inside `[Section]` (OptiScaler reuses names like
+/// `Enabled`); a plain key matches the first one in any section. With `value`, sets it,
+/// appending when missing: at the end of its section, or the file for a plain key.
 fn ini_get_set(ini: &Path, key: &str, value: Option<&str>) -> Option<String> {
+    let (section, name) = key.split_once('.').map_or((None, key), |(s, k)| (Some(s), k));
     let text = fs::read_to_string(ini).unwrap_or_default();
     let mut lines: Vec<String> = text.split('\n').map(|l| l.trim_end_matches('\r').to_string()).collect();
     if lines.last().is_some_and(String::is_empty) {
         lines.pop();
     }
-    let mut old = None;
-    for line in lines.iter_mut() {
-        if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == key {
-                old = Some(v.trim().to_string());
-                if let Some(value) = value {
-                    *line = format!("{key}={value}");
-                }
+    let (mut current, mut section_end, mut found): (Option<String>, Option<usize>, Option<(usize, String)>) = (None, None, None);
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        if t.starts_with('[') && t.ends_with(']') {
+            current = Some(t[1..t.len() - 1].to_string());
+            if section.is_some_and(|s| s.eq_ignore_ascii_case(&t[1..t.len() - 1])) {
+                section_end = Some(i + 1);
+            }
+            continue;
+        }
+        let in_section = section.is_none_or(|s| current.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(s)));
+        if !in_section || t.starts_with(';') {
+            continue;
+        }
+        // Blank lines between sections do not extend the current one.
+        if section.is_some() && !t.is_empty() {
+            section_end = Some(i + 1);
+        }
+        if let Some((k, v)) = t.split_once('=') {
+            if k.trim() == name {
+                found = Some((i, v.trim().to_string()));
                 break;
             }
         }
     }
+    let old = found.as_ref().map(|(_, v)| v.clone());
     if let Some(value) = value {
-        if old.is_none() {
-            lines.push(format!("{key}={value}"));
+        let entry = format!("{name}={value}");
+        match (found, section, section_end) {
+            (Some((i, _)), _, _) => lines[i] = entry,
+            (None, Some(_), Some(end)) => lines.insert(end, entry),
+            (None, Some(s), None) => lines.extend([format!("[{s}]"), entry]),
+            (None, None, _) => lines.push(entry),
         }
         let _ = fs::write(ini, lines.join("\n") + "\n");
     }
@@ -759,6 +780,7 @@ fn config_fields() -> Vec<Value> {
         tristate("upscalers", "Fsr4ForceEnableInt8"),
         tristate("upscalers", "OverrideSharpness"),
         number("upscalers", "Sharpness", 0.0, 1.3, 0.05),
+        tristate("framegen", "FrameGen.Enabled"),
         // 0.9.4 split the old FGType into an input and an output.
         select("framegen", "FGInput", &["auto", "nofg", "dlssg", "nukems", "fsrfg", "upscaler", "fsrfg30"]),
         select("framegen", "FGOutput", &["auto", "nofg", "fsrfg", "xefg", "nukems"]),
@@ -791,17 +813,99 @@ fn read_config(ini: &Path) -> Value {
     )
 }
 
-fn write_config_value(ini: &Path, key: &str, value: &str) -> Result<(), String> {
-    let field = config_fields().into_iter().find(|f| f["key"] == key).filter(|_| ini_get_set(ini, key, None).is_some()).ok_or(format!("Unsupported setting: {key}"))?;
+/// Checks a value against the allowlist; numbers also accept "auto" (OptiScaler's default).
+fn check_value(key: &str, value: &str) -> Result<(), String> {
+    let field = config_fields().into_iter().find(|f| f["key"] == key).ok_or(format!("Unsupported setting: {key}"))?;
     let valid = match field["type"].as_str() {
         Some("select") => field["options"].as_array().is_some_and(|o| o.iter().any(|v| v == value)),
-        _ => value.trim().parse::<f64>().is_ok_and(|n| n >= field["min"].as_f64().unwrap_or(0.0) && n <= field["max"].as_f64().unwrap_or(0.0)),
+        _ => value == "auto" || value.trim().parse::<f64>().is_ok_and(|n| n >= field["min"].as_f64().unwrap_or(0.0) && n <= field["max"].as_f64().unwrap_or(0.0)),
     };
-    if !valid {
-        return Err(format!("Invalid value for {key}: {value}"));
-    }
+    if valid { Ok(()) } else { Err(format!("Invalid value for {key}: {value}")) }
+}
+
+fn write_config_value(ini: &Path, key: &str, value: &str) -> Result<(), String> {
+    check_value(key, value)?;
+    ini_get_set(ini, key, None).ok_or(format!("Unsupported setting: {key}"))?;
     ini_get_set(ini, key, Some(value));
     Ok(())
+}
+
+// ---------- profiles ----------
+
+const PROFILES_KEY: &str = "optiscalerProfiles";
+
+/// Shipped profiles; the renderer names them by id. "amd-fg" turns DLSS-FG games into
+/// FSR3 FG through NukemFG and fakenvapi, both already in the OptiScaler release.
+fn builtin_profiles() -> Vec<Value> {
+    vec![
+        json!({ "id": "default", "builtin": true, "values": {} }),
+        json!({ "id": "amd-fg", "builtin": true, "values": { "FrameGen.Enabled": "true", "FGInput": "nukems", "FGOutput": "nukems", "OverrideNvapiDll": "true" } }),
+    ]
+}
+
+fn stored_profiles(app: &AppHandle) -> Vec<Value> {
+    app.state::<Store>().get("", PROFILES_KEY).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default()
+}
+
+/// `getOptiscalerProfiles`.
+pub fn profiles(app: &AppHandle) -> Value {
+    Value::Array(builtin_profiles().into_iter().chain(stored_profiles(app)).collect())
+}
+
+/// Keeps only allowlisted keys with valid values.
+fn clean_values(values: &Value) -> Result<Value, String> {
+    let map = values.as_object().ok_or("Profile values must be an object")?;
+    let mut out = serde_json::Map::new();
+    for (k, v) in map {
+        let v = v.as_str().ok_or(format!("Invalid value for {k}"))?;
+        check_value(k, v)?;
+        out.insert(k.clone(), json!(v));
+    }
+    Ok(Value::Object(out))
+}
+
+/// `saveOptiscalerProfile`: creates a profile, or replaces the one with `id`.
+pub fn save_profile(app: &AppHandle, id: Option<&str>, name: &str, values: &Value) -> Result<Value, String> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 60 {
+        return Err("A profile name needs 1 to 60 characters".into());
+    }
+    if id.is_some_and(|id| builtin_profiles().iter().any(|p| p["id"] == id)) {
+        return Err("Built-in profiles cannot be changed".into());
+    }
+    let profile = json!({ "id": id.map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_string), "name": name, "builtin": false, "values": clean_values(values)? });
+    let mut list = stored_profiles(app);
+    match list.iter_mut().find(|p| p["id"] == profile["id"]) {
+        Some(existing) => *existing = profile.clone(),
+        None => list.push(profile.clone()),
+    }
+    app.state::<Store>().put("", PROFILES_KEY, &Value::Array(list))?;
+    Ok(profile)
+}
+
+/// `deleteOptiscalerProfile`.
+pub fn delete_profile(app: &AppHandle, id: &str) -> Result<(), String> {
+    let mut list = stored_profiles(app);
+    list.retain(|p| p["id"] != id);
+    app.state::<Store>().put("", PROFILES_KEY, &Value::Array(list))
+}
+
+/// Writes a profile's values; keys missing from this game's ini (older OptiScaler) are skipped.
+fn apply_values(ini: &Path, values: &Value) -> Vec<String> {
+    let mut skipped = Vec::new();
+    for (k, v) in values.as_object().into_iter().flatten() {
+        if write_config_value(ini, k, v.as_str().unwrap_or_default()).is_err() {
+            skipped.push(k.clone());
+        }
+    }
+    skipped
+}
+
+/// `applyOptiscalerProfile`.
+pub fn apply_profile(app: &AppHandle, shop: &str, object_id: &str, id: &str) -> Result<Value, String> {
+    let profile = profiles(app).as_array().into_iter().flatten().find(|p| p["id"] == id).cloned().ok_or("Profile not found")?;
+    let skipped = apply_values(&ini_path(app, shop, object_id)?, &profile["values"]);
+    Ok(json!({ "skipped": skipped }))
 }
 
 /// "live" if OptiScaler.log (newer than the install) shows the FSR4 4.1.x DLL, "loaded" if only OptiScaler ran.
@@ -1073,6 +1177,31 @@ mod tests {
         fs::write(game.join(MARKER), r#"{"proxy":"bloodborne"}"#).unwrap();
         assert!(install(&payload, &game, "dxgi.dll", "v4", None, None, "dx12").is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ini_sections_and_profiles() {
+        let dir = temp("ini");
+        let ini = dir.join("OptiScaler.ini");
+        fs::write(&ini, "[FrameGen]\n; Enabled=comment\nEnabled=auto\nFGInput=auto\n\n[DLSS]\nEnabled=auto\n").unwrap();
+        assert_eq!(ini_get_set(&ini, "DLSS.Enabled", Some("false")).as_deref(), Some("auto"));
+        assert_eq!(ini_get_set(&ini, "FrameGen.Enabled", None).as_deref(), Some("auto"));
+        // Missing sectioned keys land inside their section; a missing section is created.
+        ini_get_set(&ini, "FrameGen.MakeDepthCopy", Some("true"));
+        ini_get_set(&ini, "Nukems.MakeDepthCopy", Some("true"));
+        let text = fs::read_to_string(&ini).unwrap();
+        assert!(text.contains("FGInput=auto\nMakeDepthCopy=true\n\n[DLSS]\nEnabled=false\n[Nukems]\nMakeDepthCopy=true\n"), "{text}");
+
+        let amd = builtin_profiles().into_iter().find(|p| p["id"] == "amd-fg").unwrap();
+        assert!(clean_values(&amd["values"]).is_ok());
+        // FGOutput and OverrideNvapiDll are not in this ini: skipped, not added.
+        assert_eq!(apply_values(&ini, &amd["values"]), ["FGOutput", "OverrideNvapiDll"]);
+        assert_eq!(ini_get_set(&ini, "FrameGen.Enabled", None).as_deref(), Some("true"));
+        assert_eq!(ini_get_set(&ini, "DLSS.Enabled", None).as_deref(), Some("false"));
+        assert!(clean_values(&json!({ "FGInput": "bogus" })).is_err());
+        assert!(clean_values(&json!({ "Unknown": "1" })).is_err());
+        assert!(clean_values(&json!({ "Sharpness": "auto" })).is_ok());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

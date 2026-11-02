@@ -5,6 +5,8 @@ import { Button, TextField } from "@renderer/components";
 import { settingsContext } from "@renderer/context";
 import { useAppSelector } from "@renderer/hooks";
 
+import { SettingsOptiscalerProfiles } from "./settings-optiscaler-profiles";
+
 import "./settings-optiscaler.scss";
 
 type DllKey = "optiscalerFsr4ExactPath" | "optiscalerFsr4LossyPath";
@@ -210,6 +212,8 @@ export function SettingsContextOptiscaler() {
           </section>
         </>
       )}
+
+      <SettingsOptiscalerProfiles />
     </div>
   );
 }

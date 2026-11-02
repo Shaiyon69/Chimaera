@@ -485,6 +485,25 @@ declare global {
       proxy: string
     ) => Promise<{ version: string }>;
     uninstallOptiscaler: (shop: GameShop, objectId: string) => Promise<void>;
+    getOptiscalerProfiles: () => Promise<
+      {
+        id: string;
+        name: string | null;
+        builtin: boolean;
+        values: Record<string, string>;
+      }[]
+    >;
+    saveOptiscalerProfile: (
+      id: string | null,
+      name: string,
+      values: Record<string, string>
+    ) => Promise<unknown>;
+    deleteOptiscalerProfile: (id: string) => Promise<void>;
+    applyOptiscalerProfile: (
+      shop: GameShop,
+      objectId: string,
+      id: string
+    ) => Promise<{ skipped: string[] }>;
     setOptiPatcher: (
       shop: GameShop,
       objectId: string,
