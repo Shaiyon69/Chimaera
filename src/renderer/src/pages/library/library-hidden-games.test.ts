@@ -185,6 +185,7 @@ async function renderLibrary(
       useSearchParams: () => [searchParams, noop],
       useLocation: () => ({ pathname: "/" }),
     },
+    "./graphics-bulk-modal": { GraphicsBulkModal: () => null },
     "./import-launcher-games-modal": { ImportLauncherGamesModal: () => null },
     "./library-game-card": { LibraryGameCard: gameCard },
     "./library-game-card-large": { LibraryGameCardLarge: gameCard },
