@@ -6,6 +6,7 @@ import { applyChimaeraProfile, type ChimaeraProfile } from "./profile-merge";
 import { unwrapPrivateKey } from "./crypto";
 import { createKeyring, type DmKeyring } from "./dm-crypto";
 import type { DmMember } from "./recency";
+import { parseMessageInsert } from "./realtime-core";
 
 export interface MessappProfile {
   id: string;
@@ -212,69 +213,81 @@ export const fetchLastMessage = async (roomId: string) =>
       .limit(1)
   )[0] ?? null;
 
+/** One Chimaera message by id, or null when it is another app's, deleted, or hidden by RLS. */
+const fetchMessageById = async (id: string) =>
+  orThrow<(DmMessage & { dm_room_id: string })[]>(
+    await messapp
+      .from("messages")
+      .select(`${MESSAGE_COLUMNS}, dm_room_id`)
+      .eq("id", id)
+      .eq("origin", ORIGIN)
+      .eq("is_deleted", false)
+      .limit(1)
+  )[0] ?? null;
+
+/* Live updates come from MESSAPP's broadcast triggers (20261103155000), not
+   postgres_changes: any postgres_changes subscriber keeps Realtime polling the
+   WAL, which drains the project's Disk IO budget. Broadcasts carry ids only. */
+const onInsert =
+  (handle: (message: DmMessage & { dm_room_id: string }) => void) =>
+  ({ payload }: { payload: unknown }) => {
+    const insert = parseMessageInsert(payload);
+    if (!insert) return;
+    fetchMessageById(insert.id)
+      .then((message) => {
+        if (message) handle(message);
+      })
+      .catch((err) => logger.error("Failed to fetch new DM", err));
+  };
+
 export const subscribeToRoom = (
   roomId: string,
   onMessage: (message: DmMessage) => void,
   onStatus: (connected: boolean) => void,
   onTyping: (userId: string) => void
 ) => {
-  let subscribed = false;
+  let typingReady = false;
 
-  const channel = messapp
+  const messages = messapp
+    .channel(`room:${roomId}`, { config: { private: true } })
+    .on("broadcast", { event: "messages" }, onInsert(onMessage))
+    .subscribe((status) => onStatus(status === "SUBSCRIBED"));
+
+  // Typing stays on its own channel so MESSAPP's room topic never sees it; nothing is stored.
+  const typing = messapp
     .channel(`chimaera-dm-${roomId}`)
-    // Typing is a throwaway broadcast on the same channel; nothing is stored.
     .on("broadcast", { event: "typing" }, ({ payload }) => {
       if (typeof payload?.userId === "string") onTyping(payload.userId);
     })
-    .on(
-      "postgres_changes",
-      {
-        event: "INSERT",
-        schema: "public",
-        table: "messages",
-        filter: `dm_room_id=eq.${roomId}`,
-      },
-      (payload) => {
-        // Realtime takes one filter, so the origin check happens here.
-        const message = payload.new as DmMessage;
-        if (message.origin === ORIGIN) onMessage(message);
-      }
-    )
     .subscribe((status) => {
-      subscribed = status === "SUBSCRIBED";
-      onStatus(subscribed);
+      typingReady = status === "SUBSCRIBED";
     });
 
   return {
     // Before the channel is joined a send would fall back to REST, so skip it.
     sendTyping: (userId: string) => {
-      if (!subscribed) return;
-      void channel.send({
+      if (!typingReady) return;
+      void typing.send({
         type: "broadcast",
         event: "typing",
         payload: { userId },
       });
     },
     close: () => {
-      void messapp.removeChannel(channel);
+      void messapp.removeChannel(messages);
+      void messapp.removeChannel(typing);
     },
   };
 };
 
-/** Every new message in any of my rooms (RLS scopes the stream), for unread tracking. */
+/** Every new Chimaera message in any of my rooms, for unread tracking. */
 export const subscribeToInbox = (
+  userId: string,
   onMessage: (message: DmMessage & { dm_room_id: string }) => void
 ) => {
   const channel = messapp
-    .channel("chimaera-dm-inbox")
-    .on(
-      "postgres_changes",
-      { event: "INSERT", schema: "public", table: "messages" },
-      (payload) => {
-        const message = payload.new as DmMessage & { dm_room_id: string };
-        if (message.origin === ORIGIN) onMessage(message);
-      }
-    )
+    .channel(`user:${userId}`, { config: { private: true } })
+    .on("broadcast", { event: "dm_activity" }, onInsert(onMessage))
     .subscribe();
 
   return () => {

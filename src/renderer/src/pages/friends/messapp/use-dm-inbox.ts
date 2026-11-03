@@ -99,7 +99,7 @@ export function useDmInbox() {
       if (cancelled) return;
       initUnread(userId, newest);
 
-      unsubscribe = subscribeToInbox(async (message) => {
+      unsubscribe = subscribeToInbox(userId, async (message) => {
         // An unknown room is usually a friend accepted since the last load.
         if (!peerOfRoom.has(message.dm_room_id)) {
           await loadRooms().catch((err) =>
