@@ -80,6 +80,7 @@ export interface Game {
   customOriginalCoverPath?: string | null;
   playTimeInMilliseconds: number;
   steamPlayTimeInMilliseconds?: number;
+  gogPlayTimeInMilliseconds?: number;
   hasActiveSteamImport?: boolean;
   enableHydraPlaytimeTracking?: boolean;
   unsyncedDeltaPlayTimeInMilliseconds?: number;

@@ -53,12 +53,13 @@ fn steam_client(store: &Store) -> Option<PathBuf> {
 /// The game's achievement list from Hydra, cached per language. `fresh` asks for a
 /// refetch once the cache is an hour old; a failed fetch falls back to the cache.
 pub async fn catalogue(app: &AppHandle, shop: &str, object_id: &str, fresh: bool) -> Vec<Value> {
-    if shop == "custom" {
-        // shortcut: bundled games (Bloodborne trophies) get their own list in the Bloodborne slice.
-        return Vec::new();
-    }
     let store = app.state::<Store>();
     let key = game_key(shop, object_id);
+    if shop == "custom" {
+        // Hydra has no list for custom games; a store sync (GOG) may have cached one.
+        // shortcut: bundled games (Bloodborne trophies) get their own list in the Bloodborne slice.
+        return store.get(CATALOGUE, &key).ok().and_then(|c| c["achievements"].as_array().cloned()).unwrap_or_default();
+    }
     let lang = language(&store);
     let cached = store.get(CATALOGUE, &key).unwrap_or(Value::Null);
     let cached_list = || cached["achievements"].as_array().cloned().unwrap_or_default();

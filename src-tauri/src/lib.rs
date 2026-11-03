@@ -26,6 +26,7 @@ mod file_system;
 mod game_installer;
 mod games;
 mod genres;
+mod gog;
 mod google_drive;
 mod graphics_scan;
 mod hosters;
@@ -192,6 +193,7 @@ pub fn run() {
             app.manage(downloads::Downloads::default());
             downloads::spawn(app.handle().clone());
             app.manage(steam::SteamSync::default());
+            app.manage(gog::GogSync::default());
             app.manage(classics_import::ClassicsImports::default());
             app.manage(classics_launch::EmulatorPids::default());
             app.manage(retroarch::RetroArchImports::default());
@@ -243,6 +245,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     steam::start_on_launch(&app);
+                    gog::start_on_launch(&app);
                 });
             }
             if let Some((shop, object_id)) = shortcuts::deep_link_arg(&args).and_then(shortcuts::run_target) {

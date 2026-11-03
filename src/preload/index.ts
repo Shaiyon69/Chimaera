@@ -51,6 +51,8 @@ import type {
   SteamSyncState,
   SteamSyncFinishedPayload,
   SteamConnectErrorCode,
+  GogSyncState,
+  GogSyncFinishedPayload,
   ExtractionFailure,
 } from "@types";
 import type { Downloader } from "@shared";
@@ -1558,6 +1560,39 @@ contextBridge.exposeInMainWorld("electron", {
     ) => cb(code);
     ipcRenderer.on("on-steam-connect-error", listener);
     return () => ipcRenderer.removeListener("on-steam-connect-error", listener);
+  },
+
+  /* GOG */
+  startGogOAuth: () => ipcRenderer.invoke("startGogOAuth"),
+  getGogIntegrationStatus: () => ipcRenderer.invoke("getGogIntegrationStatus"),
+  disconnectGog: (deleteImportedData: boolean) =>
+    ipcRenderer.invoke("disconnectGog", deleteImportedData),
+  startGogSync: () => ipcRenderer.invoke("startGogSync"),
+  cancelGogSync: () => ipcRenderer.invoke("cancelGogSync"),
+  getGogSyncState: () => ipcRenderer.invoke("getGogSyncState"),
+  onGogSyncProgress: (cb: (state: GogSyncState) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: GogSyncState) =>
+      cb(state);
+    ipcRenderer.on("on-gog-sync-progress", listener);
+    return () => ipcRenderer.removeListener("on-gog-sync-progress", listener);
+  },
+  onGogSyncFinished: (cb: (payload: GogSyncFinishedPayload) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: GogSyncFinishedPayload
+    ) => cb(payload);
+    ipcRenderer.on("on-gog-sync-finished", listener);
+    return () => ipcRenderer.removeListener("on-gog-sync-finished", listener);
+  },
+  onGogConnected: (cb: () => void) => {
+    const listener = (_event: Electron.IpcRendererEvent) => cb();
+    ipcRenderer.on("on-gog-connected", listener);
+    return () => ipcRenderer.removeListener("on-gog-connected", listener);
+  },
+  onGogConnectError: (cb: () => void) => {
+    const listener = (_event: Electron.IpcRendererEvent) => cb();
+    ipcRenderer.on("on-gog-connect-error", listener);
+    return () => ipcRenderer.removeListener("on-gog-connect-error", listener);
   },
 
   /* Notifications */

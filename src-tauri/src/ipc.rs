@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, dxvk, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, genres, google_drive, graphics_scan, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, dxvk, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, genres, gog, google_drive, graphics_scan, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -269,6 +269,18 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "getSteamSyncState" => Ok(app.state::<steam::SteamSync>().state()),
         "syncSteamGameOnGamePage" => Ok(json!(steam::sync_game_page(app, arg_str(args, 0).unwrap_or_default()))),
         "installGameOnSteam" => steam::install_on_steam(app, arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null),
+        "startGogOAuth" => gog::start_login(app).map(|_| Value::Null),
+        "getGogIntegrationStatus" => Ok(gog::integration_status(&app.state::<Store>())),
+        "disconnectGog" => {
+            let delete_imported = args.first().and_then(Value::as_bool).unwrap_or(false);
+            gog::disconnect(app, delete_imported).await.map(|_| Value::Null)
+        }
+        "startGogSync" => Ok(gog::start(app, "manual")),
+        "cancelGogSync" => {
+            app.state::<gog::GogSync>().cancel(app).await;
+            Ok(Value::Null)
+        }
+        "getGogSyncState" => Ok(app.state::<gog::GogSync>().state()),
         "isSteamAppExecutable" => {
             let (app_id, executable) = (arg_str(args, 0).unwrap_or_default().to_string(), arg_str(args, 1).unwrap_or_default().to_string());
             tauri::async_runtime::spawn_blocking(move || {

@@ -79,6 +79,9 @@ import type {
   SteamSyncState,
   SteamSyncFinishedPayload,
   SteamConnectErrorCode,
+  GogIntegrationStatus,
+  GogSyncState,
+  GogSyncFinishedPayload,
   ExtractionFailure,
 } from "@types";
 
@@ -1289,6 +1292,21 @@ declare global {
     onSteamConnectError: (
       cb: (code: SteamConnectErrorCode) => void
     ) => () => Electron.IpcRenderer;
+    /* GOG */
+    startGogOAuth: () => Promise<void>;
+    getGogIntegrationStatus: () => Promise<GogIntegrationStatus>;
+    disconnectGog: (deleteImportedData: boolean) => Promise<void>;
+    startGogSync: () => Promise<GogSyncState>;
+    cancelGogSync: () => Promise<void>;
+    getGogSyncState: () => Promise<GogSyncState>;
+    onGogSyncProgress: (
+      cb: (state: GogSyncState) => void
+    ) => () => Electron.IpcRenderer;
+    onGogSyncFinished: (
+      cb: (payload: GogSyncFinishedPayload) => void
+    ) => () => Electron.IpcRenderer;
+    onGogConnected: (cb: () => void) => () => Electron.IpcRenderer;
+    onGogConnectError: (cb: () => void) => () => Electron.IpcRenderer;
     /* User */
     getComparedUnlockedAchievements: (
       objectId: string,

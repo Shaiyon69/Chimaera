@@ -1,6 +1,7 @@
 export type PlayTimeParts = {
   playTimeInMilliseconds?: number | null;
   steamPlayTimeInMilliseconds?: number | null;
+  gogPlayTimeInMilliseconds?: number | null;
 };
 
 export type RemotePlayTimeInput = {
@@ -19,7 +20,8 @@ export const getDisplayedPlayTimeInMilliseconds = (
   game: PlayTimeParts
 ): number =>
   Math.max(0, game.playTimeInMilliseconds ?? 0) +
-  Math.max(0, game.steamPlayTimeInMilliseconds ?? 0);
+  Math.max(0, game.steamPlayTimeInMilliseconds ?? 0) +
+  Math.max(0, game.gogPlayTimeInMilliseconds ?? 0);
 
 export const getPlayTimeHoursAndMinutes = (milliseconds: number) => {
   const totalMinutes = Math.floor(Math.max(0, milliseconds) / 60_000);
