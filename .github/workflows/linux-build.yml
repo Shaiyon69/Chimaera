@@ -1,0 +1,66 @@
+name: Linux build
+
+# Builds the Linux app and keeps it as an artifact. It publishes nothing and has no updater files.
+on:
+  push:
+    branches: [build/linux]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    env:
+      MAIN_VITE_API_URL: ${{ vars.MAIN_VITE_API_URL }}
+      MAIN_VITE_GOOGLE_CLIENT_ID: ${{ vars.MAIN_VITE_GOOGLE_CLIENT_ID }}
+      MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ vars.MAIN_VITE_GOOGLE_CLIENT_SECRET }}
+      RENDERER_VITE_EXTERNAL_RESOURCES_URL: ${{ vars.EXTERNAL_RESOURCES_URL }}
+      RENDERER_VITE_TORBOX_REFERRAL_CODE: ${{ vars.RENDERER_VITE_TORBOX_REFERRAL_CODE }}
+      CHIMAERA_COMPANIONS_DIR: ${{ github.workspace }}/brood
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Shaiyon69/Chimaera-Brood
+          ssh-key: ${{ secrets.BROOD_SSH_KEY }}
+          path: brood
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils libssl-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.21.0
+          cache: yarn
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+            brood -> target
+      - name: Install Dioxus CLI
+        run: |
+          rustup target add wasm32-unknown-unknown
+          dx --version 2>/dev/null | grep -q "0.7.10" || cargo install dioxus-cli --version 0.7.10 --locked
+      - name: Install dependencies
+        run: |
+          yarn install --frozen-lockfile --ignore-scripts
+          node scripts/postinstall.cjs
+      - name: Write build-time .env
+        run: |
+          {
+            echo "MAIN_VITE_API_URL=$MAIN_VITE_API_URL"
+            [ -z "$MAIN_VITE_GOOGLE_CLIENT_ID" ] || echo "MAIN_VITE_GOOGLE_CLIENT_ID=$MAIN_VITE_GOOGLE_CLIENT_ID"
+            [ -z "$MAIN_VITE_GOOGLE_CLIENT_SECRET" ] || echo "MAIN_VITE_GOOGLE_CLIENT_SECRET=$MAIN_VITE_GOOGLE_CLIENT_SECRET"
+          } > .env
+      - name: Build
+        run: yarn tauri:build --bundles appimage,deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chimaera-linux
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
