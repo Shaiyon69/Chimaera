@@ -61,6 +61,8 @@ fn link_torrent_bridge() {
     let shared = if windows { prebuilt.join("bin/hydra_torrent_bridge.dll") } else { lib_dir.join("libhydra_torrent_bridge.so") };
     if !windows {
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+        // Linux packages install the binary in usr/bin and the bundled library in usr/lib/<productName>.
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib/Chimaera");
     }
     println!("cargo:rerun-if-changed={}", shared.display());
     // OUT_DIR is target/<profile>/build/<pkg>/out.
