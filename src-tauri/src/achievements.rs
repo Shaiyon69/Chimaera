@@ -120,8 +120,9 @@ fn missing_catalogues(store: &Store) -> Vec<(String, String)> {
 }
 
 /// Fetches each missing catalogue once, one at a time, and stores the game's counts.
-async fn backfill_catalogues(app: &AppHandle) {
+pub(crate) async fn backfill_catalogues(app: &AppHandle) {
     let missing = missing_catalogues(&app.state::<Store>());
+    let any_missing = !missing.is_empty();
     for (shop, id) in missing {
         let catalogue = catalogue(app, &shop, &id, false).await;
         if catalogue.is_empty() {
@@ -132,6 +133,9 @@ async fn backfill_catalogues(app: &AppHandle) {
         if let Err(error) = store_counts(&store, &key, &unlocked(&store, &key), &catalogue) {
             eprintln!("[achievements] backfill {key} failed: {error}");
         }
+    }
+    if any_missing {
+        let _ = app.emit("on-library-batch-complete", ());
     }
 }
 

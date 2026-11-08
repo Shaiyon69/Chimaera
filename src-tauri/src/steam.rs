@@ -1448,6 +1448,10 @@ async fn run(app: &AppHandle, run_id: &str, cancel: &Arc<AtomicBool>) -> Result<
     .await?;
     check(cancel)?;
 
+    // The startup backfill ran before these games joined the library; games with no new unlocks never fetched a catalogue.
+    let backfill_app = app.clone();
+    tauri::async_runtime::spawn(async move { crate::achievements::backfill_catalogues(&backfill_app).await });
+
     sync.progress(app, run_id, "executables", 0, 0);
     let linked = link_executables(app, None, |done, total| sync.progress(app, run_id, "executables", total, done)).await;
     eprintln!("[steam] linked {linked} executables");
