@@ -423,19 +423,24 @@ pub fn start_login(app: &AppHandle) -> Result<(), String> {
 // ---- Web API (steam-web-api.ts) ----
 
 async fn api_get(session: &Session, path: &str, params: Vec<(&str, String)>, include_steam_id: bool) -> Result<Value, Error> {
-    let mut url = url::Url::parse(API).expect("static url").join(path).expect("static path");
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("access_token", &session.token);
-        if include_steam_id {
-            query.append_pair("steamid", &session.steam_id);
-        }
-        query.append_pair("format", "json");
-        for (key, value) in &params {
-            query.append_pair(key, value);
-        }
+    api_call(session, false, path, params, include_steam_id).await
+}
+
+/// For methods Steam only accepts as POST (405 on GET); the parameters go in the form body.
+async fn api_post(session: &Session, path: &str, params: Vec<(&str, String)>, include_steam_id: bool) -> Result<Value, Error> {
+    api_call(session, true, path, params, include_steam_id).await
+}
+
+async fn api_call(session: &Session, post: bool, path: &str, params: Vec<(&str, String)>, include_steam_id: bool) -> Result<Value, Error> {
+    let url = url::Url::parse(API).expect("static url").join(path).expect("static path");
+    let mut pairs = vec![("access_token", session.token.clone())];
+    if include_steam_id {
+        pairs.push(("steamid", session.steam_id.clone()));
     }
-    let response = client()?.get(url).send().await.map_err(|e| Error::Transport(e.to_string()))?;
+    pairs.push(("format", "json".into()));
+    pairs.extend(params);
+    let request = if post { client()?.post(url).form(&pairs) } else { client()?.get(url).query(&pairs) };
+    let response = request.send().await.map_err(|e| Error::Transport(e.to_string()))?;
     let status = response.status().as_u16();
     let retry_after = response.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
     let body = response.text().await.map_err(|e| Error::Transport(e.to_string()))?;
@@ -1316,7 +1321,7 @@ async fn fetch_library(session: &Session, cancel: &AtomicBool) -> Result<Vec<Lib
                         add_playtime(&mut playtime, app.app_id.clone(), Playtime { seconds: app.play_seconds, last_played: app.last_played });
                     }
                     let summary = with_retry("family playtime", cancel, || {
-                        api_get(session, "IFamilyGroupsService/GetPlaytimeSummary/v1/", vec![("family_groupid", group.clone()), ("input_json", json!({ "family_groupid": group }).to_string())], false)
+                        api_post(session, "IFamilyGroupsService/GetPlaytimeSummary/v1/", vec![("family_groupid", group.clone()), ("input_json", json!({ "family_groupid": group }).to_string())], false)
                     })
                     .await;
                     match summary {
