@@ -1,4 +1,4 @@
-//! `companion:` scheme: game companion web apps (built from the `companions` repo by
+//! `companion:` scheme: game companion web apps (built from the `Chimaera-Brood` repo by
 //! `scripts/fetch-companions.mjs` into the `companions` resource folder), shown in an
 //! iframe on a game's page. `/terraria/index.html` serves `<resources>/companions/terraria/index.html`.
 
