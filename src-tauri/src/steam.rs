@@ -366,7 +366,9 @@ pub fn start_login(app: &AppHandle) -> Result<(), String> {
     }
     let done = Arc::new(AtomicBool::new(false));
     let handle = app.clone();
-    let mut builder = WebviewWindowBuilder::new(app, LOGIN_LABEL, WebviewUrl::External(LOGIN_URL.parse().expect("static url")))
+    // Linux loads the login page below, once the cookie policy is set.
+    let first_url = if cfg!(target_os = "linux") { "about:blank" } else { LOGIN_URL };
+    let mut builder = WebviewWindowBuilder::new(app, LOGIN_LABEL, WebviewUrl::External(first_url.parse().expect("static url")))
         .title("Steam")
         .inner_size(600.0, 800.0)
         .user_agent(USER_AGENT)
@@ -401,7 +403,20 @@ pub fn start_login(app: &AppHandle) -> Result<(), String> {
     if let Some(main) = app.get_webview_window("main") {
         builder = builder.parent(&main).map_err(|e| e.to_string())?;
     }
-    builder.build().map_err(|e| e.to_string())?;
+    let _window = builder.build().map_err(|e| e.to_string())?;
+    // The store login sets the steamcommunity.com cookie cross-site, which sync needs and WebKitGTK blocks by default.
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::{CookieAcceptPolicy, CookieManagerExt, WebViewExt, WebsiteDataManagerExt};
+        _window
+            .with_webview(|webview| {
+                if let Some(cookies) = webview.inner().website_data_manager().and_then(|manager| manager.cookie_manager()) {
+                    cookies.set_accept_policy(CookieAcceptPolicy::Always);
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        _window.navigate(LOGIN_URL.parse().expect("static url")).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
