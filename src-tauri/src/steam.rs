@@ -814,6 +814,25 @@ fn parse_achievement_xml(xml: &str) -> Vec<Unlock> {
         .collect()
 }
 
+/// Steam's React achievements page embeds its query cache as escaped JSON: the schema pairs
+/// `internal_key` with `api_name`, the user's data pairs it with `unlocked` and `unlock_time`.
+// shortcut: reads those pairs as text and relies on Steam's field order, parse the embedded JSON if the order changes.
+fn parse_achievement_ssr(html: &str) -> Vec<Unlock> {
+    let text = html.replace("\\\"", "\"");
+    let mut names = HashMap::new();
+    let mut times = Vec::new();
+    for entry in text.split("\"internal_key\":").skip(1) {
+        let Some((key, rest)) = entry.split_once(',') else { continue };
+        if let Some(name) = rest.strip_prefix("\"api_name\":\"").and_then(|r| r.split('"').next()) {
+            names.insert(key, name);
+        } else if let Some(time) = rest.strip_prefix("\"unlocked\":true,\"unlock_time\":") {
+            let digits = time.find(|c: char| !c.is_ascii_digit()).map_or(time, |end| &time[..end]);
+            times.extend(digits.parse::<i64>().ok().filter(|t| *t > 0).map(|t| (key, t)));
+        }
+    }
+    times.into_iter().filter_map(|(key, time)| Some(Unlock { name: names.get(key)?.to_string(), unlock_time: time * 1000 })).collect()
+}
+
 fn is_login_page(url: &str, body: &str) -> bool {
     let url_lower = url.to_ascii_lowercase();
     if url_lower.contains("login.steampowered.com") || url_lower.split(['/', '.', '?', '#']).any(|p| p == "login") {
@@ -857,6 +876,11 @@ async fn community_unlocks(session: &Session, app_id: &str) -> Result<Vec<Unlock
     }
     if profile.contains("achieveRow") || owner.contains("achieveRow") {
         return Ok(Vec::new());
+    }
+    // Some games no longer serve the XML stats below, only this page.
+    let embedded = parse_achievement_ssr(&profile);
+    if !embedded.is_empty() {
+        return Ok(embedded);
     }
     let (url, mut xml) = community_page(session, &format!("{COMMUNITY}/profiles/{}/stats/{app_id}/?xml=1", session.steam_id)).await?;
     if !xml.to_ascii_lowercase().contains("<playerstats") {
@@ -1624,6 +1648,14 @@ mod tests {
         assert_eq!(parse_store_config(LOGIN_URL, html), None);
         let logged_out = html.replace("true", "false");
         assert_eq!(parse_store_config(EXPLORE_URL, &logged_out), None);
+    }
+
+    #[test]
+    fn reads_unlocks_from_the_embedded_page_data() {
+        let html = r#"{\"achievements\":{\"257\":{\"internal_key\":257,\"unlocked\":true,\"unlock_time\":1722061795},\"258\":{\"internal_key\":258,\"unlocked\":false,\"unlock_time\":0}}} [{\"internal_key\":257,\"api_name\":\"ACH_1\",\"name\":\"a\"},{\"internal_key\":258,\"api_name\":\"ACH_2\",\"name\":\"b\"}]"#;
+        let unlocks = parse_achievement_ssr(html);
+        assert_eq!(unlocks.len(), 1);
+        assert_eq!((unlocks[0].name.as_str(), unlocks[0].unlock_time), ("ACH_1", 1722061795000));
     }
 
     #[test]
