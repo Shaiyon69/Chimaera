@@ -257,7 +257,7 @@ fn path_key(path: &str) -> String {
 }
 
 /// `closeGame`: kills the processes running the game's exe or tracking exes.
-// shortcut: no emulator sessions or Linux process matching yet.
+// shortcut: no emulator sessions yet.
 pub fn close_game(store: &Store, shop: &str, object_id: &str) -> Result<Value, String> {
     let game = store.get("games", &game_key(shop, object_id))?;
     if game.is_null() {
@@ -269,8 +269,14 @@ pub fn close_game(store: &Store, shop: &str, object_id: &str) -> Result<Value, S
     }
     let mut system = sysinfo::System::new();
     system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always));
+    let folder = game["executablePath"].as_str().and_then(crate::watcher::linux_game_folder);
+    if folder.is_some() {
+        system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always).with_cwd(sysinfo::UpdateKind::Always));
+    }
+    let in_game_folder = |p: Option<&Path>| p.zip(folder.as_deref()).is_some_and(|(p, f)| crate::watcher::in_folder(&path_key(&p.to_string_lossy()), f));
     for process in system.processes().values() {
-        if process.exe().is_some_and(|exe| targets.contains(&path_key(&exe.to_string_lossy()))) && !process.kill() {
+        let matched = process.exe().is_some_and(|exe| targets.contains(&path_key(&exe.to_string_lossy()))) || in_game_folder(process.exe()) || in_game_folder(process.cwd());
+        if matched && !process.kill() {
             eprintln!("[launch] could not kill pid {}", process.pid());
         }
     }

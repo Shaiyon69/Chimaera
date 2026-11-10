@@ -69,6 +69,14 @@
       fill: globals.$body-color;
       opacity: 0.6;
     }
+
+    img {
+      display: block;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      opacity: 0.85;
+    }
   }
 
   &__content {
