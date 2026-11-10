@@ -294,7 +294,9 @@ mod tests {
 
     #[test]
     fn archive_volumes_match_electron_patterns() {
-        assert_eq!(archive_volume("Game.part01.rar"), archive_volume("game.PART2.rar"));
+        assert_eq!(archive_volume("Game.part01.rar"), archive_volume("Game.PART2.rar"));
+        // Names are case-insensitive only on Windows.
+        assert_eq!(archive_volume("Game.part01.rar") == archive_volume("game.part2.rar"), cfg!(windows));
         assert_eq!(archive_volume("game.7z.001").map(|v| v.0), Some(1));
         assert_eq!(archive_volume("game.r00").map(|v| v.0), Some(2));
         assert_eq!(archive_volume("game.rar").map(|v| v.0), Some(2));

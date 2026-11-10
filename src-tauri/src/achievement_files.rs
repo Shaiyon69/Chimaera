@@ -66,23 +66,23 @@ impl Roots {
 fn cracker_locations(r: &Roots) -> Vec<(Cracker, PathBuf, &'static [&'static str])> {
     use Cracker::*;
     vec![
-        (Codex, r.public_documents.join(r"Steam\CODEX"), &["<id>", "achievements.ini"]),
-        (Codex, r.app_data.join(r"Steam\CODEX"), &["<id>", "achievements.ini"]),
+        (Codex, r.public_documents.join("Steam").join("CODEX"), &["<id>", "achievements.ini"]),
+        (Codex, r.app_data.join("Steam").join("CODEX"), &["<id>", "achievements.ini"]),
         (Goldberg, r.app_data.join("Goldberg SteamEmu Saves"), &["<id>", "achievements.json"]),
         (Goldberg, r.app_data.join("GSE Saves"), &["<id>", "achievements.json"]),
-        (Rune, r.public_documents.join(r"Steam\RUNE"), &["<id>", "achievements.ini"]),
+        (Rune, r.public_documents.join("Steam").join("RUNE"), &["<id>", "achievements.ini"]),
         (OnlineFix, r.public_documents.join("OnlineFix"), &["<id>", "Stats", "Achievements.ini"]),
         (OnlineFix, r.public_documents.join("OnlineFix"), &["<id>", "Achievements.ini"]),
         (Rld, r.program_data.join("RLD!"), &["<id>", "achievements.ini"]),
-        (Rld, r.program_data.join(r"Steam\Player"), &["<id>", "stats", "achievements.ini"]),
-        (Rld, r.program_data.join(r"Steam\RLD!"), &["<id>", "stats", "achievements.ini"]),
-        (Rld, r.program_data.join(r"Steam\dodi"), &["<id>", "stats", "achievements.ini"]),
+        (Rld, r.program_data.join("Steam").join("Player"), &["<id>", "stats", "achievements.ini"]),
+        (Rld, r.program_data.join("Steam").join("RLD!"), &["<id>", "stats", "achievements.ini"]),
+        (Rld, r.program_data.join("Steam").join("dodi"), &["<id>", "stats", "achievements.ini"]),
         (CreamApi, r.app_data.join("CreamAPI"), &["<id>", "stats", "CreamAPI.Achievements.cfg"]),
         (Skidrow, r.documents.join("SKIDROW"), &["<id>", "SteamEmu", "UserStats", "achiev.ini"]),
         (Skidrow, r.documents.join("Player"), &["<id>", "SteamEmu", "UserStats", "achiev.ini"]),
         (Skidrow, r.local_app_data.join("SKIDROW"), &["<id>", "SteamEmu", "UserStats", "achiev.ini"]),
         (SmartSteamEmu, r.app_data.join("SmartSteamEmu"), &["<id>", "User", "Achievements.ini"]),
-        (Empress, r.app_data.join(r"EMPRESS\remote"), &["<id>", "achievements.json"]),
+        (Empress, r.app_data.join("EMPRESS").join("remote"), &["<id>", "achievements.json"]),
         (Empress, r.public_documents.join("EMPRESS"), &["<id>", "remote", "<id>", "achievements.json"]),
         (Razor1911, r.app_data.join(".1911"), &["<id>", "achievement"]),
     ]
@@ -203,7 +203,7 @@ fn emulator_dirs(exe: &Path) -> Vec<PathBuf> {
             }
         }
     }
-    for version in subdirs(&root.join(r"Engine\Binaries\ThirdParty\Steamworks")) {
+    for version in subdirs(&root.join("Engine").join("Binaries").join("ThirdParty").join("Steamworks")) {
         for arch in ["Win64", "Win32", "WinGDK"] {
             dirs.push(version.join(arch));
         }
@@ -271,18 +271,18 @@ fn steam_settings_dirs(exe: &Path) -> Vec<PathBuf> {
 fn game_directory_files(exe: &Path) -> Vec<AchievementFile> {
     let mut files = Vec::new();
     for base in emulator_dirs(exe) {
-        let user_stats = base.join(r"SteamData\user_stats.ini");
+        let user_stats = base.join("SteamData").join("user_stats.ini");
         if user_stats.is_file() {
             files.push(AchievementFile { cracker: Cracker::UserStats, path: user_stats });
         }
         for profile in subdirs(&base.join("3DMGAME")) {
-            let path = profile.join(r"stats\achievements.ini");
+            let path = profile.join("stats").join("achievements.ini");
             if path.is_file() {
                 files.push(AchievementFile { cracker: Cracker::ThreeDm, path });
             }
         }
         for profile in subdirs(&base.join("Profile")) {
-            let path = profile.join(r"Stats\Achievements.Bin");
+            let path = profile.join("Stats").join("Achievements.Bin");
             if path.is_file() {
                 files.push(AchievementFile { cracker: Cracker::Ali213, path });
             }
@@ -303,12 +303,12 @@ fn game_directory_files(exe: &Path) -> Vec<AchievementFile> {
 /// `librarycache/<appid>.json` lists at most 12 unlocks, so the full per-account stats in
 /// `appcache/stats/UserGameStats_<account>_<appid>.bin` are read too.
 fn steam_cache_files(steam_path: &Path, object_id: &str) -> Vec<AchievementFile> {
-    let stats = steam_path.join(r"appcache\stats");
+    let stats = steam_path.join("appcache").join("stats");
     subdirs(&steam_path.join("userdata"))
         .into_iter()
         .flat_map(|user| {
             let account = user.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            [user.join(r"config\librarycache").join(format!("{object_id}.json")), stats.join(format!("UserGameStats_{account}_{object_id}.bin"))]
+            [user.join("config").join("librarycache").join(format!("{object_id}.json")), stats.join(format!("UserGameStats_{account}_{object_id}.bin"))]
         })
         .filter(|p| p.is_file())
         .map(|path| AchievementFile { cracker: Cracker::Steam, path })
@@ -648,15 +648,15 @@ mod tests {
             public_documents: base.join("public"),
             program_data: base.join("programdata"),
         };
-        let codex = roots.public_documents.join(r"Steam\CODEX\620");
+        let codex = roots.public_documents.join("Steam").join("CODEX").join("620");
         fs::create_dir_all(&codex).unwrap();
         fs::write(codex.join("achievements.ini"), "").unwrap();
-        let nested = roots.app_data.join(r"GSE Saves\620\profile");
+        let nested = roots.app_data.join("GSE Saves").join("620").join("profile");
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("Achievements.json"), "{}").unwrap();
-        let game = base.join(r"games\Portal 2");
-        fs::create_dir_all(game.join(r"steam_settings\620")).unwrap();
-        fs::write(game.join(r"steam_settings\620\achievements.json"), "{}").unwrap();
+        let game = base.join("games").join("Portal 2");
+        fs::create_dir_all(game.join("steam_settings").join("620")).unwrap();
+        fs::write(game.join("steam_settings").join("620").join("achievements.json"), "{}").unwrap();
         fs::write(game.join("steam_api64.dll"), "").unwrap();
         fs::write(game.join("portal2.exe"), "").unwrap();
 
@@ -664,7 +664,7 @@ mod tests {
         let files = game_files(&roots, "620", &[exe.to_string_lossy().into_owned()], None);
         let kinds: Vec<Cracker> = files.iter().map(|f| f.cracker).collect();
         assert_eq!(kinds, [Cracker::Codex, Cracker::Goldberg, Cracker::Goldberg], "{files:?}");
-        assert!(files[2].path.ends_with(r"steam_settings\620\achievements.json"));
+        assert!(files[2].path.ends_with("steam_settings/620/achievements.json"));
         fs::remove_dir_all(&base).unwrap();
     }
 }

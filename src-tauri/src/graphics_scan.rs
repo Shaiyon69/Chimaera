@@ -83,6 +83,8 @@ fn kinds(root: &Path, exe_dir: &Path) -> Vec<&'static str> {
         }
         true
     });
+    // Directory listing order differs by filesystem; sort so every OS answers the same.
+    out.sort_unstable();
     out
 }
 

@@ -336,9 +336,11 @@ mod tests {
     fn backup_names_cannot_leave_the_folder() {
         let dir = Path::new("C:/backups/steam-620");
         assert!(backup_path(dir, "2026-10-31T10-00-00-000Z.tar").is_ok());
-        for bad in ["../x.tar", "a/x.tar", "a\\x.tar", "x.json", "..", "C:x.tar"] {
+        for bad in ["../x.tar", "a/x.tar", "a\\x.tar", "x.json", ".."] {
             assert!(backup_path(dir, bad).is_err(), "{bad}");
         }
+        // A drive prefix only exists on Windows; elsewhere `C:x.tar` is a plain name.
+        assert_eq!(backup_path(dir, "C:x.tar").is_err(), cfg!(windows));
     }
 
     #[test]

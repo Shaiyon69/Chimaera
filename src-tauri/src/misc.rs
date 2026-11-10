@@ -147,7 +147,9 @@ mod tests {
 
     #[test]
     fn temp_files_round_trip_and_stay_in_temp() {
-        let path = save_temp_file(r"..\..\evil.png", &json!([1, 2, 3])).unwrap();
+        // `\` separates paths only on Windows; elsewhere it is part of the file name.
+        let name = if cfg!(windows) { r"..\..\evil.png" } else { "../../evil.png" };
+        let path = save_temp_file(name, &json!([1, 2, 3])).unwrap();
         let file = PathBuf::from(&path);
         assert_eq!(file.parent().unwrap(), std::env::temp_dir());
         assert!(file.file_name().unwrap().to_str().unwrap().ends_with("-evil.png"));

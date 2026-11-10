@@ -378,8 +378,16 @@ mod tests {
     fn refuses_unsafe_folders() {
         assert!(find_game_root(Path::new(r"C:\Program Files\game.exe")).is_none());
         assert!(is_unsafe(Path::new(r"C:\")));
-        assert!(is_inside(Path::new(r"C:\a\b\c"), Path::new(r"C:\A\b")));
-        assert!(!is_inside(Path::new(r"C:\a\bc"), Path::new(r"C:\a\b")));
-        assert!(same_path(Path::new(r"C:\A\b\"), Path::new(r"c:\a\B")));
+        // Paths compare case-insensitively only on Windows.
+        if cfg!(windows) {
+            assert!(is_inside(Path::new(r"C:\a\b\c"), Path::new(r"C:\A\b")));
+            assert!(!is_inside(Path::new(r"C:\a\bc"), Path::new(r"C:\a\b")));
+            assert!(same_path(Path::new(r"C:\A\b\"), Path::new(r"c:\a\B")));
+        } else {
+            assert!(is_inside(Path::new("/a/b/c"), Path::new("/a/b")));
+            assert!(!is_inside(Path::new("/a/bc"), Path::new("/a/b")));
+            assert!(!is_inside(Path::new("/A/b/c"), Path::new("/a/b")));
+            assert!(same_path(Path::new("/a/b/"), Path::new("/a/b")));
+        }
     }
 }
