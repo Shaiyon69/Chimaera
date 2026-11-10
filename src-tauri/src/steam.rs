@@ -20,6 +20,7 @@ use crate::achievement_files::Unlock;
 use crate::games::{game_key, update, with_executable_path};
 use crate::library::{iso_from_ms, iso_now, now_ms};
 use crate::store::Store;
+use crate::data_location::DataDir;
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const LOGIN_URL: &str = "https://store.steampowered.com/login/?redir=explore%2F";
@@ -117,7 +118,7 @@ struct Session {
 }
 
 fn webview_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join(WEBVIEW_DIR))
+    Ok(app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join(WEBVIEW_DIR))
 }
 
 fn client() -> Result<reqwest::Client, Error> {

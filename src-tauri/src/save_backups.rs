@@ -11,12 +11,13 @@ use tauri::{AppHandle, Manager};
 use crate::electron_import::electron_user_data;
 use crate::library::iso_now;
 use crate::store::Store;
+use crate::data_location::DataDir;
 
 const DIR_KEY: &str = "localSaveBackupsDir";
 const PUBLIC_PROFILE: &str = "C:/Users/Public";
 
 fn app_data(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path().app_data_dir().map_err(|e| e.to_string())
+    app.path().chimaera_data_dir().map_err(|e| e.to_string())
 }
 
 fn electron_dir(app: &AppHandle) -> Result<PathBuf, String> {

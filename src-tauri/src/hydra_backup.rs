@@ -16,6 +16,7 @@ use crate::games::game_key;
 use crate::library::now_ms;
 use crate::save_backups;
 use crate::store::Store;
+use crate::data_location::DataDir;
 
 const VERSION: u64 = 1;
 const STEAM_ASSETS: &str = "https://shared.steamstatic.com/store_item_assets/steam/apps";
@@ -277,7 +278,7 @@ pub async fn import(app: &AppHandle, dir: &Path) -> Result<Value, String> {
     }
 
     let store = app.state::<Store>();
-    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let app_data = app.path().chimaera_data_dir().map_err(|e| e.to_string())?;
     let images = &backup["data"]["images"];
     let fields = profile_fields(&backup);
     let mut profile = crate::hydra_api::load_profile(&store)?;

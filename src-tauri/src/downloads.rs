@@ -21,6 +21,7 @@ use crate::store::Store;
 use crate::debrid::{self, Entry, Link};
 use crate::http_download::{self, Batch, State};
 use crate::{hosters, torrent, trackers};
+use crate::data_location::DataDir;
 
 pub const TORRENT: i64 = 1;
 const ENGINE_CHECKING_FILES: i64 = 1;
@@ -306,7 +307,7 @@ async fn start_torrent(app: &AppHandle, d: &Value) -> Result<(), String> {
 }
 
 fn ranges_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("DownloadRanges"))
+    Ok(app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join("DownloadRanges"))
 }
 
 /// The files of an HTTP download: one hoster file, checked to answer with a file

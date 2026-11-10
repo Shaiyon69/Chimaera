@@ -7,6 +7,7 @@ mod achievement_popup;
 mod achievements;
 mod artwork;
 mod big_picture;
+mod data_location;
 mod bundled_games;
 mod classics_import;
 mod classics_launch;
@@ -72,6 +73,7 @@ mod webview_memory;
 
 use serde_json::{json, Value};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use crate::data_location::DataDir;
 
 /// Node's `process.platform` name for this OS, which the renderer branches on.
 fn node_platform() -> &'static str {
@@ -129,7 +131,7 @@ pub fn run() {
                         return;
                     }
                 }
-                let app_data = ctx.app_handle().path().app_data_dir().ok();
+                let app_data = ctx.app_handle().path().chimaera_data_dir().ok();
                 let images = app_data.as_deref().map(image_cache::cache_dir);
                 tauri::async_runtime::spawn(async move {
                     let response = if target.image {
@@ -151,7 +153,7 @@ pub fn run() {
             });
         })
         .register_asynchronous_uri_scheme_protocol("cached-image", |ctx, request, responder| {
-            let dir = ctx.app_handle().path().app_data_dir().map(|dir| image_cache::cache_dir(&dir));
+            let dir = ctx.app_handle().path().chimaera_data_dir().map(|dir| image_cache::cache_dir(&dir));
             let path = request.uri().path().to_string();
             tauri::async_runtime::spawn(async move {
                 let response = match dir {
@@ -162,7 +164,7 @@ pub fn run() {
             });
         })
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = app.path().chimaera_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let image_dir = image_cache::cache_dir(&data_dir);
             std::thread::spawn(move || image_cache::prune(&image_dir));

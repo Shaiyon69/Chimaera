@@ -11,6 +11,7 @@ use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
 use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, dxvk, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, genres, gog, google_drive, graphics_scan, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
+use crate::data_location::DataDir;
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
 pub struct AppSession(pub String);
@@ -336,7 +337,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
                     *source = steam_shortcuts::fetch_asset(&url).await;
                 }
             }
-            let assets_dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Assets");
+            let assets_dir = app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join("Assets");
             let (app, key) = (app.clone(), games::game_key(&shop, &object_id));
             tauri::async_runtime::spawn_blocking(move || {
                 steam_shortcuts::create(&app.state::<Store>(), steam_shortcuts::steam_path().as_deref(), &assets_dir, &key, sources, open_vr)
@@ -393,11 +394,11 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             artwork::add_custom_game(&app.state::<Store>(), title, exe, args.get(2), args.get(3), args.get(4))
         }
         "copyCustomGameAsset" => {
-            let assets = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Assets");
+            let assets = app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join("Assets");
             artwork::copy_custom_game_asset(&assets, arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default()).map(|url| json!(url))
         }
         "cleanupUnusedAssets" => {
-            let assets = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Assets");
+            let assets = app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join("Assets");
             artwork::cleanup_unused_assets(&app.state::<Store>(), &assets)
         }
         "updateCustomGame" => {
@@ -725,7 +726,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "installRetroArchCore" => Ok(retroarch::install_core(app, arg_str(args, 0).unwrap_or_default()).await),
         "installAllRetroArchCores" => Ok(retroarch::install_all_cores(app).await),
         "openGameWinetricks" => {
-            let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+            let app_data = app.path().chimaera_data_dir().map_err(|e| e.to_string())?;
             emulators::open_winetricks(&app.state::<Store>(), &app_data, shop(args), object_id(args)).map(Value::from)
         }
         "getEmulatorConfigs" => emulators::all_configs(&app.state::<Store>()),
@@ -887,12 +888,12 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "clipboardWriteText" => app.clipboard().write_text(arg_str(args, 0).unwrap_or_default()).map(|_| Value::Null).map_err(|e| e.to_string()),
         "readDirectory" => {
             let dir = arg_str(args, 0).unwrap_or_default().to_string();
-            file_system::assert_not_app_data(&app.path().app_data_dir().map_err(|e| e.to_string())?, &dir)?;
+            file_system::assert_not_app_data(&app.path().chimaera_data_dir().map_err(|e| e.to_string())?, &dir)?;
             tauri::async_runtime::spawn_blocking(move || file_system::read_directory(&dir)).await.map_err(|e| e.to_string())?
         }
         "getPathInfo" => {
             let path = arg_str(args, 0).unwrap_or_default();
-            file_system::assert_not_app_data(&app.path().app_data_dir().map_err(|e| e.to_string())?, path)?;
+            file_system::assert_not_app_data(&app.path().chimaera_data_dir().map_err(|e| e.to_string())?, path)?;
             Ok(file_system::path_info(path))
         }
         "listDrives" => Ok(file_system::list_drives()),

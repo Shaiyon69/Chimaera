@@ -14,6 +14,7 @@ use image::{AnimationDecoder, Frame, ImageFormat, ImageReader, RgbaImage};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
+use crate::data_location::DataDir;
 
 const MAX_DIMENSION: u64 = 2048;
 const CACHE_VERSION: u32 = 2;
@@ -56,7 +57,7 @@ pub async fn get(app: &AppHandle, url: Option<&str>, raw_options: &Value) -> Val
 }
 
 async fn process(app: &AppHandle, url: &str, o: Options) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("image-cache").join("processed");
+    let dir = app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join("image-cache").join("processed");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let base = dir.join(cache_key(url, &o));
     for ext in ["gif", "webp"] {

@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::electron_import::electron_user_data;
+use crate::data_location::DataDir;
 
 struct BundledGame {
     object_id: &'static str,
@@ -238,7 +239,7 @@ fn pick_install_dir(game: &BundledGame, app_data: &Path, electron_user_data: &Pa
 }
 
 fn install_dir(app: &AppHandle, game: &BundledGame) -> Result<PathBuf, String> {
-    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let app_data = app.path().chimaera_data_dir().map_err(|e| e.to_string())?;
     let electron = electron_user_data(&app.path().config_dir().map_err(|e| e.to_string())?);
     Ok(pick_install_dir(game, &app_data, &electron))
 }
@@ -273,7 +274,7 @@ pub async fn download(app: &AppHandle, object_id: &str) -> Result<Value, String>
     let game = known(object_id)?;
     let _guard = INSTALLING[usize::from(game.object_id != "bloodborne")].lock().await;
     let target = install_dir(app, game)?;
-    let scratch = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let scratch = app.path().chimaera_data_dir().map_err(|e| e.to_string())?;
     let zip_path = scratch.join(format!("{}.zip.part", game.install_dir));
     let extract_dir = scratch.join(format!("{}.tmp", game.install_dir));
     let progress = |phase: &str, percent: u64| {

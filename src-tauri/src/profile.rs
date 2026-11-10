@@ -16,6 +16,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::hydra_api;
 use crate::library::now_ms;
 use crate::store::Store;
+use crate::data_location::DataDir;
 
 /// MIME type from the file's magic bytes; an animated PNG reads as `image/apng` like file-type.
 fn mime_of(bytes: &[u8]) -> Option<&'static str> {
@@ -235,7 +236,7 @@ fn keep_image(dir: &Path, kind: &str, source: &str) -> Result<String, String> {
 /// `updateProfile`.
 pub async fn update_profile(app: &AppHandle, request: &Value) -> Result<Value, String> {
     let mut payload = request.as_object().cloned().unwrap_or_default();
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("local-profile");
+    let dir = app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join("local-profile");
     for (field, kind) in [("profileImageUrl", "profile-image"), ("backgroundImageUrl", "background-image")] {
         if let Some(Value::String(source)) = payload.get(field).cloned() {
             // Electron drops a failed copy (undefined), so the old picture stays.

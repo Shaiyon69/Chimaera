@@ -13,6 +13,7 @@ use tauri::{AppHandle, Manager};
 use crate::games::game_key;
 use crate::steam_shortcuts::{convert, fetch_asset};
 use crate::store::Store;
+use crate::data_location::DataDir;
 
 const SCHEME: &str = "chimaera";
 // Hydra's scheme; old shortcuts still pass it to our exe.
@@ -213,7 +214,7 @@ pub async fn create_game_shortcut(app: &AppHandle, shop: &str, object_id: &str, 
     };
     let s = |v: &Value| v.as_str().map(String::from);
     let urls = [s(&game["customIconUrl"]), s(&assets["iconUrl"]), s(&game["iconUrl"]), s(&assets["coverImageUrl"])];
-    let icon_dir = paths.app_data_dir().map_err(|e| e.to_string())?.join("Assets").join(format!("{shop}-{object_id}"));
+    let icon_dir = paths.chimaera_data_dir().map_err(|e| e.to_string())?.join("Assets").join(format!("{shop}-{object_id}"));
     let icon = shortcut_icon(&icon_dir, &urls).await;
 
     let exe = std::env::current_exe().map_err(|e| e.to_string())?.to_string_lossy().into_owned();
