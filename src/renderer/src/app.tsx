@@ -69,6 +69,7 @@ import {
 import { levelDBService } from "./services/leveldb.service";
 import { useMessappUserId } from "./pages/friends/messapp/use-messapp";
 import { usePresenceBroadcast } from "./pages/friends/messapp/presence";
+import { useLibrarySync } from "./pages/friends/messapp/library-sync";
 
 export interface AppProps {
   children: React.ReactNode;
@@ -117,7 +118,9 @@ export function App() {
   const { fetchUserDetails, updateUserDetails } = useUserDetails();
 
   const dispatch = useAppDispatch();
-  usePresenceBroadcast(useMessappUserId());
+  const messappUserId = useMessappUserId();
+  usePresenceBroadcast(messappUserId);
+  useLibrarySync(messappUserId);
 
   const clearDownload = useCallback(
     () => dispatch(clearDownloadAction()),
