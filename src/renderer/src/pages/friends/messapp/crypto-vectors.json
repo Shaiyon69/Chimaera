@@ -1,0 +1,77 @@
+{
+  "generatedFrom": "messapp/src/lib/crypto.js",
+  "alice": {
+    "key_ops": [
+      "deriveKey"
+    ],
+    "ext": true,
+    "kty": "EC",
+    "x": "rb-Oxwkb51VaDpFXR1elh7kRfKvSjALI-vrXQAyjQV8",
+    "y": "uN0AQNk5u2U8Upg9vmKHOLx7DSLHYejHrWrQ299qztk",
+    "crv": "P-256",
+    "d": "bj_wrg9gV6sm-IGGUfjQpbfihCZk62h6oT3HFZsYcDw"
+  },
+  "bob": {
+    "key_ops": [
+      "deriveKey"
+    ],
+    "ext": true,
+    "kty": "EC",
+    "x": "GvosxtENax-zEFJKdLpW1YWaDralE0a1fcneTyQ2cBY",
+    "y": "-Nv01165c2n2tqK2ixi8DSgvEs0O5gYDi_RNQQ2whrw",
+    "crv": "P-256",
+    "d": "uVpyGb_9_fQPZ-bzNV-oKUV6BS8KvZgHEK3e5BF-uO4"
+  },
+  "aliceOld": {
+    "key_ops": [
+      "deriveKey"
+    ],
+    "ext": true,
+    "kty": "EC",
+    "x": "M_C1ppHl77LkI5MmVYIMrbipKPCBN2RY05iVJxb4vyA",
+    "y": "wRGdsoKAcoJfoM1eOfmr2dRgFVp113m5RdmegKBdTsI",
+    "crv": "P-256",
+    "d": "f7-LLT6HOEjC3RlC-af56tFByix8DoGOjArJkFmMuio"
+  },
+  "aliceFingerprint": "877e:beb4:bc28",
+  "aliceBobKeyHex": "764ccb05ba13ac29d4d52a3cb6204f5c9426613b19655c3fc66c6ecbbf3926fd",
+  "text": "héllo bob 👋 — \"quotes\" & ünïcode",
+  "textEnvelope": {
+    "iv": "hTDmQAxl9p3I9Cto",
+    "ciphertext": "T1jz5LXCLQ/6fHmSlUkT/zZQ/xTP0jQBau2VGhRSgE0f/xbsA/qIBKL+lpYu4snxJ5rV7OOiJVk=",
+    "spub": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "rb-Oxwkb51VaDpFXR1elh7kRfKvSjALI-vrXQAyjQV8",
+      "y": "uN0AQNk5u2U8Upg9vmKHOLx7DSLHYejHrWrQ299qztk",
+      "ext": true
+    },
+    "tpub": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "GvosxtENax-zEFJKdLpW1YWaDralE0a1fcneTyQ2cBY",
+      "y": "-Nv01165c2n2tqK2ixi8DSgvEs0O5gYDi_RNQQ2whrw",
+      "ext": true
+    }
+  },
+  "binaryBase64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==",
+  "binaryEnvelope": {
+    "iv": "E85SHdyJBAnWO+AX",
+    "ciphertext": "thTMHrEZstWHviE01+xbfU/kt+JnEDgxrRSeGXeZhf63p5EQNiDG4mvxexap5iESNUcQqsn6ulRyHDrTWoKpheD+z0m10FCLApgwW89sKQO8MsYZQsSBToSLdc94ots4Bh//mj5nDupJIACXbkoQLFXkktj52PB4XcJ2dkaEr+NIxBniLX7r2eyfsUjIp6HfNPl/vljRl3ke1hKLPIN2bBwhua1UYBQWzD3wfnfuAAaV9MyedKdYPp9FyAT2R0a17PqLFv+9rms886TSw9loRq8qT0WdNEVyvCJaFvGwAEkkpcCYjuTt7e5NcjD0gBYsmFKhUT7+y0XAuy7e+RaFDdfhXZ4ZmjLIct/R+3H0SZw="
+  },
+  "legacyText": "sent before alice rotated her key",
+  "legacyEnvelope": {
+    "iv": "hZFzbXqCEg26v1uq",
+    "ciphertext": "RhwdQEhDf669sMjDFvmFUzxme5pmEPvOMgDSZyd6c/o/qFNU0xwl+8tRcbfGdjdozw=="
+  },
+  "selfText": "note to self",
+  "selfEnvelope": {
+    "iv": "+Z8Ag1HbPTNkyMaL",
+    "ciphertext": "HtvufXZxLwBSGTDfSDmgA4L8TpNmU7a4u/fdFA=="
+  },
+  "pin": "482916",
+  "privateJson": "{\"key_ops\":[\"deriveKey\"],\"ext\":true,\"kty\":\"EC\",\"x\":\"rb-Oxwkb51VaDpFXR1elh7kRfKvSjALI-vrXQAyjQV8\",\"y\":\"uN0AQNk5u2U8Upg9vmKHOLx7DSLHYejHrWrQ299qztk\",\"crv\":\"P-256\",\"d\":\"bj_wrg9gV6sm-IGGUfjQpbfihCZk62h6oT3HFZsYcDw\"}",
+  "pinBackupV3": "{\"v\":3,\"salt\":\"vnLnYGSglQ24HP8poxinig==\",\"iv\":\"o7kic67fj60Fv5/s\",\"ciphertext\":\"wLYtJvM5w7PzpbZ55gWIa9SRAvIt2JVOA6vVkhoLcJbvGJWJB+M42sqmnxlJwg0062/sqfCbz9/C8K7i03xejzH1lPUMh7SFPr6s7OKvnvA8P8V/U9BeISAXb2HFNig0dqkjgFxhOg2V64fi8W3eWU3VaM/dRZ5bdTGALDe6mq+NA+Y6EoU2dXTnaCpMdhg+Sa03JEQUupI/ncJToPGVcgYx5moRoKihKLzrEVVf6rM/qg8+06R6QkwZqeiH5DrOz5mTvNl5S5AKL7ZpDhvlBBPNWkVPR0wPQV9L4ETQEumfdWg=\"}",
+  "pinBackupLegacySalted": "{\"salt\":\"l47J5wr4KV3TLmt+3IbSkg==\",\"iv\":\"HbwEJV1fXsAZGmKh\",\"ciphertext\":\"oZzTEhKGTFGMMhWZ1G2OqKHexE83PkP2WIzzHhipwotNpb8hBphCs7Mcu0TxbM7eOndOrZCvlzL8bfzrnmwJHBQ6th6fN90RuxYm6Xr7uLorRvhBTcWsxkpdvS3YhkSLsjwvbIYbaf6S3hXAzt7CdpPzM1RjDGYjSohOdS4hLdqvyKGpXNy2cbDeAYxXNkldN5IyzBElsBT/moQWB5dyQ3MaXGGvTXcfiAlDTxNkeQoDy1eM5MltMExAENaF3jTqwmpnjasY8M6cQ9O5t45qvRDSD3zrok4MyYbmC1xHfCidKnA=\"}",
+  "pinBackupLegacyUnsalted": "{\"iv\":\"P1B8MX1zxM6/FZ/h\",\"ciphertext\":\"GFMvtk2/D1RGI+HOpGySOuM1HTOQhydm/Zo03B+fHHtYhcucHiapbNtVn8O8iUkIHkdKtLe6scdf/AHqaO+f1IHfgoulZwNcCuEleQUsptni9b/W2k/2ywnAv5SnLzjJveszopNZ9o7ZR/oYMHHnINV57T+8wLuO6no6E2hcU3RtBf6tz5ItX5B2xXybcyBIF+nlgWn9wijJkhk2rULxBv1HTVg3p+AvAYs2YfAer6O6VyJZF++qE3qKM/WxDcoIRQQf1fdRYix1JijqLSWrNBq7Ledo68YYRBey2omjzUxp2RY=\"}"
+}

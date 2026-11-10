@@ -25,7 +25,8 @@ const currentAccessToken = async () =>
 
 export type FriendsStatus = "loading" | "ready" | "error";
 
-/** Clears the saved DM key and cached friends, then ends the session. */
+/** Drops Chimaera's old key entry and cached friends, then ends the session. The shared
+ * key vault stays, as on a Messapp sign-out: Messapp desktop and Purrch on this PC use it. */
 export const logoutMessapp = async (userId: string | null) => {
   try {
     const token = await currentAccessToken();
@@ -112,14 +113,14 @@ export function useMessapp() {
     setFriendsStatus(cached.length ? "ready" : "loading");
     retryFriends();
 
-    // Saved by a previous unlock; encrypted at rest by the OS in the main process,
-    // and keyed there by a session the main process verifies for itself.
+    // Saved by a previous unlock or by Messapp desktop on this PC (one shared OS vault),
+    // keyed in Rust by a session it verifies for itself.
     (async () => {
       const token = await currentAccessToken();
       if (!token) return;
 
       const saved = await window.electron.loadMessappKey(token);
-      if (saved) setKeyring(await createKeyring(JSON.parse(saved)));
+      if (saved) setKeyring(await createKeyring(saved.private, saved.legacy));
     })().catch((err) => logger.error("Failed to load saved key", err));
   }, [userId, retryFriends]);
 

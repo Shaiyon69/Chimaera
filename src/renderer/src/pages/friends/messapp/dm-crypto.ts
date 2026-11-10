@@ -12,14 +12,17 @@ export interface DmEnvelope extends AesEnvelope {
   tpub?: JsonWebKey;
 }
 
-export interface DmKeyring {
+export interface DmKey {
   privateKey: CryptoKey;
   publicJwk: JsonWebKey;
 }
 
-export const createKeyring = async (
-  privateJwk: JsonWebKey
-): Promise<DmKeyring> => ({
+/** The current key plus the keys of earlier rotations, which still open old DMs. */
+export interface DmKeyring extends DmKey {
+  legacy: DmKey[];
+}
+
+const toKey = async (privateJwk: JsonWebKey): Promise<DmKey> => ({
   privateKey: await importPrivateKey(privateJwk),
   publicJwk: {
     kty: privateJwk.kty,
@@ -29,6 +32,21 @@ export const createKeyring = async (
     ext: true,
   },
 });
+
+export const createKeyring = async (
+  privateJwk: JsonWebKey,
+  legacyJwks: JsonWebKey[] = []
+): Promise<DmKeyring> => {
+  // A legacy key that fails to import is skipped, as in MESSAPP.
+  const legacy = await Promise.all(
+    legacyJwks.map((jwk) => toKey(jwk).catch(() => null))
+  );
+
+  return {
+    ...(await toKey(privateJwk)),
+    legacy: legacy.filter((key): key is DmKey => key !== null),
+  };
+};
 
 export const encryptDm = async (
   keyring: DmKeyring,
@@ -56,6 +74,34 @@ const parseEnvelope = (content: string): DmEnvelope | null => {
   }
 };
 
+/**
+ * Key pairs to try, in shaiyon-crypto's order (MESSAPP's): first the public keys the message
+ * carries (historical_keys), then the DM's keys (build_shared_keys): own + peer, own + own
+ * public (notes to self), and per legacy key: legacy + peer, legacy + its public, own + legacy public.
+ */
+const candidates = (
+  keyring: DmKeyring,
+  envelope: DmEnvelope,
+  sentByMe: boolean,
+  peer: JsonWebKey | null
+): [CryptoKey, JsonWebKey][] => {
+  const pairs: [CryptoKey, JsonWebKey][] = [];
+  if (envelope.spub && envelope.tpub) {
+    const theirs = sentByMe ? envelope.tpub : envelope.spub;
+    for (const key of [keyring, ...keyring.legacy]) {
+      pairs.push([key.privateKey, theirs]);
+    }
+  }
+  if (peer) pairs.push([keyring.privateKey, peer]);
+  pairs.push([keyring.privateKey, keyring.publicJwk]);
+  for (const old of keyring.legacy) {
+    if (peer) pairs.push([old.privateKey, peer]);
+    pairs.push([old.privateKey, old.publicJwk]);
+    pairs.push([keyring.privateKey, old.publicJwk]);
+  }
+  return pairs;
+};
+
 /** Plain text, or null when no key we hold can open it (e.g. sealed with a lost legacy key). */
 export const decryptDm = async (
   keyring: DmKeyring,
@@ -66,16 +112,19 @@ export const decryptDm = async (
   const envelope = parseEnvelope(content);
   if (!envelope) return content;
 
-  let counterpart = peerPublicJwk;
-  if (envelope.spub && envelope.tpub) {
-    counterpart = sentByMe ? envelope.tpub : envelope.spub;
+  for (const [privateKey, publicJwk] of candidates(
+    keyring,
+    envelope,
+    sentByMe,
+    peerPublicJwk
+  )) {
+    try {
+      const shared = await deriveSharedKey(privateKey, publicJwk);
+      const text = await decryptText(shared, envelope);
+      if (text !== null) return text;
+    } catch {
+      // A malformed public key; try the next pair.
+    }
   }
-  if (!counterpart) return null;
-
-  try {
-    const shared = await deriveSharedKey(keyring.privateKey, counterpart);
-    return await decryptText(shared, envelope);
-  } catch {
-    return null;
-  }
+  return null;
 };
