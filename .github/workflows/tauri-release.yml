@@ -73,6 +73,7 @@ jobs:
           workspaces: |
             src-tauri -> target
             brood -> target
+            installer/src-tauri -> ../target
 
       # dx builds the companion web apps; rust-cache keeps ~/.cargo/bin, so this installs once.
       - name: Install Dioxus CLI
@@ -118,6 +119,13 @@ jobs:
           exe=$(ls src-tauri/target/release/bundle/nsis/*-setup.exe)
           cp "$exe" "release/chimaera-$VERSION-setup.exe"
           cp "$exe.sig" "release/chimaera-$VERSION-setup.exe.sig"
+
+      # Chimaera Setup: the website's Windows download. It fetches the newest signed installer
+      # from Skibidevs at run time, checks it against the updater key and installs it.
+      - name: Build Chimaera Setup
+        run: |
+          cargo build --release --manifest-path installer/src-tauri/Cargo.toml --target-dir installer/target
+          cp installer/target/release/chimaera-setup.exe release/Chimaera-Setup.exe
 
       - uses: actions/upload-artifact@v4
         with:
