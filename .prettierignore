@@ -7,3 +7,5 @@ tsconfig.json
 tsconfig.*.json
 src-tauri/target
 src-tauri/gen
+# Byte copy of shaiyon-core tests/vectors.json; keep it re-copyable.
+src/renderer/src/pages/friends/messapp/crypto-vectors.json
