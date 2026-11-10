@@ -5,6 +5,8 @@ export interface PlayingNow {
   iconUrl: string | null;
   /** Epoch ms the game started; lets friends show a live playtime. */
   startedAt?: number | null;
+  /** "#rrggbb" from the cover, which friends cannot always read themselves (CORS, local files). */
+  accent?: string | null;
 }
 
 export interface PresencePayload {
@@ -76,3 +78,29 @@ export const toPayload = (
   share: boolean,
   now: number = Date.now()
 ): PresencePayload => ({ playing: share ? playing : null, since: now });
+
+/** The cover's vivid colour as "#rrggbb" from RGBA bytes, or null for grey or dark images. */
+export const accentHex = (data: ArrayLike<number>): string | null => {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let weight = 0;
+  for (let i = 0; i + 3 < data.length; i += 4) {
+    if (data[i + 3] < 128) continue;
+    const max = Math.max(data[i], data[i + 1], data[i + 2]);
+    if (!max) continue;
+    const sat = (max - Math.min(data[i], data[i + 1], data[i + 2])) / max;
+    // Vivid, bright pixels pick the colour; greys and shadows barely count.
+    const w = sat * sat * (max / 255);
+    r += data[i] * w;
+    g += data[i + 1] * w;
+    b += data[i + 2] * w;
+    weight += w;
+  }
+  if (weight < 0.5) return null;
+  const hex = (v: number) =>
+    Math.round(v / weight)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${hex(r)}${hex(g)}${hex(b)}`;
+};

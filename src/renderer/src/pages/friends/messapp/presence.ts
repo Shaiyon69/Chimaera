@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useAppSelector } from "@renderer/hooks";
+import { cachedImage } from "@shared";
 
 import { messapp } from "./client";
 import {
+  accentHex,
   OFFLINE,
   toFriendPresence,
   toPayload,
@@ -36,6 +38,45 @@ export const setSharePlaying = (share: boolean) => {
   window.dispatchEvent(new Event(SHARE_EVENT));
 };
 
+const accents = new Map<string, Promise<string | null>>();
+
+const readAccent = (url: string) =>
+  new Promise<string | null>((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 24;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        ctx?.drawImage(img, 0, 0, 24, 24);
+        resolve(ctx ? accentHex(ctx.getImageData(0, 0, 24, 24).data) : null);
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+
+/** The cover's colour for friends' "Playing X" label; null for local or unreadable images. */
+function useCoverAccent(url: string | null) {
+  const [accent, setAccent] = useState<string | null>(null);
+  useEffect(() => {
+    setAccent(null);
+    if (!url || !/^https:\/\//i.test(url)) return;
+    let live = true;
+    if (!accents.has(url)) accents.set(url, readAccent(cachedImage(url)));
+    void accents.get(url)?.then((color) => {
+      if (live) setAccent(color);
+    });
+    return () => {
+      live = false;
+    };
+  }, [url]);
+  return accent;
+}
+
 /** Tracks this user's online state and current game; mount once, app-wide. */
 export function usePresenceBroadcast(userId: string | null) {
   const gameRunning = useAppSelector((state) => state.gameRunning.gameRunning);
@@ -56,12 +97,17 @@ export function usePresenceBroadcast(userId: string | null) {
       at: Date.now() - (gameRunning.sessionDurationInMillis || 0),
     };
 
+  // Read through the image cache, which allows canvas reads; local files stay without one.
+  const coverUrl = gameRunning?.coverImageUrl || gameRunning?.iconUrl || null;
+  const accent = useCoverAccent(coverUrl);
+
   const playing: PlayingNow | null = gameRunning && {
     title: gameRunning.title,
     objectId: gameRunning.objectId,
     shop: gameRunning.shop,
     iconUrl: gameRunning.iconUrl,
     startedAt: started.current?.at ?? null,
+    accent,
   };
   // A stable primitive, so the effect re-tracks only when the game actually changes.
   const playingKey = playing ? JSON.stringify(playing) : "";

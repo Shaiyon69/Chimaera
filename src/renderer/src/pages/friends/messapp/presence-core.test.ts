@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { playtimeLabel, toFriendPresence, toPayload } from "./presence-core.js";
+import {
+  accentHex,
+  playtimeLabel,
+  toFriendPresence,
+  toPayload,
+} from "./presence-core.js";
 
 const game = {
   title: "Hades",
@@ -63,5 +68,18 @@ describe("playtime", () => {
     assert.equal(playtimeLabel(0, 30_000), null);
     assert.equal(playtimeLabel(1, 12 * 60_000 + 1), "12m");
     assert.equal(playtimeLabel(1, 65 * 60_000 + 1), "1h 05m");
+  });
+});
+
+describe("accentHex", () => {
+  it("averages the vivid pixels and skips greys", () => {
+    const px = [220, 30, 30, 255, 128, 128, 128, 255, 10, 10, 10, 255];
+    assert.equal(accentHex(px), "#dc1e1e");
+  });
+
+  it("is null for grey, transparent or empty images", () => {
+    assert.equal(accentHex([128, 128, 128, 255]), null);
+    assert.equal(accentHex([220, 30, 30, 0]), null);
+    assert.equal(accentHex([]), null);
   });
 });
