@@ -41,3 +41,7 @@ hydra-backup/
 # Companion web builds (scripts/fetch-companions.mjs)
 resources/companions/*
 !resources/companions/README.md
+
+# Setup bootstrapper build output
+installer/target
+installer/src-tauri/gen
