@@ -32,6 +32,7 @@ import { levelDBService } from "./services/leveldb.service";
 import GameDetails from "./pages/game-details/game-details";
 import Settings from "./pages/settings/settings";
 import Friends from "./pages/friends/friends";
+import SignIn from "./pages/friends/sign-in";
 import Profile from "./pages/profile/profile";
 import Achievements from "./pages/achievements/achievements";
 const ThemeEditor = lazy(() => import("./pages/theme-editor/theme-editor"));
@@ -163,6 +164,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                     <Route path="/library" element={null} />
                     <Route path="/downloads" element={null} />
                     <Route path="/friends" element={<Friends />} />
+                    <Route path="/sign-in" element={<SignIn />} />
                     <Route
                       path="/game/:shop/:objectId"
                       element={<GameDetails />}

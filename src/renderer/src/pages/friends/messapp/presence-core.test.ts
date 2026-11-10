@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { toFriendPresence, toPayload } from "./presence-core.js";
+import { playtimeLabel, toFriendPresence, toPayload } from "./presence-core.js";
 
 const game = {
   title: "Hades",
@@ -42,5 +42,26 @@ describe("toPayload", () => {
   it("hides the game when sharing is off", () => {
     assert.equal(toPayload(game, false, 1).playing, null);
     assert.deepEqual(toPayload(game, true, 1), { playing: game, since: 1 });
+  });
+});
+
+describe("playtime", () => {
+  it("keeps a valid start time and drops junk", () => {
+    const at = (startedAt: unknown) =>
+      toFriendPresence(
+        [{ playing: { ...game, startedAt } as never, since: 1 }],
+        1_000_000
+      ).playing?.startedAt;
+    assert.equal(at(500_000), 500_000);
+    assert.equal(at("500000"), null);
+    assert.equal(at(-1), null);
+    assert.equal(at(9_000_000_000), null);
+  });
+
+  it("formats elapsed time", () => {
+    assert.equal(playtimeLabel(null, 0), null);
+    assert.equal(playtimeLabel(0, 30_000), null);
+    assert.equal(playtimeLabel(1, 12 * 60_000 + 1), "12m");
+    assert.equal(playtimeLabel(1, 65 * 60_000 + 1), "1h 05m");
   });
 });

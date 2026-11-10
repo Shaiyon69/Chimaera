@@ -14,7 +14,8 @@ import {
 import { isNetworkError } from "./messapp/errors";
 import { shownName } from "./messapp/profile-merge";
 import { sortByRecency, type LastMessage } from "./messapp/recency";
-import type { FriendPresence } from "./messapp/presence-core";
+import { playtimeLabel, type FriendPresence } from "./messapp/presence-core";
+import { useMinuteClock } from "./messapp/presence";
 import { useUnreadPeers } from "./messapp/unread";
 import type { FriendsStatus } from "./messapp/use-messapp";
 
@@ -42,8 +43,12 @@ function PersonLabel({
   unread?: boolean;
 }>) {
   const { t } = useTranslation("messapp");
+  const now = useMinuteClock();
+  const time = playtimeLabel(presence?.playing?.startedAt, now);
   const playing = presence?.playing
-    ? t("playing", { game: presence.playing.title })
+    ? time
+      ? t("playing_time", { game: presence.playing.title, time })
+      : t("playing", { game: presence.playing.title })
     : undefined;
   const subline = preview ?? playing ?? profile.status_text;
 

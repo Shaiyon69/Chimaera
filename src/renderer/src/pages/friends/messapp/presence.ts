@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAppSelector } from "@renderer/hooks";
 
@@ -47,11 +47,21 @@ export function usePresenceBroadcast(userId: string | null) {
     return () => window.removeEventListener(SHARE_EVENT, sync);
   }, []);
 
+  // sessionDurationInMillis grows every tick, so the start is fixed once per game.
+  const started = useRef<{ id: string; at: number } | null>(null);
+  if (!gameRunning) started.current = null;
+  else if (started.current?.id !== gameRunning.id)
+    started.current = {
+      id: gameRunning.id,
+      at: Date.now() - (gameRunning.sessionDurationInMillis || 0),
+    };
+
   const playing: PlayingNow | null = gameRunning && {
     title: gameRunning.title,
     objectId: gameRunning.objectId,
     shop: gameRunning.shop,
     iconUrl: gameRunning.iconUrl,
+    startedAt: started.current?.at ?? null,
   };
   // A stable primitive, so the effect re-tracks only when the game actually changes.
   const playingKey = playing ? JSON.stringify(playing) : "";
@@ -110,4 +120,14 @@ export function usePresence(friendIds: string[]) {
   }, [idsKey]);
 
   return (id: string) => presence.get(id) ?? OFFLINE;
+}
+
+/** The current time, refreshed every minute so playtimes tick. */
+export function useMinuteClock() {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
 }
