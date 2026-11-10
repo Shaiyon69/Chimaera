@@ -258,7 +258,7 @@ jobs:
 
       - name: Write updater manifest
         run: |
-          VERSION=$(node -p 'require("./package.json").version')
+          export VERSION=$(node -p 'require("./package.json").version')
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           node -e '
             const fs = require("fs");
