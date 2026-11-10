@@ -7,7 +7,7 @@ import {
   TrophyIcon,
   ToolsIcon,
 } from "@primer/octicons-react";
-import HydraIcon from "@renderer/assets/icons/hydra.svg?react";
+import ChimaeraIcon from "@renderer/assets/icons/chimaera.svg?react";
 import { MAX_MINUTES_TO_SHOW_IN_PLAYTIME } from "@renderer/constants";
 import { darkenColor } from "@renderer/helpers";
 import { logger } from "@renderer/logger";
@@ -427,7 +427,7 @@ export default function GameLauncher() {
       <div className="game-launcher__glow" style={glowStyle} />
 
       <div className="game-launcher__logo-badge">
-        <HydraIcon />
+        <ChimaeraIcon />
       </div>
 
       <div className="game-launcher__content">

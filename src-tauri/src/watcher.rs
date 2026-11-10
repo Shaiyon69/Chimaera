@@ -93,8 +93,24 @@ pub fn close_session(store: &Store, key: &str, session: Session, now: Instant) -
 fn running_exes(system: &mut sysinfo::System) -> HashSet<String> {
     // Always, not OnlyIfNotSet: sysinfo keys processes by PID only, and Windows recycles PIDs
     // within the 2 s tick, so a cached exe makes an unrelated process look like a game.
-    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always));
-    system.processes().values().filter_map(|p| p.exe()).map(|exe| path_key(&exe.to_string_lossy())).collect()
+    let kind = sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always);
+    // Wine/Proton games run as the wine binary; their own exe shows only in argv[0] and cwd.
+    let kind = if cfg!(windows) { kind } else { kind.with_cmd(sysinfo::UpdateKind::Always).with_cwd(sysinfo::UpdateKind::Always) };
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, kind);
+    let mut running: HashSet<String> = system.processes().values().filter_map(|p| p.exe()).map(|exe| path_key(&exe.to_string_lossy())).collect();
+    if !cfg!(windows) {
+        running.extend(system.processes().values().filter_map(|p| {
+            let argv0 = p.cmd().first()?.to_string_lossy();
+            wine_game_path(&argv0, &p.cwd()?.to_string_lossy())
+        }));
+    }
+    running
+}
+
+/// The game exe a Wine process runs, as a path_key: argv[0]'s file name inside its cwd.
+fn wine_game_path(argv0: &str, cwd: &str) -> Option<String> {
+    let name = argv0.rsplit(['/', '\\']).next()?;
+    name.to_lowercase().ends_with(".exe").then(|| path_key(&format!("{}/{name}", cwd.trim_end_matches('/'))))
 }
 
 /// The records that earn this tick's playtime. A running copy of a grouped game is credited
@@ -260,6 +276,14 @@ mod tests {
         let mut games = shared_pair();
         games[0].1["isDeleted"] = json!(true);
         assert_eq!(keys(credited_keys(&games, &running(&[r"C:\G\a.exe"]))), ["custom:gog-1"]);
+    }
+
+    #[test]
+    fn wine_processes_map_to_the_game_exe() {
+        let game = json!({ "executablePath": "/home/u/steamapps/common/Terraria/Terraria.exe" });
+        let key = wine_game_path("Z:\\home\\u\\steamapps\\common\\Terraria\\Terraria.exe", "/home/u/steamapps/common/Terraria/").unwrap();
+        assert!(game_matches(&game, &HashSet::from([key])));
+        assert_eq!(wine_game_path("/usr/bin/wine64-preloader", "/tmp"), None);
     }
 
     #[test]

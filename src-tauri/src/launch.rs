@@ -125,6 +125,21 @@ pub fn resolve_launch_command(base: &str, launch_options: Option<&str>) -> Launc
     }
 }
 
+fn is_windows_binary(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with(".exe") || is_batch_file(&lower)
+}
+
+/// Steam starts its own games with the Proton build the user picked for them.
+fn steam_run_url(shop: &str, object_id: &str) -> Option<String> {
+    (shop == "steam" && !object_id.is_empty() && object_id.bytes().all(|b| b.is_ascii_digit())).then(|| format!("steam://rungameid/{object_id}"))
+}
+
+/// Runs the resolved command under Wine, keeping its env and arguments.
+fn wine_command(launch: LaunchCommand) -> LaunchCommand {
+    LaunchCommand { command: "wine".into(), args: std::iter::once(launch.command).chain(launch.args).collect(), env: launch.env }
+}
+
 pub fn is_batch_file(command: &str) -> bool {
     let lower = command.to_lowercase();
     lower.ends_with(".bat") || lower.ends_with(".cmd")
@@ -216,6 +231,18 @@ pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_
 
     let launch = resolve_launch_command(&parsed, launch_options);
     let cwd = Path::new(&parsed).parent().unwrap_or(Path::new("."));
+    if !cfg!(windows) && is_windows_binary(&parsed) {
+        // Opening an .exe on Linux hands it to the desktop's default app (a browser downloads it).
+        let result = match steam_run_url(shop, object_id) {
+            Some(url) => app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string()),
+            // shortcut: default Wine prefix, no per-game prefix or umu/Proton; port Electron's Wine service when needed.
+            None => spawn_detached(&wine_command(launch), cwd).map_err(|e| e.to_string()),
+        };
+        if let Err(error) = result {
+            eprintln!("[launch] failed to launch {key}: {error}");
+        }
+        return Ok(Value::Null);
+    }
     if launch.command == parsed && launch.args.is_empty() && launch.env.is_empty() {
         // shell.openPath: lets Windows pick the handler and UAC prompt, as Electron did.
         app.opener().open_path(&parsed, None::<&str>).map_err(|e| e.to_string())?;
@@ -256,7 +283,14 @@ pub fn open_launcher_window(app: &AppHandle, shop: &str, object_id: &str) -> Res
         let _ = existing.destroy();
     }
     let query = url::form_urlencoded::Serializer::new(String::new()).append_pair("shop", shop).append_pair("objectId", object_id).finish();
-    WebviewWindowBuilder::new(app, LAUNCHER_LABEL, WebviewUrl::App(format!("tauri.html#/game-launcher?{query}").into()))
+    let mut builder = WebviewWindowBuilder::new(app, LAUNCHER_LABEL, WebviewUrl::App(format!("tauri.html#/game-launcher?{query}").into()));
+    // Tiling compositors (niri, Hyprland, Sway) float a child window at its own size instead of tiling it.
+    if cfg!(target_os = "linux") {
+        if let Some(main) = app.get_webview_window("main") {
+            builder = builder.parent(&main).map_err(|e| e.to_string())?;
+        }
+    }
+    builder
         .title("Chimaera")
         .inner_size(550.0, 320.0)
         .resizable(false)
@@ -309,6 +343,16 @@ pub async fn image_data_url(url: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linux_launch_routes() {
+        assert!(is_windows_binary("/g/Terraria.EXE") && is_windows_binary("/g/run.bat") && !is_windows_binary("/g/terraria.sh"));
+        assert_eq!(steam_run_url("steam", "105600").as_deref(), Some("steam://rungameid/105600"));
+        assert_eq!(steam_run_url("steam", "1/../x"), None);
+        assert_eq!(steam_run_url("custom", "105600"), None);
+        let wine = wine_command(LaunchCommand { command: "/g/a.exe".into(), args: vec!["-x".into()], env: vec![("A".into(), "1".into())] });
+        assert_eq!((wine.command.as_str(), wine.args), ("wine", vec!["/g/a.exe".to_string(), "-x".to_string()]));
+    }
 
     #[test]
     fn launching_another_copy_keeps_the_records_own_exe() {
