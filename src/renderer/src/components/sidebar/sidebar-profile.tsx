@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import SteamLogo from "@renderer/assets/steam-logo.svg?react";
 import { Avatar } from "../avatar/avatar";
+import { useMessappUserId } from "@renderer/pages/friends/messapp/use-messapp";
 
 import { platformToSystem } from "@renderer/helpers";
 
@@ -93,7 +94,10 @@ export function SidebarProfile() {
 
   const { t } = useTranslation(["sidebar", "user_profile"]);
 
-  const { userDetails } = useUserDetails();
+  const { userDetails: localDetails } = useUserDetails();
+  // The MESSAPP account is the Chimaera account: signed out, the local profile stays hidden.
+  const messappUserId = useMessappUserId();
+  const userDetails = messappUserId ? localDetails : null;
 
   const { gameRunning } = useAppSelector((state) => state.gameRunning);
   const library = useAppSelector((state) => state.library.value);
@@ -109,9 +113,8 @@ export function SidebarProfile() {
     return platformToSystem(runningGame?.platform) !== null;
   }, [gameRunning, library]);
 
-  // Signed out, the Friends page holds the sign-in form.
   const handleProfileClick = () => {
-    navigate(userDetails ? `/profile/${userDetails.id}` : "/friends");
+    navigate(userDetails ? `/profile/${userDetails.id}` : "/sign-in");
   };
 
   const gameRunningDetails = () => {

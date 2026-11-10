@@ -36,7 +36,8 @@ import { decryptDm, encryptDm, type DmKeyring } from "./messapp/dm-crypto";
 import { classifyUnlockError, isNetworkError } from "./messapp/errors";
 import { IMAGE_TYPES } from "./messapp/attachment-blob";
 import { shownName } from "./messapp/profile-merge";
-import type { FriendPresence } from "./messapp/presence-core";
+import { playtimeLabel, type FriendPresence } from "./messapp/presence-core";
+import { useMinuteClock } from "./messapp/presence";
 import { dayDiff, groupLines } from "./messapp/message-groups";
 import {
   TYPING_SEND_MS,
@@ -156,6 +157,7 @@ export function ChatPanel({
   onActivity,
 }: Readonly<ChatPanelProps>) {
   const { t } = useTranslation("messapp");
+  const playtime = playtimeLabel(presence.playing?.startedAt, useMinuteClock());
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -585,7 +587,14 @@ export function ChatPanel({
               {presence.playing.iconUrl && (
                 <img src={presence.playing.iconUrl} alt="" width={16} />
               )}
-              <span>{t("playing", { game: presence.playing.title })}</span>
+              <span>
+                {playtime
+                  ? t("playing_time", {
+                      game: presence.playing.title,
+                      time: playtime,
+                    })
+                  : t("playing", { game: presence.playing.title })}
+              </span>
             </button>
           ) : (
             peer.status_text && (

@@ -2659,8 +2659,8 @@
     "close": "Close"
   },
   "messapp": {
-    "sign_in_title": "Sign in to Friends",
-    "sign_in_description": "Use your account to see your friends and message them.",
+    "sign_in_title": "Sign in to Chimaera",
+    "sign_in_description": "Use your MESSAPP account. Your profile, library and friends are saved to it.",
     "email": "Email",
     "password": "Password",
     "sign_in": "Sign in",
@@ -2743,6 +2743,9 @@
     "preview_image": "Image",
     "preview_you": "You: {{text}}",
     "playing": "Playing {{game}}",
-    "online": "Online"
+    "online": "Online",
+    "playing_time": "Playing {{game}} · {{time}}",
+    "signed_out": "Not signed in",
+    "signed_out_hint": "Sign in with your MESSAPP account from the profile button above Home."
   }
 }

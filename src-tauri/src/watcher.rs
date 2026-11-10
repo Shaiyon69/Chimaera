@@ -66,6 +66,7 @@ pub fn game_matches(game: &Value, running: &HashSet<String>) -> bool {
         paths.push(exe);
     }
     paths.iter().any(|p| running.contains(&path_key(p)))
+        || linux_game_folder(exe).is_some_and(|folder| running.iter().any(|r| in_folder(r.strip_prefix(CWD).unwrap_or(r), &folder)))
 }
 
 /// Patches the current record, so a rename or path change made mid-session survives the tick.
@@ -93,8 +94,34 @@ pub fn close_session(store: &Store, key: &str, session: Session, now: Instant) -
 fn running_exes(system: &mut sysinfo::System) -> HashSet<String> {
     // Always, not OnlyIfNotSet: sysinfo keys processes by PID only, and Windows recycles PIDs
     // within the 2 s tick, so a cached exe makes an unrelated process look like a game.
-    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always));
-    system.processes().values().filter_map(|p| p.exe()).map(|exe| path_key(&exe.to_string_lossy())).collect()
+    let kind = sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always);
+    let kind = if cfg!(windows) { kind } else { kind.with_cwd(sysinfo::UpdateKind::Always) };
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, kind);
+    let mut running: HashSet<String> = system.processes().values().filter_map(|p| p.exe()).map(|exe| path_key(&exe.to_string_lossy())).collect();
+    if !cfg!(windows) {
+        // Wine/Proton games run as the wine binary, so only their working folder shows the game.
+        running.extend(system.processes().values().filter_map(|p| p.cwd()).map(|cwd| format!("{CWD}{}", path_key(&cwd.to_string_lossy()))));
+    }
+    running
+}
+
+/// Marks a process's working folder in the running set; exe entries never start with it.
+const CWD: &str = "cwd:";
+
+/// Linux has no process for a game saved as a Windows .exe (Steam runs the native build or
+/// Proton runs wine), so a process inside its folder counts. The folder is resolved because
+/// Steam paths often go through the ~/.steam symlink. None on Windows or for native exes.
+pub fn linux_game_folder(exe: &str) -> Option<String> {
+    if cfg!(windows) || !(exe.to_lowercase().ends_with(".exe") || is_batch_file(exe)) {
+        return None;
+    }
+    let dir = std::path::Path::new(exe).parent().filter(|d| d.components().count() > 2)?;
+    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    Some(path_key(&dir.to_string_lossy()))
+}
+
+pub(crate) fn in_folder(path_key: &str, folder: &str) -> bool {
+    path_key.strip_prefix(folder).is_some_and(|rest| rest.is_empty() || rest.starts_with('\\'))
 }
 
 /// The records that earn this tick's playtime. A running copy of a grouped game is credited
@@ -260,6 +287,19 @@ mod tests {
         let mut games = shared_pair();
         games[0].1["isDeleted"] = json!(true);
         assert_eq!(keys(credited_keys(&games, &running(&[r"C:\G\a.exe"]))), ["custom:gog-1"]);
+    }
+
+    #[test]
+    fn linux_matches_a_process_in_the_game_folder() {
+        if cfg!(windows) {
+            return;
+        }
+        let game = json!({ "executablePath": "/nonexistent/steamapps/common/Terraria/Terraria.exe" });
+        let folder = path_key("/nonexistent/steamapps/common/Terraria");
+        assert!(game_matches(&game, &HashSet::from([format!("{folder}\\terraria.bin.x86_64")])));
+        assert!(game_matches(&game, &HashSet::from([format!("{CWD}{folder}")])));
+        assert!(!game_matches(&game, &HashSet::from([format!("{CWD}{folder}2")])));
+        assert!(!game_matches(&json!({ "executablePath": "/opt/game/run" }), &HashSet::from([format!("{CWD}{}", path_key("/opt/game"))])));
     }
 
     #[test]
