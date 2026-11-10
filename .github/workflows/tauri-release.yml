@@ -168,11 +168,11 @@ jobs:
           test -n "$GH_TOKEN" || { echo "::error::Set the SKIBIDEVS_TOKEN secret"; exit 1; }
           test -n "$MAIN_VITE_API_URL" || { echo "::error::Set the MAIN_VITE_API_URL repository variable"; exit 1; }
 
-      # Tauri's WebKitGTK stack, dbus for the keyring, GStreamer for the AppImage's media framework.
+      # Tauri's WebKitGTK stack, dbus for the keyring, xdo for the companion build, GStreamer for the AppImage's media framework.
       - name: Install Linux packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev patchelf xdg-utils \
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev libxdo-dev patchelf xdg-utils \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
 
       - uses: actions/setup-node@v4
