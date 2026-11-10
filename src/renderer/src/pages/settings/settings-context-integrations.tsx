@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { SettingsDebrid } from "./settings-debrid";
+import { SettingsGog } from "./settings-gog";
 import { SettingsSteam } from "./settings-steam";
 
 export function SettingsContextIntegrations() {
@@ -9,6 +10,7 @@ export function SettingsContextIntegrations() {
     <div className="settings-context-panel">
       <div className="settings-context-panel__group">
         <SettingsSteam />
+        <SettingsGog />
       </div>
 
       <hr className="settings-context-panel__divider" />

@@ -907,7 +907,7 @@ async fn community_unlocks(session: &Session, app_id: &str) -> Result<Vec<Unlock
 
 const STEAM_ASSETS: &str = "https://shared.steamstatic.com/store_item_assets/steam/apps";
 
-fn later_iso(local: &Value, remote: Option<u64>) -> Value {
+pub(crate) fn later_iso(local: &Value, remote: Option<u64>) -> Value {
     let local_ms = local.as_str().and_then(parse_iso_ms);
     match (local_ms, remote) {
         (_, None) => local.clone(),

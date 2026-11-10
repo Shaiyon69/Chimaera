@@ -182,7 +182,7 @@ fn is_within(child: &str, parent: &Path) -> bool {
 
 /// deleteGameFolder: removes the download's files (and, if asked, its source archive),
 /// forgets the download, and unlinks what lived in that folder from the game.
-// shortcut: no download queue or RetroArch stats to resync yet; add those calls when downloads and emulators are ported.
+// shortcut: the download queue and RetroArch counts are not resynced after a delete; resync them here if counts go stale.
 pub fn delete_game_folder(store: &Store, default_downloads: &Path, key: &str, delete_source_archive: bool) -> Result<(), String> {
     let download = store.get("downloads", key)?;
     if download.is_null() {

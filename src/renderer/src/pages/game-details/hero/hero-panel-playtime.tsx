@@ -41,6 +41,7 @@ export function HeroPanelPlaytime() {
     const milliseconds = getDisplayedPlayTimeInMilliseconds({
       playTimeInMilliseconds: game?.playTimeInMilliseconds || 0,
       steamPlayTimeInMilliseconds: game?.steamPlayTimeInMilliseconds,
+      gogPlayTimeInMilliseconds: game?.gogPlayTimeInMilliseconds,
     });
     const seconds = milliseconds / 1000;
     const minutes = seconds / 60;
@@ -56,6 +57,7 @@ export function HeroPanelPlaytime() {
   }, [
     game?.playTimeInMilliseconds,
     game?.steamPlayTimeInMilliseconds,
+    game?.gogPlayTimeInMilliseconds,
     numberFormatter,
     t,
   ]);
@@ -65,6 +67,7 @@ export function HeroPanelPlaytime() {
   const displayedPlayTimeInMilliseconds = getDisplayedPlayTimeInMilliseconds({
     playTimeInMilliseconds: game.playTimeInMilliseconds || 0,
     steamPlayTimeInMilliseconds: game.steamPlayTimeInMilliseconds,
+    gogPlayTimeInMilliseconds: game.gogPlayTimeInMilliseconds,
   });
 
   const hasDownload =

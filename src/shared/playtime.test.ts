@@ -18,6 +18,16 @@ describe("getDisplayedPlayTimeInMilliseconds", () => {
     );
   });
 
+  it("adds GOG playtime", () => {
+    assert.equal(
+      getDisplayedPlayTimeInMilliseconds({
+        playTimeInMilliseconds: 1_000,
+        gogPlayTimeInMilliseconds: 60_000,
+      }),
+      61_000
+    );
+  });
+
   it("treats missing Steam playtime as zero", () => {
     assert.equal(
       getDisplayedPlayTimeInMilliseconds({
