@@ -6,6 +6,7 @@ const decoder = new TextDecoder();
 const ECDH = { name: "ECDH", namedCurve: "P-256" } as const;
 const LEGACY_PIN_KDF_ITERATIONS = 100000;
 const PIN_KDF_ITERATIONS = 600000;
+const LEGACY_FIXED_SALT = "MESSAPP_SECURE_STORAGE_SALT_V1";
 
 export interface AesEnvelope {
   iv: string;
@@ -129,7 +130,8 @@ export const unwrapPrivateKey = async (
   const key = await crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt: fromBase64(salt),
+      // The oldest backups have no salt; MESSAPP used this fixed one for them.
+      salt: salt ? fromBase64(salt) : encoder.encode(LEGACY_FIXED_SALT),
       iterations:
         Number(v) >= 3 ? PIN_KDF_ITERATIONS : LEGACY_PIN_KDF_ITERATIONS,
       hash: "SHA-256",

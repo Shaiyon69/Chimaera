@@ -41,6 +41,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 tar = "0.4"
 serde_yaml = "0.9"
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "crypto-rust"] }
+# shaiyon-core is private: locally git's credential manager fetches it, CI rewrites the URL to SSH with a deploy key.
+shaiyon-crypto = { git = "https://github.com/Shaiyon69/shaiyon-core", tag = "v0.4.0" }
+shaiyon-keys = { git = "https://github.com/Shaiyon69/shaiyon-core", tag = "v0.4.0" }
 chd = "0.4.0"
 flate2 = "1.1.10"
 regex = "1.13.1"

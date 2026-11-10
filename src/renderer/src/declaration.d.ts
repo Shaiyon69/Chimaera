@@ -433,7 +433,10 @@ declare global {
       accessToken: string,
       privateJwk: string
     ) => Promise<boolean>;
-    loadMessappKey: (accessToken: string) => Promise<string | null>;
+    /** The shared OS vault's DM keys (also Messapp desktop's and Purrch's). */
+    loadMessappKey: (
+      accessToken: string
+    ) => Promise<{ private: JsonWebKey; legacy: JsonWebKey[] } | null>;
     clearMessappKey: (accessToken: string) => Promise<void>;
     getGraphicsOverview: (
       games: { shop: GameShop; objectId: string }[]
