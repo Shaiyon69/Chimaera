@@ -366,7 +366,9 @@ pub fn start_login(app: &AppHandle) -> Result<(), String> {
     }
     let done = Arc::new(AtomicBool::new(false));
     let handle = app.clone();
-    let mut builder = WebviewWindowBuilder::new(app, LOGIN_LABEL, WebviewUrl::External(LOGIN_URL.parse().expect("static url")))
+    // Linux loads the login page below, once the cookie policy is set.
+    let first_url = if cfg!(target_os = "linux") { "about:blank" } else { LOGIN_URL };
+    let mut builder = WebviewWindowBuilder::new(app, LOGIN_LABEL, WebviewUrl::External(first_url.parse().expect("static url")))
         .title("Steam")
         .inner_size(600.0, 800.0)
         .user_agent(USER_AGENT)
@@ -401,26 +403,44 @@ pub fn start_login(app: &AppHandle) -> Result<(), String> {
     if let Some(main) = app.get_webview_window("main") {
         builder = builder.parent(&main).map_err(|e| e.to_string())?;
     }
-    builder.build().map_err(|e| e.to_string())?;
+    let _window = builder.build().map_err(|e| e.to_string())?;
+    // The store login sets the steamcommunity.com cookie cross-site, which sync needs and WebKitGTK blocks by default.
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::{CookieAcceptPolicy, CookieManagerExt, WebViewExt, WebsiteDataManagerExt};
+        _window
+            .with_webview(|webview| {
+                if let Some(cookies) = webview.inner().website_data_manager().and_then(|manager| manager.cookie_manager()) {
+                    cookies.set_accept_policy(CookieAcceptPolicy::Always);
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        _window.navigate(LOGIN_URL.parse().expect("static url")).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
 // ---- Web API (steam-web-api.ts) ----
 
 async fn api_get(session: &Session, path: &str, params: Vec<(&str, String)>, include_steam_id: bool) -> Result<Value, Error> {
-    let mut url = url::Url::parse(API).expect("static url").join(path).expect("static path");
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("access_token", &session.token);
-        if include_steam_id {
-            query.append_pair("steamid", &session.steam_id);
-        }
-        query.append_pair("format", "json");
-        for (key, value) in &params {
-            query.append_pair(key, value);
-        }
+    api_call(session, false, path, params, include_steam_id).await
+}
+
+/// For methods Steam only accepts as POST (405 on GET); the parameters go in the form body.
+async fn api_post(session: &Session, path: &str, params: Vec<(&str, String)>, include_steam_id: bool) -> Result<Value, Error> {
+    api_call(session, true, path, params, include_steam_id).await
+}
+
+async fn api_call(session: &Session, post: bool, path: &str, params: Vec<(&str, String)>, include_steam_id: bool) -> Result<Value, Error> {
+    let url = url::Url::parse(API).expect("static url").join(path).expect("static path");
+    let mut pairs = vec![("access_token", session.token.clone())];
+    if include_steam_id {
+        pairs.push(("steamid", session.steam_id.clone()));
     }
-    let response = client()?.get(url).send().await.map_err(|e| Error::Transport(e.to_string()))?;
+    pairs.push(("format", "json".into()));
+    pairs.extend(params);
+    let request = if post { client()?.post(url).form(&pairs) } else { client()?.get(url).query(&pairs) };
+    let response = request.send().await.map_err(|e| Error::Transport(e.to_string()))?;
     let status = response.status().as_u16();
     let retry_after = response.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
     let body = response.text().await.map_err(|e| Error::Transport(e.to_string()))?;
@@ -799,6 +819,25 @@ fn parse_achievement_xml(xml: &str) -> Vec<Unlock> {
         .collect()
 }
 
+/// Steam's React achievements page embeds its query cache as escaped JSON: the schema pairs
+/// `internal_key` with `api_name`, the user's data pairs it with `unlocked` and `unlock_time`.
+// shortcut: reads those pairs as text and relies on Steam's field order, parse the embedded JSON if the order changes.
+fn parse_achievement_ssr(html: &str) -> Vec<Unlock> {
+    let text = html.replace("\\\"", "\"");
+    let mut names = HashMap::new();
+    let mut times = Vec::new();
+    for entry in text.split("\"internal_key\":").skip(1) {
+        let Some((key, rest)) = entry.split_once(',') else { continue };
+        if let Some(name) = rest.strip_prefix("\"api_name\":\"").and_then(|r| r.split('"').next()) {
+            names.insert(key, name);
+        } else if let Some(time) = rest.strip_prefix("\"unlocked\":true,\"unlock_time\":") {
+            let digits = time.find(|c: char| !c.is_ascii_digit()).map_or(time, |end| &time[..end]);
+            times.extend(digits.parse::<i64>().ok().filter(|t| *t > 0).map(|t| (key, t)));
+        }
+    }
+    times.into_iter().filter_map(|(key, time)| Some(Unlock { name: names.get(key)?.to_string(), unlock_time: time * 1000 })).collect()
+}
+
 fn is_login_page(url: &str, body: &str) -> bool {
     let url_lower = url.to_ascii_lowercase();
     if url_lower.contains("login.steampowered.com") || url_lower.split(['/', '.', '?', '#']).any(|p| p == "login") {
@@ -842,6 +881,11 @@ async fn community_unlocks(session: &Session, app_id: &str) -> Result<Vec<Unlock
     }
     if profile.contains("achieveRow") || owner.contains("achieveRow") {
         return Ok(Vec::new());
+    }
+    // Some games no longer serve the XML stats below, only this page.
+    let embedded = parse_achievement_ssr(&profile);
+    if !embedded.is_empty() {
+        return Ok(embedded);
     }
     let (url, mut xml) = community_page(session, &format!("{COMMUNITY}/profiles/{}/stats/{app_id}/?xml=1", session.steam_id)).await?;
     if !xml.to_ascii_lowercase().contains("<playerstats") {
@@ -1277,7 +1321,7 @@ async fn fetch_library(session: &Session, cancel: &AtomicBool) -> Result<Vec<Lib
                         add_playtime(&mut playtime, app.app_id.clone(), Playtime { seconds: app.play_seconds, last_played: app.last_played });
                     }
                     let summary = with_retry("family playtime", cancel, || {
-                        api_get(session, "IFamilyGroupsService/GetPlaytimeSummary/v1/", vec![("family_groupid", group.clone()), ("input_json", json!({ "family_groupid": group }).to_string())], false)
+                        api_post(session, "IFamilyGroupsService/GetPlaytimeSummary/v1/", vec![("family_groupid", group.clone()), ("input_json", json!({ "family_groupid": group }).to_string())], false)
                     })
                     .await;
                     match summary {
@@ -1408,6 +1452,10 @@ async fn run(app: &AppHandle, run_id: &str, cancel: &Arc<AtomicBool>) -> Result<
     })
     .await?;
     check(cancel)?;
+
+    // The startup backfill ran before these games joined the library; games with no new unlocks never fetched a catalogue.
+    let backfill_app = app.clone();
+    tauri::async_runtime::spawn(async move { crate::achievements::backfill_catalogues(&backfill_app).await });
 
     sync.progress(app, run_id, "executables", 0, 0);
     let linked = link_executables(app, None, |done, total| sync.progress(app, run_id, "executables", total, done)).await;
@@ -1609,6 +1657,14 @@ mod tests {
         assert_eq!(parse_store_config(LOGIN_URL, html), None);
         let logged_out = html.replace("true", "false");
         assert_eq!(parse_store_config(EXPLORE_URL, &logged_out), None);
+    }
+
+    #[test]
+    fn reads_unlocks_from_the_embedded_page_data() {
+        let html = r#"{\"achievements\":{\"257\":{\"internal_key\":257,\"unlocked\":true,\"unlock_time\":1722061795},\"258\":{\"internal_key\":258,\"unlocked\":false,\"unlock_time\":0}}} [{\"internal_key\":257,\"api_name\":\"ACH_1\",\"name\":\"a\"},{\"internal_key\":258,\"api_name\":\"ACH_2\",\"name\":\"b\"}]"#;
+        let unlocks = parse_achievement_ssr(html);
+        assert_eq!(unlocks.len(), 1);
+        assert_eq!((unlocks[0].name.as_str(), unlocks[0].unlock_time), ("ACH_1", 1722061795000));
     }
 
     #[test]

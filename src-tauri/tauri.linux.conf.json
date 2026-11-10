@@ -1,0 +1,20 @@
+{
+  "bundle": {
+    "targets": ["deb", "appimage"],
+    "linux": {
+      "deb": {
+        "depends": ["gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"]
+      },
+      "appimage": { "bundleMediaFramework": true }
+    },
+    "resources": {
+      "../ludusavi/ludusavi.exe": null,
+      "../ludusavi/ludusavi": "ludusavi/ludusavi",
+      "../binaries/7z.exe": null,
+      "../binaries/7z.dll": null,
+      "../binaries/7zzs": "binaries/7zzs",
+      "../native/torrent-bridge/prebuilt/x64-windows-static/bin/hydra_torrent_bridge.dll": null,
+      "../native/torrent-bridge/prebuilt/x64-linux/lib/libhydra_torrent_bridge.so": "libhydra_torrent_bridge.so"
+    }
+  }
+}

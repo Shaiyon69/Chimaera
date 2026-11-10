@@ -1,10 +1,10 @@
-// Builds the companion web apps from the sibling `companions` repo and copies them
+// Builds the companion web apps from the sibling `Chimaera-Brood` repo and copies them
 // into resources/companions/<id>, which the `companion:` scheme serves. Companions with
 // `bundle` also get their card data and pictures (`<crate> --bundle <dir>`), so they
 // open without waiting on the network.
 // Usage: node scripts/fetch-companions.mjs [--skip-build]
 //   --skip-build  copy the last build without running `dx build`
-// Set CHIMAERA_COMPANIONS_DIR to use a checkout somewhere other than ../companions.
+// Set CHIMAERA_COMPANIONS_DIR to use a checkout somewhere other than ../Chimaera-Brood.
 // Without a checkout it warns and exits 0, so the app builds without companions.
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, rmSync } from "node:fs";
@@ -16,12 +16,14 @@ const COMPANIONS = [{ id: "terraria", crate: "terraria-guide", bundle: true }];
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repo = resolve(
-  process.env.CHIMAERA_COMPANIONS_DIR ?? join(root, "..", "companions")
+  process.env.CHIMAERA_COMPANIONS_DIR ?? join(root, "..", "Chimaera-Brood")
 );
 const skipBuild = process.argv.includes("--skip-build");
 
 if (!existsSync(join(repo, "Cargo.toml"))) {
-  console.warn(`companions repo not found at ${repo}; skipping companions.`);
+  console.warn(
+    `Chimaera-Brood repo not found at ${repo}; skipping companions.`
+  );
   process.exit(0);
 }
 

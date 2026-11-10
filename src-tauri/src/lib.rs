@@ -205,6 +205,7 @@ pub fn run() {
                 .inner_size(1200.0, 860.0)
                 .min_inner_size(1024.0, 600.0)
                 .decorations(false)
+                .background_color(tauri::webview::Color(0, 0, 0, 0xff))
                 .initialization_script(&process_script())
                 .build()?
                 .on_window_event({

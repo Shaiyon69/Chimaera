@@ -338,7 +338,8 @@ function SidebarRouter() {
   };
   const handleExitBigPicture = () => {
     if (IS_DESKTOP) {
-      globalThis.close();
+      // WebKitGTK ignores window.close() on windows a script did not open.
+      void globalThis.window.electron.closeMainWindow();
       return;
     }
 
