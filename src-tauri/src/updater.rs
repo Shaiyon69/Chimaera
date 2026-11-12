@@ -14,15 +14,16 @@ use crate::store::Store;
 static PENDING: Mutex<Option<(Update, Vec<u8>)>> = Mutex::new(None);
 static CHECKING: AtomicBool = AtomicBool::new(false);
 
-/// Electron: auto-install on Windows (the NSIS build is never portable), opt-in on Linux.
-pub fn auto_install_enabled(windows: bool, preferences: &Value) -> bool {
-    windows || preferences["enableAutoInstall"].as_bool() == Some(true)
+/// Auto-install where the updater can replace the app: the NSIS build on Windows and the
+/// AppImage on Linux (the runtime sets APPIMAGE). Anything else stays opt-in.
+pub fn auto_install_enabled(installable: bool, preferences: &Value) -> bool {
+    installable || preferences["enableAutoInstall"].as_bool() == Some(true)
 }
 
 /// checkForUpdates: answers whether updates install automatically, then checks in the background.
 pub fn check(app: &AppHandle) -> Value {
     let preferences = app.state::<Store>().get("", "userPreferences").unwrap_or(Value::Null);
-    let auto = auto_install_enabled(cfg!(windows), &preferences);
+    let auto = auto_install_enabled(cfg!(windows) || std::env::var_os("APPIMAGE").is_some(), &preferences);
     // Like Electron's app.isPackaged: a dev build never updates itself.
     if !cfg!(debug_assertions) && !CHECKING.swap(true, Ordering::SeqCst) {
         let app = app.clone();
