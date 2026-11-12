@@ -12,6 +12,7 @@
 
   &__header {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
     gap: calc(globals.$spacing-unit * 2);
@@ -67,6 +68,12 @@
     display: flex;
     gap: globals.$spacing-unit;
     justify-content: flex-end;
+    margin-left: auto;
+
+    // Narrow windows wrapped "Mark all as read" into a tall pill; the row wraps instead.
+    button {
+      white-space: nowrap;
+    }
   }
 
   &__content-wrapper {

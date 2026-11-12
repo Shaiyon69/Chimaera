@@ -146,6 +146,25 @@
       width: calc(100% - 28px);
     }
   }
+
+  // Narrow windows: the title keeps its own line instead of shrinking to "D…".
+  @media (max-width: 640px) {
+    flex-wrap: wrap;
+    // The content below is height: 100%; without this the wrapped header is squeezed and the search spills over it.
+    flex-shrink: 0;
+    row-gap: globals.$spacing-unit;
+
+    &__section {
+      flex-basis: 100%;
+      // height: 100% would give the title line the whole header and push the search line out.
+      height: auto;
+    }
+
+    &__search,
+    &__search--focused {
+      width: 100%;
+    }
+  }
 }
 
 @keyframes slide-in {
