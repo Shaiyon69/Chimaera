@@ -45,3 +45,5 @@ resources/companions/*
 # Setup bootstrapper build output
 installer/target
 installer/src-tauri/gen
+
+.scratch/
