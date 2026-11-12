@@ -14,6 +14,10 @@ import "./bottom-panel.scss";
 
 import { useNavigate } from "react-router-dom";
 
+// Chimaera's page on Skibidevs: version history with each release's notes.
+const RELEASE_NOTES_URL =
+  "https://shaiyon69.github.io/Skibidevs/apptic/?app=chimaera";
+
 const HYDRA_CLOUD_GRADIENT_START_COLOR = "#16b195";
 const HYDRA_CLOUD_GRADIENT_END_COLOR = "#3e62c0";
 
@@ -206,8 +210,10 @@ export function BottomPanel() {
 
       <div className="bottom-panel__right">
         <button
-          data-open-workwonders-changelog-mini
+          type="button"
           className="bottom-panel__version-button"
+          title="Release notes"
+          onClick={() => window.electron.openExternal(RELEASE_NOTES_URL)}
         >
           <small>v{version}</small>
         </button>

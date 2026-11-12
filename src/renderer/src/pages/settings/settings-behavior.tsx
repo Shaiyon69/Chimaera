@@ -1,11 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import {
-  CheckboxField,
-  GuideLink,
-  ProtonPathPicker,
-} from "@renderer/components";
+import { CheckboxField, ProtonPathPicker } from "@renderer/components";
 import { useAppSelector } from "@renderer/hooks";
 import { settingsContext } from "@renderer/context";
 import "./settings-behavior.scss";
@@ -280,11 +276,7 @@ export function SettingsBehavior() {
       />
 
       <CheckboxField
-        label={
-          <GuideLink article="steam-achievements">
-            {t("enable_steam_achievements")}
-          </GuideLink>
-        }
+        label={t("enable_steam_achievements")}
         checked={form.enableSteamAchievements}
         onChange={() =>
           handleChange({

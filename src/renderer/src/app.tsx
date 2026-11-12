@@ -18,7 +18,6 @@ import {
 import { useDownloadOptionsListener } from "@renderer/hooks/use-download-options-listener";
 import i18n from "i18next";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { WorkWonders } from "workwonders-sdk";
 
 import {
   clearDownload as clearDownloadAction,
@@ -75,13 +74,6 @@ export interface AppProps {
   children: React.ReactNode;
 }
 
-type WorkWondersWithKnowledge = WorkWonders & {
-  knowledge?: {
-    initKnowledgeWidget?: () => void;
-    showArticle?: (articleId: number) => void;
-  };
-};
-
 // Dock pages stay mounted once visited so switching tabs doesn't refetch or
 // lose filters/scroll. Other routes still render through <Outlet />.
 // Memoized so App re-renders don't cascade into hidden pages.
@@ -111,9 +103,6 @@ export function App() {
   const activeDownloadGameId = useAppSelector(
     (state) => state.download.lastPacket?.gameId
   );
-
-  const workwondersRef = useRef<WorkWonders | null>(null);
-  const workwondersInitializingRef = useRef(false);
 
   const { fetchUserDetails, updateUserDetails } = useUserDetails();
 
@@ -230,132 +219,6 @@ export function App() {
     }
   }, [clearDownload, activeDownloadGameId, downloadLibrary]);
 
-  const setupWorkWonders = useCallback(
-    async (token?: string, locale?: string) => {
-      if (workwondersRef.current || workwondersInitializingRef.current) return;
-
-      workwondersInitializingRef.current = true;
-
-      const possibleLocales = ["en", "pt", "ru"];
-
-      const parsedLocale =
-        possibleLocales.find((l) => l === locale?.slice(0, 2)) ?? "en";
-
-      try {
-        const workwonders = new WorkWonders();
-
-        await workwonders.init({
-          organization: "hydra",
-          token,
-          locale: parsedLocale,
-        });
-
-        workwonders.changelog.initChangelogWidget();
-        workwonders.changelog.initChangelogWidgetMini();
-        const workWondersWithKnowledge =
-          workwonders as WorkWondersWithKnowledge;
-        workWondersWithKnowledge.knowledge?.initKnowledgeWidget?.();
-
-        if (token) {
-          workwonders.feedback.initFeedbackWidget();
-        }
-
-        workwondersRef.current = workwonders;
-      } catch (error) {
-        console.error("Failed to initialize Work Wonders SDK", error);
-      } finally {
-        workwondersInitializingRef.current = false;
-      }
-    },
-    [workwondersRef]
-  );
-
-  useEffect(() => {
-    const onClick = async (event: MouseEvent) => {
-      const userPreferences = await window.electron.getUserPreferences();
-      const language = userPreferences?.language ?? "en";
-
-      const articleMapping = {
-        pt: {
-          "cannot-write-directory": 1429,
-          seeding: 1442,
-          "peers-and-seeds": 1449,
-          "steam-achievements": 1412,
-          "install-duckstation": 6441,
-          "install-pcsx2": 6192,
-          "install-rpcs3": 6510,
-          "install-retroarch": 7108,
-          "install-ppsspp": 7315,
-          "install-dolphin": 7268,
-          "wii-saves": 7384,
-          "retroachievements-emulators": 6629,
-          "downloading-metadata": 7719,
-        },
-        en: {
-          "cannot-write-directory": 4122,
-          seeding: 4116,
-          "peers-and-seeds": 4119,
-          "steam-achievements": 4140,
-          "install-duckstation": 6465,
-          "install-pcsx2": 6390,
-          "install-rpcs3": 6524,
-          "install-retroarch": 7120,
-          "install-ppsspp": 7328,
-          "install-dolphin": 7281,
-          "wii-saves": 7406,
-          "retroachievements-emulators": 6692,
-          "downloading-metadata": 7773,
-        },
-        ru: {
-          "install-duckstation": 6479,
-          "install-pcsx2": 6429,
-          "install-rpcs3": 6541,
-          "install-retroarch": 7135,
-          "install-ppsspp": 7338,
-          "install-dolphin": 7292,
-          "wii-saves": 7422,
-          "retroachievements-emulators": 6717,
-          "downloading-metadata": 7848,
-        },
-        es: {
-          "install-duckstation": 6492,
-          "install-pcsx2": 6410,
-          "install-rpcs3": 6552,
-          "install-retroarch": 7142,
-          "install-ppsspp": 7375,
-          "install-dolphin": 7303,
-          "wii-saves": 7431,
-          "retroachievements-emulators": 6743,
-          "downloading-metadata": 7854,
-        },
-      };
-
-      const $helpCenterTarget = (event.target as HTMLElement).closest(
-        "[data-open-article]"
-      );
-
-      if ($helpCenterTarget) {
-        const article = $helpCenterTarget.getAttribute("data-open-article");
-        const articleId =
-          articleMapping[language.slice(0, 2)]?.[
-            article as keyof typeof articleMapping
-          ] ?? articleMapping["en"]?.[article as keyof typeof articleMapping];
-
-        if (articleId) {
-          const workWondersWithKnowledge =
-            workwondersRef.current as WorkWondersWithKnowledge | null;
-          workWondersWithKnowledge?.knowledge?.showArticle?.(articleId);
-        }
-      }
-    };
-
-    window.addEventListener("click", onClick);
-
-    return () => {
-      window.removeEventListener("click", onClick);
-    };
-  }, []);
-
   const setupExternalResources = useCallback(async () => {
     const cachedUserDetails = window.localStorage.getItem("userDetails");
 
@@ -367,22 +230,25 @@ export function App() {
       dispatch(setProfileBackground(profileBackground));
     }
 
-    const userPreferences = await window.electron.getUserPreferences();
     const userDetails = await fetchUserDetails().catch(() => null);
 
     if (userDetails) {
       updateUserDetails(userDetails);
     }
 
-    setupWorkWonders(userDetails?.workwondersJwt, userPreferences?.language);
-
-    if (!document.getElementById("external-resources")) {
+    // Hydra's remote bundle; unset in Chimaera's builds, where it fetched "undefined/bundle.js".
+    const externalResourcesUrl = import.meta.env
+      .RENDERER_VITE_EXTERNAL_RESOURCES_URL;
+    if (
+      externalResourcesUrl &&
+      !document.getElementById("external-resources")
+    ) {
       const $script = document.createElement("script");
       $script.id = "external-resources";
-      $script.src = `${import.meta.env.RENDERER_VITE_EXTERNAL_RESOURCES_URL}/bundle.js?t=${Date.now()}`;
+      $script.src = `${externalResourcesUrl}/bundle.js?t=${Date.now()}`;
       document.head.appendChild($script);
     }
-  }, [fetchUserDetails, updateUserDetails, dispatch, setupWorkWonders]);
+  }, [fetchUserDetails, updateUserDetails, dispatch]);
 
   useEffect(() => {
     setupExternalResources();
@@ -629,10 +495,6 @@ export function App() {
     showWarningToast,
     t,
   ]);
-
-  useEffect(() => {
-    workwondersRef.current?.notifyUrlChange?.();
-  }, [location.pathname, location.search]);
 
   useEffect(() => {
     new MutationObserver(() => {

@@ -179,18 +179,6 @@
     flex: 1;
   }
 
-  &__download-divider {
-    width: 100%;
-    height: 1px;
-    border: 0;
-    margin: 4px 0;
-    background: var(--fill);
-  }
-
-  &__download-card--guide {
-    margin-top: 4px;
-  }
-
   &__download-card {
     background: var(--bg);
     border: 1px solid var(--fill);
