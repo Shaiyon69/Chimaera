@@ -37,11 +37,9 @@ export function ClassicsIcon({
           y2="22"
           gradientUnits="userSpaceOnUse"
         >
-          <stop offset="0%" stopColor="#f8c802" />
-          <stop offset="25%" stopColor="#fc5812" />
-          <stop offset="50%" stopColor="#fb0026" />
-          <stop offset="75%" stopColor="#c80078" />
-          <stop offset="100%" stopColor="#7300a4" />
+          {/* Ecosystem palette: gold into blue (no orange/red/purple, red-green safe). */}
+          <stop offset="0%" stopColor="#e8c77d" />
+          <stop offset="100%" stopColor="#7fa7e0" />
         </linearGradient>
       </defs>
       <line x1="6" x2="10" y1="11" y2="11" />

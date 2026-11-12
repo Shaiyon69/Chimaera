@@ -65,16 +65,19 @@ type CompatibilityThreshold<Value extends string> = {
   color?: string;
 };
 
+// Chips carry their category in text, so colour is only a marker: one ecosystem blue
+// instead of purple/orange/pink/green hues (red-green colourblind users can't tell those apart).
+const FILTER_BLUE = "#7fa7e0";
 const filterCategoryColors = {
-  genres: "hsl(262deg 50% 47%)",
-  tags: "hsl(95deg 50% 20%)",
-  downloadSourceFingerprints: "hsl(27deg 50% 40%)",
-  developers: "hsl(340deg 50% 46%)",
-  publishers: "hsl(200deg 50% 30%)",
-  protondbSupportBadges: "#F50057",
-  deckCompatibility: "#F50057",
-  releaseYear: "hsl(38deg 50% 40%)",
-  platforms: "hsl(170deg 50% 36%)",
+  genres: FILTER_BLUE,
+  tags: FILTER_BLUE,
+  downloadSourceFingerprints: FILTER_BLUE,
+  developers: FILTER_BLUE,
+  publishers: FILTER_BLUE,
+  protondbSupportBadges: FILTER_BLUE,
+  deckCompatibility: FILTER_BLUE,
+  releaseYear: FILTER_BLUE,
+  platforms: FILTER_BLUE,
 };
 
 const classicsPlatformGroups = [
@@ -262,9 +265,10 @@ export default function Catalogue() {
 
           if (requestId !== requestSequenceRef.current) return;
 
-          setResults(response.edges);
+          // A malformed answer must not reach `results.filter` and crash the page.
+          setResults(Array.isArray(response?.edges) ? response.edges : []);
           setResultsMode(mode);
-          setItemsCount(response.count);
+          setItemsCount(response?.count ?? 0);
         } catch (error) {
           if (requestId !== requestSequenceRef.current) return;
 
@@ -860,7 +864,10 @@ export default function Catalogue() {
 
           <span className="catalogue__result-count">
             {t("result_count", {
-              resultCount: formatNumber(itemsCount),
+              // Bundled games sit in front of the API results on page 1; count them too.
+              resultCount: formatNumber(
+                itemsCount + visibleResults.length - results.length
+              ),
             })}
           </span>
         </div>

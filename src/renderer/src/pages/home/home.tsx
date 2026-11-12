@@ -55,9 +55,11 @@ export default function Home() {
         downloadSourceIds: downloadSources.map((source) => source.id),
       };
 
-      // The API often resets the first connection at startup, so retry.
+      // The API often resets the first connection at startup, so retry. An
+      // empty answer counts as a failed try: looping on `!result` alone spun
+      // forever without a delay and froze the window.
       let result: ShopAssets[] | undefined;
-      for (let attempt = 1; !result; attempt++) {
+      for (let attempt = 1; ; attempt++) {
         try {
           result = await window.electron.hydraApi.get<ShopAssets[]>(
             `/catalogue/${category}`,
@@ -66,10 +68,13 @@ export default function Home() {
               needsAuth: false,
             }
           );
+          if (result) break;
+          if (attempt >= 3)
+            throw new Error(`Empty catalogue response for ${category}`);
         } catch (error) {
           if (attempt >= 3) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
         }
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
       }
 
       setCatalogue((prev) => ({
