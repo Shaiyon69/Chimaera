@@ -264,8 +264,10 @@ fn proton_launch(app: &AppHandle, store: &Store, key: &str, steam_id: Option<&st
     statuses.send(app, key, "preparing_compatibility_layer");
     let prefix = crate::proton::prefix_for(&game, &prefs, key);
     std::fs::create_dir_all(&prefix).map_err(|e| format!("cannot create prefix {}: {e}", prefix.display()))?;
-    let gamemode = game["autoRunGamemode"].as_bool().unwrap_or(false) && crate::proton::on_path("gamemoderun");
-    let mangohud = game["autoRunMangohud"].as_bool().unwrap_or(false);
+    // The global switch in Settings > Compatibility or the game's own switch turns each tool on, as upstream does.
+    let on = |k: &str| game[k].as_bool().unwrap_or(false) || prefs[k].as_bool().unwrap_or(false);
+    let gamemode = on("autoRunGamemode") && crate::proton::on_path("gamemoderun");
+    let mangohud = on("autoRunMangohud") && crate::proton::on_path("mangohud");
     let command = crate::proton::umu_command(launch, exe, &proton, &prefix, steam_id, gamemode, mangohud);
     spawn_detached(&command, cwd).map_err(|e| e.to_string())?;
     statuses.send(app, key, "game_started");
