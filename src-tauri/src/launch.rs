@@ -201,8 +201,7 @@ pub fn record_launch(game: Value, exe: &str, launch_options: Option<&str>, own_e
 }
 
 /// `openGame`.
-// shortcut: Windows-native only. Bundled games (Bloodborne, Horizon), Steam protocol launch
-// and Linux Wine/umu/Proton are not ported; each lands with its milestone.
+// shortcut: bundled games (Bloodborne, Horizon) are not ported; they land with their milestone.
 pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_path: &str, launch_options: Option<&str>) -> Result<Value, String> {
     let store = app.state::<Store>();
     let key = game_key(shop, object_id);
@@ -233,9 +232,10 @@ pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_
     let cwd = Path::new(&parsed).parent().unwrap_or(Path::new("."));
     if !cfg!(windows) && is_windows_binary(&parsed) {
         // Opening an .exe on Linux hands it to the desktop's default app (a browser downloads it).
-        let result = match steam_run_url(shop, object_id) {
+        let steam_url = steam_run_url(shop, object_id).filter(|_| crate::proton::is_steam_install(&parsed));
+        let result = match steam_url {
             Some(url) => app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string()),
-            // shortcut: default Wine prefix, no per-game prefix or umu/Proton; port Electron's Wine service when needed.
+            None if crate::proton::on_path("umu-run") => proton_launch(app, &store, &key, steam_run_url(shop, object_id).map(|_| object_id), &parsed, launch, cwd),
             None => spawn_detached(&wine_command(launch), cwd).map_err(|e| e.to_string()),
         };
         if let Err(error) = result {
@@ -250,6 +250,26 @@ pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_
         eprintln!("[launch] failed to launch {key}: {error}");
     }
     Ok(Value::Null)
+}
+
+/// Runs a Windows game through umu-run with the game's Proton and its own prefix.
+fn proton_launch(app: &AppHandle, store: &Store, key: &str, steam_id: Option<&str>, exe: &str, launch: LaunchCommand, cwd: &Path) -> Result<(), String> {
+    let game = store.get("games", key)?;
+    let prefs = store.get("", "userPreferences")?;
+    let statuses = app.state::<LauncherStatuses>();
+    let Some(proton) = crate::proton::resolve(&game, &prefs, &crate::proton::installed_versions()) else {
+        statuses.send(app, key, "compatibility_layer_failed");
+        return Err("no Proton build found; install GE-Proton with ProtonPlus".into());
+    };
+    statuses.send(app, key, "preparing_compatibility_layer");
+    let prefix = crate::proton::prefix_for(&game, &prefs, key);
+    std::fs::create_dir_all(&prefix).map_err(|e| format!("cannot create prefix {}: {e}", prefix.display()))?;
+    let gamemode = game["autoRunGamemode"].as_bool().unwrap_or(false) && crate::proton::on_path("gamemoderun");
+    let mangohud = game["autoRunMangohud"].as_bool().unwrap_or(false);
+    let command = crate::proton::umu_command(launch, exe, &proton, &prefix, steam_id, gamemode, mangohud);
+    spawn_detached(&command, cwd).map_err(|e| e.to_string())?;
+    statuses.send(app, key, "game_started");
+    Ok(())
 }
 
 fn path_key(path: &str) -> String {
