@@ -41,6 +41,11 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
     match channel {
         "ping" => Ok(json!("pong")),
         "getVersion" => Ok(json!(app.package_info().version.to_string())),
+        // Colors Noctalia (Linux desktop shell) renders on every theme change; null when absent.
+        "getNoctaliaTheme" => {
+            let file = app.path().config_dir().map_err(|e| e.to_string())?.join("shaiyon-theme/chimaera.css");
+            Ok(std::fs::read_to_string(file).map(Value::String).unwrap_or(Value::Null))
+        }
         "getDefaultDownloadsPath" => {
             let dir = app.path().download_dir().map_err(|e| e.to_string())?;
             Ok(json!(dir.to_string_lossy()))
