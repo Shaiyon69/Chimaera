@@ -66,7 +66,11 @@ export const THEME_PRESETS: ThemePreset[] = [
           id: NOCTALIA_PRESET,
           name: "Noctalia",
           css: "",
-          preview: ["#121212", "#1e1e1e", "#adc6ff"] as [string, string, string],
+          preview: ["#121212", "#1e1e1e", "#adc6ff"] as [
+            string,
+            string,
+            string,
+          ],
         },
       ]
     : []),
