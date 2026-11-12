@@ -6,6 +6,7 @@ import { applyChimaeraProfile, type ChimaeraProfile } from "./profile-merge";
 import { unwrapPrivateKey } from "./crypto";
 import { createKeyring, type DmKeyring } from "./dm-crypto";
 import type { DmMember } from "./recency";
+import { pairRooms } from "./dm-rooms-core";
 import { parseMessageInsert } from "./realtime-core";
 
 export interface MessappProfile {
@@ -148,10 +149,23 @@ export const acceptFriendRequest = async (friendshipId: string) =>
 export const removeFriendship = async (friendshipId: string) =>
   orThrow(await messapp.from("friendships").delete().eq("id", friendshipId));
 
-export const openDm = async (peerId: string) =>
-  orThrow<{ id: string }>(
+/* A pair's room never changes, so opening a chat skips the create_or_get_dm round
+   trip once the room is known: seeded from fetchDmMembers, filled by the RPC.
+   Keyed by the signed-in user so another account never reuses these rooms. */
+const knownRooms = new Map<string, string>();
+const signedInUserId = async () =>
+  (await messapp.auth.getSession()).data.session?.user.id ?? "";
+
+export const openDm = async (peerId: string) => {
+  const key = `${await signedInUserId()}:${peerId}`;
+  const known = knownRooms.get(key);
+  if (known) return known;
+  const room = orThrow<{ id: string }>(
     await messapp.rpc("create_or_get_dm", { peer_id: peerId })
   ).id;
+  knownRooms.set(key, room);
+  return room;
+};
 
 export const MESSAGE_PAGE_SIZE = 100;
 
@@ -196,10 +210,19 @@ export const sendMessage = async (
   );
 
 /** Rooms the signed-in user belongs to, with every member; RLS hides other people's rooms. */
-export const fetchDmMembers = async () =>
-  orThrow<DmMember[]>(
+export const fetchDmMembers = async () => {
+  const members = orThrow<DmMember[]>(
     await messapp.from("dm_members").select("dm_room_id, profile_id")
   );
+  const userId = await signedInUserId();
+  if (userId) {
+    for (const [peer, room] of pairRooms(members, userId)) {
+      if (!knownRooms.has(`${userId}:${peer}`))
+        knownRooms.set(`${userId}:${peer}`, room);
+    }
+  }
+  return members;
+};
 
 export const fetchLastMessage = async (roomId: string) =>
   orThrow<DmMessage[]>(
