@@ -108,7 +108,12 @@ fn target_directories(download_root: &Path, wine_prefix: Option<&Path>) -> Vec<P
     if cfg!(target_os = "linux") {
         let default = std::env::var("WINEPREFIX").ok().or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.wine"))).unwrap_or_default();
         let prefixes = unique(wine_prefix.map(|p| p.to_string_lossy().into_owned()).into_iter().chain([default]));
-        return prefixes.iter().flat_map(|p| WINE_DRIVE_C_GAME_FOLDERS.iter().map(move |f| Path::new(p).join("drive_c").join(f))).collect();
+        // the downloads folder is the installer's G: drive (map_games_drive), so games installed there are found too
+        return prefixes
+            .iter()
+            .flat_map(|p| WINE_DRIVE_C_GAME_FOLDERS.iter().map(move |f| Path::new(p).join("drive_c").join(f)))
+            .chain([download_root.to_path_buf()])
+            .collect();
     }
     Vec::new()
 }
@@ -317,7 +322,7 @@ fn read_elevated_output(output: &str) -> Outcome {
 }
 
 #[cfg(windows)]
-fn spawn_installer(installer: &Path, _wine_prefix: Option<&str>) -> Option<Waiter> {
+fn spawn_installer(installer: &Path, _wine_prefix: Option<&str>, _games_root: &Path) -> Option<Waiter> {
     use std::os::windows::process::CommandExt;
     const ERROR_ELEVATION_REQUIRED: i32 = 740;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -371,10 +376,31 @@ fn spawn_installer(installer: &Path, _wine_prefix: Option<&str>) -> Option<Waite
 
 // shortcut: Linux runs the installer with plain `wine`, not umu-run/Proton, and only in the game's
 // own prefix setting (no per-game default prefix); port both with the Linux launch path.
+/// Maps the prefix's G: drive to the games folder, so an installer's folder picker offers it.
+/// Leaves an existing G: alone: it may be the user's own mapping.
 #[cfg(not(windows))]
-fn spawn_installer(installer: &Path, wine_prefix: Option<&str>) -> Option<Waiter> {
+fn map_games_drive(prefix: &Path, games_root: &Path) {
+    let devices = prefix.join("dosdevices");
+    let drive = devices.join("g:");
+    if drive.symlink_metadata().is_ok() || !games_root.is_dir() {
+        return;
+    }
+    if let Err(e) = fs::create_dir_all(&devices).and_then(|_| std::os::unix::fs::symlink(games_root, &drive)) {
+        eprintln!("[GameInstaller] could not map G: to {}: {e}", games_root.display());
+    }
+}
+
+#[cfg(not(windows))]
+fn spawn_installer(installer: &Path, wine_prefix: Option<&str>, games_root: &Path) -> Option<Waiter> {
     if !cfg!(target_os = "linux") {
         return None;
+    }
+    let prefix = wine_prefix
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("WINEPREFIX").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".wine")));
+    if let Some(prefix) = &prefix {
+        map_games_drive(prefix, games_root);
     }
     let mut command = Command::new("wine");
     command.arg(installer).current_dir(installer.parent().unwrap_or(Path::new("."))).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
@@ -494,6 +520,7 @@ pub async fn open(app: &AppHandle, shop: &str, object_id: &str) -> Result<bool, 
     runs().running.insert(key.clone(), started_at);
     stop_polling(&key);
 
+    let games_root = download["downloadPath"].as_str().map(PathBuf::from).unwrap_or_else(|| root.clone());
     let lookup = download.clone();
     let found = tauri::async_runtime::spawn_blocking(move || installer::download_installer(&lookup, &root)).await.ok().flatten();
     let Some(installer_path) = found else {
@@ -505,7 +532,7 @@ pub async fn open(app: &AppHandle, shop: &str, object_id: &str) -> Result<bool, 
         json!({ "installerLaunched": true, "installerRunning": running, "installerStartedAt": started_at, "installerPath": installer_path.to_string_lossy() })
     };
 
-    let Some(waiter) = spawn_installer(&installer_path, wine_prefix.as_deref()) else {
+    let Some(waiter) = spawn_installer(&installer_path, wine_prefix.as_deref(), &games_root) else {
         release(&mut runs().running, &key, started_at);
         let launched = app.opener().open_path(installer_path.to_string_lossy(), None::<&str>).is_ok();
         if launched {
@@ -619,6 +646,23 @@ mod tests {
         let since = now_ms();
         assert_eq!(folders_changed_since(&[dir.clone()], since, &[&dir.join("Downloads")]), vec![dir.join("New Game")]);
         assert!(folders_changed_since(&[dir.clone()], since + 60_000, &[]).is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn games_drive_maps_once_and_keeps_an_existing_mapping() {
+        let dir = temp_dir("games-drive");
+        let (prefix, games, other) = (dir.join("pfx"), dir.join("Games"), dir.join("Other"));
+        fs::create_dir_all(&games).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        map_games_drive(&prefix, &games);
+        assert_eq!(fs::read_link(prefix.join("dosdevices/g:")).unwrap(), games);
+        fs::remove_file(prefix.join("dosdevices/g:")).unwrap();
+        std::os::unix::fs::symlink(&other, prefix.join("dosdevices/g:")).unwrap();
+        map_games_drive(&prefix, &games);
+        assert_eq!(fs::read_link(prefix.join("dosdevices/g:")).unwrap(), other);
+        assert!(target_directories(&games, Some(&prefix)).contains(&games));
         fs::remove_dir_all(&dir).unwrap();
     }
 }
