@@ -636,8 +636,14 @@ pub async fn recheck(app: &AppHandle, shop: &str, object_id: &str) -> bool {
         }
         runs.last_recheck.insert(key.clone(), now);
     }
-    let wine_prefix = game["winePrefixPath"].as_str().filter(|p| !p.is_empty());
-    let found = search_and_bind(app, shop, object_id, started_at, wine_prefix).await;
+    // The prefix the installer ran in (see open), so a later check looks in the same place.
+    let wine_prefix = if cfg!(target_os = "linux") {
+        let prefs = app.state::<Store>().get("", "userPreferences").unwrap_or_default();
+        Some(crate::proton::prefix_for(&game, &prefs, &key).to_string_lossy().into_owned())
+    } else {
+        game["winePrefixPath"].as_str().filter(|p| !p.is_empty()).map(String::from)
+    };
+    let found = search_and_bind(app, shop, object_id, started_at, wine_prefix.as_deref()).await;
     if found {
         runs().last_recheck.remove(&key);
         eprintln!("[GameInstaller] found the installed executable for {object_id} on a later check");

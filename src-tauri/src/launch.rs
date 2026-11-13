@@ -18,7 +18,7 @@ pub const LAUNCHER_LABEL: &str = "game-launcher";
 
 /// Latest status per game and group ("compatibility" / "achievements"), as game-launcher-status.ts keeps them.
 #[derive(Default)]
-pub struct LauncherStatuses(Mutex<HashMap<String, Vec<(String, Value)>>>);
+pub struct LauncherStatuses(Mutex<HashMap<String, Vec<(String, Value)>>>, Mutex<std::collections::HashSet<String>>);
 
 impl LauncherStatuses {
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<(String, Value)>>> {
@@ -31,6 +31,16 @@ impl LauncherStatuses {
 
     pub fn clear(&self, key: &str) {
         self.lock().remove(key);
+        self.detected().remove(key);
+    }
+
+    fn detected(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
+        self.1.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// wasGameLauncherGameDetected: stays true after the game closes, until the next launch.
+    pub fn was_detected(&self, key: &str) -> bool {
+        self.detected().contains(key)
     }
 
     pub fn send(&self, app: &AppHandle, key: &str, status: &str) {
@@ -38,6 +48,9 @@ impl LauncherStatuses {
     }
 
     pub fn send_detail(&self, app: &AppHandle, key: &str, status: &str, detail: Option<&str>) {
+        if status == "game_started" {
+            self.detected().insert(key.to_string());
+        }
         let group = if matches!(status, "preparing_compatibility_layer" | "compatibility_layer_ready" | "compatibility_layer_failed" | "game_started") {
             "compatibility"
         } else {
@@ -242,16 +255,23 @@ pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_
         // Opening an .exe on Linux hands it to the desktop's default app (a browser downloads it).
         let steam_url = steam_run_url(shop, object_id).filter(|_| crate::proton::is_steam_install(&parsed));
         let data_dir = app.path().chimaera_data_dir().map_err(|e| e.to_string())?;
-        let umu = crate::umu_updater::umu_program(&data_dir);
-        // As upstream: each launch also checks for a newer managed umu-run, in the background.
-        tauri::async_runtime::spawn(crate::umu_updater::check_for_updates(data_dir));
+        let mut umu = crate::umu_updater::umu_program(&data_dir);
+        if umu.is_none() && steam_url.is_none() {
+            // Upstream always has its bundled umu-run; Chimaera fetches one first, so wait for it here.
+            app.state::<LauncherStatuses>().send_detail(app, &key, "preparing_compatibility_layer", Some("Downloading umu-launcher"));
+            crate::umu_updater::check_for_updates(data_dir.clone()).await;
+            umu = crate::umu_updater::umu_program(&data_dir);
+        } else {
+            // As upstream: each launch also checks for a newer managed umu-run, in the background.
+            tauri::async_runtime::spawn(crate::umu_updater::check_for_updates(data_dir));
+        }
         let result = match steam_url {
             Some(url) => app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string()),
             None if umu.is_some() => match proton_launch(app, &store, &key, umu.as_deref().unwrap_or_default(), steam_run_url(shop, object_id).map(|_| object_id), &parsed, launch.clone(), cwd).await {
                 Ok(()) => Ok(()),
                 Err(umu_error) => wine_fallback(app, &store, &key, launch, cwd, umu_error),
             },
-            None => spawn_detached(&wine_command(launch), cwd).map_err(|e| e.to_string()),
+            None => wine_fallback(app, &store, &key, launch, cwd, "umu-run is not installed".into()),
         };
         if let Err(error) = result {
             eprintln!("[launch] failed to launch {key}: {error}");
@@ -275,8 +295,10 @@ async fn proton_launch(app: &AppHandle, store: &Store, key: &str, umu: &[String]
     app.state::<LauncherStatuses>().send(app, key, "preparing_compatibility_layer");
     let prefix = crate::proton::prefix_for(&game, &prefs, key);
     std::fs::create_dir_all(&prefix).map_err(|e| format!("cannot create prefix {}: {e}", prefix.display()))?;
-    if game["winePrefixPath"].as_str().is_none_or(str::is_empty) {
-        crate::proton::kill_stale_prefix_processes(&prefix);
+    // Only when the game is not running: a second Play must not kill the one already open.
+    if game["winePrefixPath"].as_str().is_none_or(str::is_empty) && !app.state::<crate::watcher::Sessions>().contains(key) {
+        let stale = prefix.clone();
+        let _ = tokio::task::spawn_blocking(move || crate::proton::kill_stale_prefix_processes(&stale)).await;
     }
     // The global switch in Settings > Compatibility or the game's own switch turns each tool on, as upstream does.
     let on = |k: &str| game[k].as_bool().unwrap_or(false) || prefs[k].as_bool().unwrap_or(false);
@@ -287,7 +309,12 @@ async fn proton_launch(app: &AppHandle, store: &Store, key: &str, umu: &[String]
     let log = crate::umu_launch::log_path(&logs, key);
     let pending = crate::umu_launch::launch(&command, cwd, &log, crate::umu_launch::QUICK_EXIT, umu_hooks(app, key)).map_err(|e| format!("failed to spawn umu-run ({}): {e}", command.command))?;
     // The watcher sends game_started once it sees the game, as upstream's process watcher does.
-    tokio::task::spawn_blocking(move || pending.wait()).await.map_err(|e| e.to_string())?.map(|_| ()).map_err(|early| early.to_string())
+    match tokio::task::spawn_blocking(move || pending.wait()).await.map_err(|e| e.to_string())? {
+        Ok(_) => Ok(()),
+        // A launcher stub that exits 0 with a clean log already started the game; wine must not start it twice.
+        Err(early) if early.code == Some(0) && early.failure.is_none() => Ok(()),
+        Err(early) => Err(early.to_string()),
+    }
 }
 
 /// launchWindowsBinaryOnLinux: when umu-run fails, plain Wine in the same prefix gets a try.
@@ -323,7 +350,7 @@ fn umu_hooks(app: &AppHandle, key: &str) -> crate::umu_launch::Hooks {
                 UmuStatus::Ready => statuses.send(&status_app, &status_key, "compatibility_layer_ready"),
             }
         }),
-        game_detected: Box::new(move || detect_app.state::<crate::watcher::Sessions>().contains(&detect_key)),
+        game_detected: Box::new(move || detect_app.state::<LauncherStatuses>().was_detected(&detect_key)),
         on_exit: Box::new(|_| {}),
     }
 }

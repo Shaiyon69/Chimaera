@@ -93,8 +93,19 @@ pub fn prefix_for(game: &Value, prefs: &Value, key: &str) -> PathBuf {
     if let Some(own) = game["winePrefixPath"].as_str().filter(|p| !p.is_empty()) {
         return PathBuf::from(own);
     }
+    if let Some(steam) = steam_compat_prefix(game["executablePath"].as_str().unwrap_or_default(), key) {
+        return steam;
+    }
     let folder: String = key.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
     default_prefix_root(prefs).join(folder)
+}
+
+/// prepareSteamCompatibilityForCloudSave: a game Steam installed runs (and saves) in
+/// `<library>/steamapps/compatdata/<appid>/pfx`, not in a Chimaera prefix.
+pub fn steam_compat_prefix(exe: &str, key: &str) -> Option<PathBuf> {
+    let app_id = key.strip_prefix("steam:").filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))?;
+    let library = &exe[..exe.find("/steamapps/common/")?];
+    Some(Path::new(library).join("steamapps/compatdata").join(app_id).join("pfx"))
 }
 
 /// A game Steam installed itself, so Steam's own Proton choice should run it.
@@ -217,6 +228,14 @@ mod tests {
         assert_eq!(windows_user_profile(reg).as_deref(), Some("C:/users/steamuser"));
         assert_eq!(windows_user_profile("[Volatile Environment]\n\"USERPROFILE\"=\"\"\n"), None);
         assert_eq!(windows_user_profile(""), None);
+    }
+
+    #[test]
+    fn steam_installs_use_steams_prefix() {
+        let game = json!({ "executablePath": "/mnt/lib/steamapps/common/Foo/foo.exe" });
+        assert_eq!(prefix_for(&game, &json!({ "defaultWinePrefixPath": "/pfx" }), "steam:42"), PathBuf::from("/mnt/lib/steamapps/compatdata/42/pfx"));
+        assert_eq!(prefix_for(&json!({ "executablePath": "/home/u/Games/Foo/foo.exe" }), &json!({ "defaultWinePrefixPath": "/pfx" }), "steam:42"), PathBuf::from("/pfx/steam_42"));
+        assert_eq!(steam_compat_prefix("/mnt/lib/steamapps/common/Foo/foo.exe", "custom:42"), None);
     }
 
     #[test]
