@@ -420,7 +420,7 @@ fn spawn_installer(installer: &Path, compat: &Compat, games_root: &Path) -> Opti
         let plain = crate::launch::LaunchCommand { command: exe.clone(), args: Vec::new(), env: Vec::new() };
         let command = crate::proton::umu_command(umu, plain, &exe, compat.proton.as_deref(), prefix, compat.steam_id.as_deref(), false, false);
         let (tx, rx) = std::sync::mpsc::channel();
-        let hooks = crate::umu_launch::Hooks { on_status: Box::new(|_| {}), game_detected: Box::new(|| false), on_exit: Box::new(move |code| drop(tx.send(code))) };
+        let hooks = crate::umu_launch::Hooks { on_status: Box::new(|_| {}), game_detected: Box::new(|| false), on_exit: Box::new(move |code| { let _ = tx.send(code); }) };
         match crate::umu_launch::launch(&command, cwd, log, crate::umu_launch::QUICK_EXIT, hooks).map(crate::umu_launch::Pending::wait) {
             Ok(Ok(_)) => return Some(Box::new(move || Outcome::Exit(rx.recv().ok().flatten()))),
             // A quick exit with nothing wrong in umu's output is an installer that finished.
