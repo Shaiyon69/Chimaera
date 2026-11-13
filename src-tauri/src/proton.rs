@@ -28,6 +28,37 @@ fn proton_dirs_in(dir: &Path, filter: impl Fn(&str) -> bool) -> Vec<(String, Pat
         .collect()
 }
 
+const FLATPAK_TOOL_PREFIX: &str = "com.valvesoftware.Steam.CompatibilityTool.";
+
+fn dir_names(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok).filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()
+}
+
+/// findFlatpakCompatibilityTools: Proton builds installed as Flatpak Steam extensions
+/// (`<root>/runtime/com.valvesoftware.Steam.CompatibilityTool.<name>/<arch>/<branch>/active/files`).
+pub fn flatpak_tools(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
+    let mut tools = Vec::new();
+    for runtime in roots.iter().map(|r| r.join("runtime")) {
+        for extension in dir_names(&runtime).into_iter().filter(|n| n.starts_with(FLATPAK_TOOL_PREFIX)) {
+            let root = runtime.join(&extension);
+            for arch in dir_names(&root) {
+                for branch in dir_names(&root.join(&arch)) {
+                    let Some(path) = std::fs::canonicalize(root.join(&arch).join(&branch).join("active/files")).ok().filter(|p| is_proton_dir(p)) else { continue };
+                    let label = if branch == "stable" { String::new() } else { format!(" {branch}") };
+                    let display = std::fs::read_to_string(path.join("compatibilitytool.vdf")).ok().and_then(|vdf| {
+                        let rest = &vdf[vdf.find("\"display_name\"")? + "\"display_name\"".len()..];
+                        let start = rest.find('"')? + 1;
+                        let end = start + rest[start..].find('"')?;
+                        Some(rest[start..end].trim().to_string()).filter(|n| !n.is_empty())
+                    });
+                    tools.push((display.unwrap_or_else(|| format!("{} (Flatpak{label})", &extension[FLATPAK_TOOL_PREFIX.len()..])), path));
+                }
+            }
+        }
+    }
+    tools
+}
+
 /// `getInstalledProtonVersions`: `ProtonVersion[]` with the newest version first.
 pub fn installed_versions() -> Vec<Value> {
     let mut found: Vec<(String, PathBuf, &str)> = Vec::new();
@@ -42,6 +73,8 @@ pub fn installed_versions() -> Vec<Value> {
     for library in libraries {
         found.extend(proton_dirs_in(&library.join("steamapps/common"), |n| n.starts_with("Proton")).into_iter().map(|(n, p)| (n, p, "steam")));
     }
+    let flatpak_roots = [PathBuf::from("/var/lib/flatpak"), home_dir().join(".local/share/flatpak")];
+    found.extend(flatpak_tools(&flatpak_roots).into_iter().map(|(n, p)| (n, p, "compatibility_tools")));
     found.sort_by(|a, b| natural_cmp(&b.0, &a.0));
     found.dedup_by(|a, b| a.1 == b.1);
     found.into_iter().map(|(name, path, source)| json!({ "name": name, "path": path.to_string_lossy(), "source": source })).collect()
@@ -228,6 +261,25 @@ mod tests {
         assert_eq!(windows_user_profile(reg).as_deref(), Some("C:/users/steamuser"));
         assert_eq!(windows_user_profile("[Volatile Environment]\n\"USERPROFILE\"=\"\"\n"), None);
         assert_eq!(windows_user_profile(""), None);
+    }
+
+    #[test]
+    fn finds_flatpak_proton_extensions() {
+        let root = std::env::temp_dir().join(format!("chimaera-flatpak-{}", uuid::Uuid::new_v4()));
+        let tool = |name: &str, branch: &str| root.join("runtime").join(format!("{FLATPAK_TOOL_PREFIX}{name}")).join("x86_64").join(branch).join("active/files");
+        for (dir, vdf) in [(tool("Proton-GE", "stable"), Some("\"compat_tools\" { \"GE\" { \"display_name\" \"GE-Proton10-25\" } }")), (tool("Proton", "beta"), None)] {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("proton"), "").unwrap();
+            std::fs::write(dir.join("toolmanifest.vdf"), "").unwrap();
+            if let Some(vdf) = vdf {
+                std::fs::write(dir.join("compatibilitytool.vdf"), vdf).unwrap();
+            }
+        }
+        std::fs::create_dir_all(root.join("runtime/org.other.Thing/x86_64/stable/active/files")).unwrap();
+        let mut names: Vec<String> = flatpak_tools(&[root.clone()]).into_iter().map(|(n, _)| n).collect();
+        names.sort();
+        assert_eq!(names, ["GE-Proton10-25", "Proton (Flatpak beta)"]);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -135,15 +135,30 @@ fn wine_prefix(app: &AppHandle, shop: &str, object_id: &str) -> Result<Option<St
     Ok(Some(prefix.to_string_lossy().into_owned()))
 }
 
-/// prepareWinePrefixIfNeeded: a game never launched has no prefix to restore its saves into yet.
-async fn prepare_prefix(app: &AppHandle, shop: &str, object_id: &str, prefix: PathBuf) -> Result<(), String> {
+/// prepareWinePrefixIfNeeded: a game never launched has no prefix yet, and Ludusavi needs its
+/// user.reg to find the saves. umu-run builds it as upstream does; plain `wineboot` when there is no umu-run.
+async fn ensure_prefix(app: &AppHandle, shop: &str, object_id: &str, prefix: Option<&str>) -> Result<(), String> {
+    let Some(prefix) = prefix.map(PathBuf::from).filter(|p| !crate::games::is_wine_prefix(p)) else { return Ok(()) };
     let store = app.state::<Store>();
     let key = crate::games::game_key(shop, object_id);
     let proton = crate::proton::resolve(&store.get("games", &key)?, &store.get("", "userPreferences")?, &crate::proton::installed_versions());
     let log = crate::umu_launch::log_path(&app_data(app)?.join("logs"), &key);
     let steam_id = (shop == "steam").then(|| object_id.to_string());
-    let umu = crate::umu_updater::umu_program(&app_data(app)?).ok_or("umu-run is not installed")?;
-    tauri::async_runtime::spawn_blocking(move || crate::umu_launch::prepare_prefix(&umu, &prefix, proton.as_deref(), steam_id.as_deref(), &log)).await.map_err(|e| e.to_string())?
+    let umu = crate::umu_updater::umu_program(&app_data(app)?);
+    tauri::async_runtime::spawn_blocking(move || match umu {
+        Some(umu) => crate::umu_launch::prepare_prefix(&umu, &prefix, proton.as_deref(), steam_id.as_deref(), &log),
+        None => wineboot(&prefix),
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn wineboot(prefix: &Path) -> Result<(), String> {
+    fs::create_dir_all(prefix).map_err(|e| e.to_string())?;
+    let mut command = std::process::Command::new("wineboot");
+    crate::proton::use_host_env(&mut command).arg("--init").env("WINEPREFIX", prefix).env("WINEDEBUG", "-all").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    let status = command.status().map_err(|e| format!("neither umu-run nor wine is installed: {e}"))?;
+    if crate::games::is_wine_prefix(prefix) { Ok(()) } else { Err(format!("wineboot left an invalid prefix ({status})")) }
 }
 
 /// getWindowsLikeUserProfilePath: the profile saves are relative to, inside the prefix on Linux.
@@ -237,6 +252,7 @@ fn backup_label(language: &str, created_at: &str, automatic: bool) -> String {
 /// `createLocalSaveBackup`: Ludusavi backup, packed into a tar, stored with its metadata.
 pub async fn create(app: &AppHandle, shop: &str, object_id: &str, label: Option<&str>, automatic: bool) -> Result<Value, String> {
     let prefix = wine_prefix(app, shop, object_id)?;
+    ensure_prefix(app, shop, object_id, prefix.as_deref()).await?;
     let profile = user_profile(app, prefix.as_deref())?;
     let (binary, config) = ludusavi(app)?;
     let temp = app_data(app)?.join("Backups");
@@ -277,9 +293,7 @@ fn pack(dir: &Path, tar_path: &Path) -> Result<(), String> {
 /// `restoreLocalSaveBackup`: unpack the tar and move each save back where the game reads it.
 pub async fn restore(app: &AppHandle, shop: &str, object_id: &str, file: &str) -> Result<(), String> {
     let prefix = wine_prefix(app, shop, object_id)?;
-    if let Some(prefix) = prefix.as_deref().filter(|p| !crate::games::is_wine_prefix(Path::new(p))) {
-        prepare_prefix(app, shop, object_id, PathBuf::from(prefix)).await?;
-    }
+    ensure_prefix(app, shop, object_id, prefix.as_deref()).await?;
     let dir = game_dir(app, shop, object_id)?;
     let tar_path = backup_path(&dir, file)?;
     let backup = list_in(&dir).into_iter().find(|b| b["file"] == file).ok_or("save-backup/not-found")?;
