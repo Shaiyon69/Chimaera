@@ -241,9 +241,13 @@ pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_
     if !cfg!(windows) && is_windows_binary(&parsed) {
         // Opening an .exe on Linux hands it to the desktop's default app (a browser downloads it).
         let steam_url = steam_run_url(shop, object_id).filter(|_| crate::proton::is_steam_install(&parsed));
+        let data_dir = app.path().chimaera_data_dir().map_err(|e| e.to_string())?;
+        let umu = crate::umu_updater::umu_program(&data_dir);
+        // As upstream: each launch also checks for a newer managed umu-run, in the background.
+        tauri::async_runtime::spawn(crate::umu_updater::check_for_updates(data_dir));
         let result = match steam_url {
             Some(url) => app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string()),
-            None if crate::proton::on_path("umu-run") => match proton_launch(app, &store, &key, steam_run_url(shop, object_id).map(|_| object_id), &parsed, launch.clone(), cwd).await {
+            None if umu.is_some() => match proton_launch(app, &store, &key, umu.as_deref().unwrap_or_default(), steam_run_url(shop, object_id).map(|_| object_id), &parsed, launch.clone(), cwd).await {
                 Ok(()) => Ok(()),
                 Err(umu_error) => wine_fallback(app, &store, &key, launch, cwd, umu_error),
             },
@@ -264,7 +268,7 @@ pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_
 }
 
 /// Runs a Windows game through umu-run with the game's Proton and its own prefix.
-async fn proton_launch(app: &AppHandle, store: &Store, key: &str, steam_id: Option<&str>, exe: &str, launch: LaunchCommand, cwd: &Path) -> Result<(), String> {
+async fn proton_launch(app: &AppHandle, store: &Store, key: &str, umu: &[String], steam_id: Option<&str>, exe: &str, launch: LaunchCommand, cwd: &Path) -> Result<(), String> {
     let game = store.get("games", key)?;
     let prefs = store.get("", "userPreferences")?;
     let proton = crate::proton::resolve(&game, &prefs, &crate::proton::installed_versions());
@@ -278,7 +282,7 @@ async fn proton_launch(app: &AppHandle, store: &Store, key: &str, steam_id: Opti
     let on = |k: &str| game[k].as_bool().unwrap_or(false) || prefs[k].as_bool().unwrap_or(false);
     let gamemode = on("autoRunGamemode") && crate::proton::on_path("gamemoderun");
     let mangohud = on("autoRunMangohud") && crate::proton::on_path("mangohud");
-    let command = crate::proton::umu_command(launch, exe, proton.as_deref(), &prefix, steam_id, gamemode, mangohud);
+    let command = crate::proton::umu_command(umu, launch, exe, proton.as_deref(), &prefix, steam_id, gamemode, mangohud);
     let logs = app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join("logs");
     let log = crate::umu_launch::log_path(&logs, key);
     let pending = crate::umu_launch::launch(&command, cwd, &log, crate::umu_launch::QUICK_EXIT, umu_hooks(app, key)).map_err(|e| format!("failed to spawn umu-run ({}): {e}", command.command))?;

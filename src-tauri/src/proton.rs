@@ -182,10 +182,10 @@ pub fn on_path(bin: &str) -> bool {
 
 /// Puts `umu-run` in front of the game, inside any `%command%` wrapper the user set,
 /// plus gamemoderun when the game asks for it.
-pub fn umu_command(launch: LaunchCommand, exe: &str, proton: Option<&Path>, prefix: &Path, steam_app_id: Option<&str>, gamemode: bool, mangohud: bool) -> LaunchCommand {
+pub fn umu_command(umu: &[String], launch: LaunchCommand, exe: &str, proton: Option<&Path>, prefix: &Path, steam_app_id: Option<&str>, gamemode: bool, mangohud: bool) -> LaunchCommand {
     let mut argv: Vec<String> = std::iter::once(launch.command).chain(launch.args).collect();
     let at = argv.iter().position(|a| a == exe).unwrap_or(0);
-    argv.insert(at, "umu-run".into());
+    argv.splice(at..at, umu.iter().cloned());
     if gamemode {
         argv.insert(0, "gamemoderun".into());
     }
@@ -263,12 +263,12 @@ mod tests {
     #[test]
     fn wraps_the_exe_with_umu_inside_user_wrappers() {
         let launch = LaunchCommand { command: "gamescope".into(), args: vec!["-f".into(), "--".into(), "/g/a.exe".into(), "-x".into()], env: vec![("A".into(), "1".into())] };
-        let cmd = umu_command(launch, "/g/a.exe", Some(Path::new("/p/GE")), Path::new("/pfx"), Some("105600"), true, false);
+        let cmd = umu_command(&["umu-run".into()], launch, "/g/a.exe", Some(Path::new("/p/GE")), Path::new("/pfx"), Some("105600"), true, false);
         assert_eq!(cmd.command, "gamemoderun");
         assert_eq!(cmd.args, ["gamescope", "-f", "--", "umu-run", "/g/a.exe", "-x"]);
         assert_eq!(cmd.env, [("PROTON_LOG".into(), "1".into()), ("WINEPREFIX".into(), "/pfx".into()), ("PROTONPATH".into(), "/p/GE".into()), ("GAMEID".into(), "umu-105600".into()), ("A".to_string(), "1".to_string())]);
-        let plain = umu_command(LaunchCommand { command: "/g/a.exe".into(), args: vec![], env: vec![] }, "/g/a.exe", None, Path::new("/x"), None, false, true);
-        assert_eq!((plain.command.as_str(), plain.args.as_slice()), ("umu-run", ["/g/a.exe".to_string()].as_slice()));
+        let plain = umu_command(&["python3".into(), "/d/umu-run".into()], LaunchCommand { command: "/g/a.exe".into(), args: vec![], env: vec![] }, "/g/a.exe", None, Path::new("/x"), None, false, true);
+        assert_eq!((plain.command.as_str(), plain.args.as_slice()), ("python3", ["/d/umu-run".to_string(), "/g/a.exe".to_string()].as_slice()));
         assert!(plain.env.contains(&("MANGOHUD".into(), "1".into())));
     }
 

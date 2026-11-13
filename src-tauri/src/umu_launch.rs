@@ -207,7 +207,7 @@ pub fn evaluate_preparation(code: Option<i32>, signal: Option<i32>, prefix_valid
 }
 
 /// Umu.preparePrefix: `umu-run createprefix`, waited on, with its output in `log`.
-pub fn prepare_prefix(prefix: &Path, proton: Option<&Path>, steam_id: Option<&str>, log: &Path) -> Result<(), String> {
+pub fn prepare_prefix(umu: &[String], prefix: &Path, proton: Option<&Path>, steam_id: Option<&str>, log: &Path) -> Result<(), String> {
     if let Some(dir) = log.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -217,7 +217,8 @@ pub fn prepare_prefix(prefix: &Path, proton: Option<&Path>, steam_id: Option<&st
     let mut env = vec![("PROTON_LOG".to_string(), "1".to_string()), ("WINEPREFIX".to_string(), prefix.to_string_lossy().into_owned())];
     env.extend(steam_id.map(|id| ("GAMEID".to_string(), format!("umu-{id}"))));
     env.extend(proton.map(|p| ("PROTONPATH".to_string(), p.to_string_lossy().into_owned())));
-    let cmd = LaunchCommand { command: "umu-run".into(), args: vec!["createprefix".into()], env };
+    let (program, prefix_args) = umu.split_first().ok_or("umu-run is not installed")?;
+    let cmd = LaunchCommand { command: program.clone(), args: prefix_args.iter().cloned().chain(["createprefix".to_string()]).collect(), env };
     let mut file = OpenOptions::new().create(true).append(true).open(log).map_err(|e| e.to_string())?;
     writeln!(file, "\n[{}] Preparing Wine prefix with umu-run\nCommand: {}", crate::library::iso_now(), command_line(&cmd)).map_err(|e| e.to_string())?;
     let start = file.metadata().map_err(|e| e.to_string())?.len();

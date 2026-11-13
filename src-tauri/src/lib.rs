@@ -56,6 +56,7 @@ mod processed_image;
 mod proton;
 mod umu_launch;
 mod umu_monitor;
+mod umu_updater;
 mod retro_achievements;
 mod retroarch;
 mod rom_scan;
@@ -244,6 +245,12 @@ pub fn run() {
                 });
                 let app = handle;
                 tauri::async_runtime::spawn(async move { optiscaler::auto_update(&app).await });
+            }
+            if cfg!(target_os = "linux") {
+                // As upstream at startup; returns at once when a system umu-run is installed.
+                if let Ok(dir) = app.path().chimaera_data_dir() {
+                    tauri::async_runtime::spawn(umu_updater::check_for_updates(dir));
+                }
             }
             {
                 // After the window is up, so the renderer hears the sync progress.

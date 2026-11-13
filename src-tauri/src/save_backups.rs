@@ -142,7 +142,8 @@ async fn prepare_prefix(app: &AppHandle, shop: &str, object_id: &str, prefix: Pa
     let proton = crate::proton::resolve(&store.get("games", &key)?, &store.get("", "userPreferences")?, &crate::proton::installed_versions());
     let log = crate::umu_launch::log_path(&app_data(app)?.join("logs"), &key);
     let steam_id = (shop == "steam").then(|| object_id.to_string());
-    tauri::async_runtime::spawn_blocking(move || crate::umu_launch::prepare_prefix(&prefix, proton.as_deref(), steam_id.as_deref(), &log)).await.map_err(|e| e.to_string())?
+    let umu = crate::umu_updater::umu_program(&app_data(app)?).ok_or("umu-run is not installed")?;
+    tauri::async_runtime::spawn_blocking(move || crate::umu_launch::prepare_prefix(&umu, &prefix, proton.as_deref(), steam_id.as_deref(), &log)).await.map_err(|e| e.to_string())?
 }
 
 /// getWindowsLikeUserProfilePath: the profile saves are relative to, inside the prefix on Linux.
