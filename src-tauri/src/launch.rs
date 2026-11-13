@@ -165,7 +165,7 @@ fn spawn_detached(launch: &LaunchCommand, cwd: &Path) -> std::io::Result<()> {
         cmd.args(&launch.args);
         cmd
     };
-    command.current_dir(cwd).envs(launch.env.iter().cloned()).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    crate::proton::use_host_env(&mut command).current_dir(cwd).envs(launch.env.iter().cloned()).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

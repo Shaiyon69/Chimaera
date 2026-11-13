@@ -403,7 +403,7 @@ fn spawn_installer(installer: &Path, wine_prefix: Option<&str>, games_root: &Pat
         map_games_drive(prefix, games_root);
     }
     let mut command = Command::new("wine");
-    command.arg(installer).current_dir(installer.parent().unwrap_or(Path::new("."))).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    crate::proton::use_host_env(&mut command).arg(installer).current_dir(installer.parent().unwrap_or(Path::new("."))).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     if let Some(prefix) = wine_prefix {
         command.env("WINEPREFIX", prefix);
     }

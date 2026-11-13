@@ -98,6 +98,36 @@ pub fn is_steam_install(exe: &str) -> bool {
     exe.contains("/steamapps/common/")
 }
 
+/// The AppImage points PYTHONHOME, LD_LIBRARY_PATH, GTK and GStreamer paths at its own
+/// bundle, which breaks host tools such as umu-run (Python) and wine. Returns the
+/// variables to change for a child: `None` removes one, `Some` sets it with the bundle's
+/// paths taken out.
+pub fn host_env_fixes(vars: impl IntoIterator<Item = (String, String)>, appdir: Option<&str>) -> Vec<(String, Option<String>)> {
+    let Some(appdir) = appdir.filter(|d| !d.is_empty()) else { return Vec::new() };
+    let mut fixes = Vec::new();
+    for (key, value) in vars {
+        if matches!(key.as_str(), "APPDIR" | "APPIMAGE" | "ARGV0" | "OWD" | "PYTHONDONTWRITEBYTECODE") {
+            fixes.push((key, None));
+        } else if value.contains(appdir) {
+            let kept: Vec<&str> = value.split(':').filter(|part| !part.is_empty() && !part.contains(appdir)).collect();
+            fixes.push((key, if kept.is_empty() { None } else { Some(kept.join(":")) }));
+        }
+    }
+    fixes
+}
+
+/// Gives a host tool the user's environment instead of the AppImage's.
+pub fn use_host_env(command: &mut std::process::Command) -> &mut std::process::Command {
+    let appdir = std::env::var("APPDIR").ok();
+    for (key, value) in host_env_fixes(std::env::vars(), appdir.as_deref()) {
+        match value {
+            Some(v) => command.env(key, v),
+            None => command.env_remove(key),
+        };
+    }
+    command
+}
+
 pub fn on_path(bin: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(bin).is_file()))
 }
@@ -127,6 +157,15 @@ pub fn umu_command(launch: LaunchCommand, exe: &str, proton: &Path, prefix: &Pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strips_appimage_env() {
+        let vars = [("PYTHONHOME", "/tmp/.mount_x/usr/"), ("PATH", "/tmp/.mount_x/usr/bin:/usr/bin"), ("HOME", "/home/u"), ("APPIMAGE", "/a.appimage"), ("LD_LIBRARY_PATH", "/tmp/.mount_x/usr/lib/:/tmp/.mount_x/lib")]
+            .map(|(k, v)| (k.to_string(), v.to_string()));
+        let fixes = host_env_fixes(vars.clone(), Some("/tmp/.mount_x"));
+        assert_eq!(fixes, [("PYTHONHOME".into(), None), ("PATH".into(), Some("/usr/bin".into())), ("APPIMAGE".into(), None), ("LD_LIBRARY_PATH".into(), None)]);
+        assert!(host_env_fixes(vars, None).is_empty());
+    }
 
     #[test]
     fn sorts_versions_newest_first() {

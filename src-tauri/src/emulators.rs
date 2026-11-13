@@ -471,7 +471,7 @@ pub fn open_winetricks(store: &Store, app_data: &Path, shop: &str, object_id: &s
             root.join(object_id)
         }
     };
-    Ok(Command::new("winetricks").env("WINEPREFIX", prefix).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().is_ok())
+    Ok(crate::proton::use_host_env(&mut Command::new("winetricks")).env("WINEPREFIX", prefix).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().is_ok())
 }
 
 #[cfg(test)]
