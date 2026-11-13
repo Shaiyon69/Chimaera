@@ -135,6 +135,16 @@ fn wine_prefix(app: &AppHandle, shop: &str, object_id: &str) -> Result<Option<St
     Ok(Some(prefix.to_string_lossy().into_owned()))
 }
 
+/// prepareWinePrefixIfNeeded: a game never launched has no prefix to restore its saves into yet.
+async fn prepare_prefix(app: &AppHandle, shop: &str, object_id: &str, prefix: PathBuf) -> Result<(), String> {
+    let store = app.state::<Store>();
+    let key = crate::games::game_key(shop, object_id);
+    let proton = crate::proton::resolve(&store.get("games", &key)?, &store.get("", "userPreferences")?, &crate::proton::installed_versions());
+    let log = crate::umu_launch::log_path(&app_data(app)?.join("logs"), &key);
+    let steam_id = (shop == "steam").then(|| object_id.to_string());
+    tauri::async_runtime::spawn_blocking(move || crate::umu_launch::prepare_prefix(&prefix, proton.as_deref(), steam_id.as_deref(), &log)).await.map_err(|e| e.to_string())?
+}
+
 /// getWindowsLikeUserProfilePath: the profile saves are relative to, inside the prefix on Linux.
 fn user_profile(app: &AppHandle, prefix: Option<&str>) -> Result<String, String> {
     match prefix {
@@ -266,6 +276,9 @@ fn pack(dir: &Path, tar_path: &Path) -> Result<(), String> {
 /// `restoreLocalSaveBackup`: unpack the tar and move each save back where the game reads it.
 pub async fn restore(app: &AppHandle, shop: &str, object_id: &str, file: &str) -> Result<(), String> {
     let prefix = wine_prefix(app, shop, object_id)?;
+    if let Some(prefix) = prefix.as_deref().filter(|p| !crate::games::is_wine_prefix(Path::new(p))) {
+        prepare_prefix(app, shop, object_id, PathBuf::from(prefix)).await?;
+    }
     let dir = game_dir(app, shop, object_id)?;
     let tar_path = backup_path(&dir, file)?;
     let backup = list_in(&dir).into_iter().find(|b| b["file"] == file).ok_or("save-backup/not-found")?;

@@ -197,6 +197,51 @@ pub fn launch(launch: &LaunchCommand, cwd: &Path, log: &Path, quick_exit: Durati
     Ok(Pending(rx))
 }
 
+/// evaluateUmuPrefixPreparation: a valid prefix is success, even after a non-zero exit.
+pub fn evaluate_preparation(code: Option<i32>, signal: Option<i32>, prefix_valid: bool) -> Result<bool, String> {
+    let n = |v: Option<i32>| v.map_or("null".to_string(), |v| v.to_string());
+    if prefix_valid {
+        return Ok(code != Some(0) || signal.is_some());
+    }
+    Err(format!("umu-run prefix preparation left an invalid prefix with code={} signal={}", n(code), n(signal)))
+}
+
+/// Umu.preparePrefix: `umu-run createprefix`, waited on, with its output in `log`.
+pub fn prepare_prefix(prefix: &Path, proton: Option<&Path>, steam_id: Option<&str>, log: &Path) -> Result<(), String> {
+    if let Some(dir) = log.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    if let Some(dir) = prefix.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let mut env = vec![("PROTON_LOG".to_string(), "1".to_string()), ("WINEPREFIX".to_string(), prefix.to_string_lossy().into_owned())];
+    env.extend(steam_id.map(|id| ("GAMEID".to_string(), format!("umu-{id}"))));
+    env.extend(proton.map(|p| ("PROTONPATH".to_string(), p.to_string_lossy().into_owned())));
+    let cmd = LaunchCommand { command: "umu-run".into(), args: vec!["createprefix".into()], env };
+    let mut file = OpenOptions::new().create(true).append(true).open(log).map_err(|e| e.to_string())?;
+    writeln!(file, "\n[{}] Preparing Wine prefix with umu-run\nCommand: {}", crate::library::iso_now(), command_line(&cmd)).map_err(|e| e.to_string())?;
+    let start = file.metadata().map_err(|e| e.to_string())?.len();
+    let mut command = Command::new(&cmd.command);
+    crate::proton::use_host_env(&mut command).args(&cmd.args).envs(cmd.env.iter().cloned()).current_dir(crate::classics_import::home_dir()).stdin(Stdio::null());
+    let status = command.stdout(file.try_clone().map_err(|e| e.to_string())?).stderr(file.try_clone().map_err(|e| e.to_string())?).status().map_err(|e| format!("failed to start umu-run createprefix: {e}"))?;
+    let mut monitor = UmuOutputMonitor::default();
+    monitor.feed(&LogTail { path: log.to_path_buf(), offset: start, pending: Vec::new() }.read());
+    monitor.flush();
+    #[cfg(unix)]
+    let signal = std::os::unix::process::ExitStatusExt::signal(&status);
+    #[cfg(not(unix))]
+    let signal = None;
+    match evaluate_preparation(status.code(), signal, crate::games::is_wine_prefix(prefix)) {
+        Ok(accepted_non_zero) => {
+            if accepted_non_zero {
+                eprintln!("[umu] createprefix exited with {status} but left a valid prefix at {}", prefix.display());
+            }
+            Ok(())
+        }
+        Err(message) => Err(monitor.failure_message().map_or(message.clone(), |f| format!("{message}: {f}"))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,6 +290,13 @@ mod tests {
         let (result, statuses, _) = run("sleep 1", Duration::from_millis(300));
         assert!(result.is_ok());
         assert_eq!(statuses.last(), Some(&UmuStatus::Ready));
+    }
+
+    #[test]
+    fn preparation_accepts_a_valid_prefix() {
+        assert_eq!(evaluate_preparation(Some(0), None, true), Ok(false));
+        assert_eq!(evaluate_preparation(Some(1), None, true), Ok(true));
+        assert_eq!(evaluate_preparation(None, Some(9), false), Err("umu-run prefix preparation left an invalid prefix with code=null signal=9".into()));
     }
 
     #[test]
