@@ -29,6 +29,10 @@ impl Sessions {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    pub fn contains(&self, key: &str) -> bool {
+        self.lock().contains_key(key)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.lock().is_empty()
     }

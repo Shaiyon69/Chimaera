@@ -141,7 +141,8 @@ pub fn umu_command(launch: LaunchCommand, exe: &str, proton: &Path, prefix: &Pat
     if gamemode {
         argv.insert(0, "gamemoderun".into());
     }
-    let mut env = vec![("WINEPREFIX".to_string(), prefix.to_string_lossy().into_owned()), ("PROTONPATH".to_string(), proton.to_string_lossy().into_owned())];
+    // PROTON_LOG as upstream: Proton writes ~/steam-<id>.log for bug reports.
+    let mut env = vec![("PROTON_LOG".to_string(), "1".to_string()), ("WINEPREFIX".to_string(), prefix.to_string_lossy().into_owned()), ("PROTONPATH".to_string(), proton.to_string_lossy().into_owned())];
     if let Some(id) = steam_app_id {
         // umu-database keys protonfixes by Steam app id.
         env.push(("GAMEID".into(), format!("umu-{id}")));
@@ -196,7 +197,7 @@ mod tests {
         let cmd = umu_command(launch, "/g/a.exe", Path::new("/p/GE"), Path::new("/pfx"), Some("105600"), true, false);
         assert_eq!(cmd.command, "gamemoderun");
         assert_eq!(cmd.args, ["gamescope", "-f", "--", "umu-run", "/g/a.exe", "-x"]);
-        assert_eq!(cmd.env, [("WINEPREFIX".into(), "/pfx".into()), ("PROTONPATH".into(), "/p/GE".into()), ("GAMEID".into(), "umu-105600".into()), ("A".to_string(), "1".to_string())]);
+        assert_eq!(cmd.env, [("PROTON_LOG".into(), "1".into()), ("WINEPREFIX".into(), "/pfx".into()), ("PROTONPATH".into(), "/p/GE".into()), ("GAMEID".into(), "umu-105600".into()), ("A".to_string(), "1".to_string())]);
         let plain = umu_command(LaunchCommand { command: "/g/a.exe".into(), args: vec![], env: vec![] }, "/g/a.exe", Path::new("/p"), Path::new("/x"), None, false, true);
         assert_eq!((plain.command.as_str(), plain.args.as_slice()), ("umu-run", ["/g/a.exe".to_string()].as_slice()));
         assert!(plain.env.contains(&("MANGOHUD".into(), "1".into())));

@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::games::{game_key, with_executable_path};
+use crate::data_location::DataDir;
 use crate::store::Store;
 
 const LAUNCH_DELAY_MS: u64 = 2_000;
@@ -33,12 +34,16 @@ impl LauncherStatuses {
     }
 
     pub fn send(&self, app: &AppHandle, key: &str, status: &str) {
+        self.send_detail(app, key, status, None);
+    }
+
+    pub fn send_detail(&self, app: &AppHandle, key: &str, status: &str, detail: Option<&str>) {
         let group = if matches!(status, "preparing_compatibility_layer" | "compatibility_layer_ready" | "compatibility_layer_failed" | "game_started") {
             "compatibility"
         } else {
             "achievements"
         };
-        let payload = json!({ "gameKey": key, "status": status, "detail": null });
+        let payload = json!({ "gameKey": key, "status": status, "detail": detail });
         let mut all = self.lock();
         let statuses = all.entry(key.to_string()).or_default();
         statuses.retain(|(g, _)| g != group);
@@ -235,7 +240,7 @@ pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_
         let steam_url = steam_run_url(shop, object_id).filter(|_| crate::proton::is_steam_install(&parsed));
         let result = match steam_url {
             Some(url) => app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string()),
-            None if crate::proton::on_path("umu-run") => proton_launch(app, &store, &key, steam_run_url(shop, object_id).map(|_| object_id), &parsed, launch, cwd),
+            None if crate::proton::on_path("umu-run") => proton_launch(app, &store, &key, steam_run_url(shop, object_id).map(|_| object_id), &parsed, launch, cwd).await,
             None => spawn_detached(&wine_command(launch), cwd).map_err(|e| e.to_string()),
         };
         if let Err(error) = result {
@@ -253,7 +258,7 @@ pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_
 }
 
 /// Runs a Windows game through umu-run with the game's Proton and its own prefix.
-fn proton_launch(app: &AppHandle, store: &Store, key: &str, steam_id: Option<&str>, exe: &str, launch: LaunchCommand, cwd: &Path) -> Result<(), String> {
+async fn proton_launch(app: &AppHandle, store: &Store, key: &str, steam_id: Option<&str>, exe: &str, launch: LaunchCommand, cwd: &Path) -> Result<(), String> {
     let game = store.get("games", key)?;
     let prefs = store.get("", "userPreferences")?;
     let statuses = app.state::<LauncherStatuses>();
@@ -269,9 +274,36 @@ fn proton_launch(app: &AppHandle, store: &Store, key: &str, steam_id: Option<&st
     let gamemode = on("autoRunGamemode") && crate::proton::on_path("gamemoderun");
     let mangohud = on("autoRunMangohud") && crate::proton::on_path("mangohud");
     let command = crate::proton::umu_command(launch, exe, &proton, &prefix, steam_id, gamemode, mangohud);
-    spawn_detached(&command, cwd).map_err(|e| e.to_string())?;
-    statuses.send(app, key, "game_started");
-    Ok(())
+    let logs = app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join("logs");
+    let log = crate::umu_launch::log_path(&logs, key);
+    let pending = crate::umu_launch::launch(&command, cwd, &log, crate::umu_launch::QUICK_EXIT, umu_hooks(app, key)).map_err(|e| format!("failed to spawn umu-run ({}): {e}", command.command))?;
+    match tokio::task::spawn_blocking(move || pending.wait()).await.map_err(|e| e.to_string())? {
+        // The watcher sends game_started once it sees the game, as upstream's process watcher does.
+        Ok(_) => Ok(()),
+        Err(early) => {
+            statuses.send_detail(app, key, "compatibility_layer_failed", Some(&early.to_string()));
+            Err(format!("{early} (log: {})", log.display()))
+        }
+    }
+}
+
+/// createUmuStatusReporter: umu-run progress and failures reach the launcher window.
+fn umu_hooks(app: &AppHandle, key: &str) -> crate::umu_launch::Hooks {
+    use crate::umu_launch::UmuStatus;
+    let (status_app, status_key) = (app.clone(), key.to_string());
+    let (detect_app, detect_key) = (app.clone(), key.to_string());
+    crate::umu_launch::Hooks {
+        on_status: Box::new(move |status| {
+            let statuses = status_app.state::<LauncherStatuses>();
+            match status {
+                UmuStatus::Progress(detail) => statuses.send_detail(&status_app, &status_key, "preparing_compatibility_layer", detail.as_deref()),
+                UmuStatus::Failed(message) => statuses.send_detail(&status_app, &status_key, "compatibility_layer_failed", Some(&message)),
+                UmuStatus::Ready => statuses.send(&status_app, &status_key, "compatibility_layer_ready"),
+            }
+        }),
+        game_detected: Box::new(move || detect_app.state::<crate::watcher::Sessions>().contains(&detect_key)),
+        on_exit: Box::new(|_| {}),
+    }
 }
 
 fn path_key(path: &str) -> String {
