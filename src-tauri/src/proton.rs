@@ -128,13 +128,37 @@ pub fn use_host_env(command: &mut std::process::Command) -> &mut std::process::C
     command
 }
 
+/// cleanupStaleCompatibilityProcesses: a Wine process, an .exe or wineserver left in `prefix`.
+pub fn is_stale_compat_process(name: &str, exe: Option<&str>, compat_data: Option<&str>, prefix: &str) -> bool {
+    let name = name.to_lowercase();
+    compat_data == Some(prefix) && (exe.is_some_and(|e| e.to_lowercase().contains("wine")) || name.ends_with(".exe") || name == "wineserver")
+}
+
+/// Kills what an earlier run left in the game's own prefix, so a stuck wineserver cannot block the launch.
+pub fn kill_stale_prefix_processes(prefix: &Path) {
+    let prefix = std::fs::canonicalize(prefix).unwrap_or_else(|_| prefix.to_path_buf());
+    let prefix = prefix.to_string_lossy();
+    let mut system = sysinfo::System::new();
+    let kind = sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always).with_environ(sysinfo::UpdateKind::Always);
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, kind);
+    for process in system.processes().values() {
+        let compat = process.environ().iter().filter_map(|e| e.to_str()).find_map(|e| e.strip_prefix("STEAM_COMPAT_DATA_PATH="));
+        let compat = compat.map(|c| std::fs::canonicalize(c).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| c.to_string()));
+        let exe = process.exe().map(|e| e.to_string_lossy().into_owned());
+        if is_stale_compat_process(&process.name().to_string_lossy(), exe.as_deref(), compat.as_deref(), &prefix) {
+            eprintln!("[launch] killing stale compatibility process {} in {prefix}", process.pid());
+            let _ = process.kill_with(sysinfo::Signal::Kill);
+        }
+    }
+}
+
 pub fn on_path(bin: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(bin).is_file()))
 }
 
 /// Puts `umu-run` in front of the game, inside any `%command%` wrapper the user set,
 /// plus gamemoderun when the game asks for it.
-pub fn umu_command(launch: LaunchCommand, exe: &str, proton: &Path, prefix: &Path, steam_app_id: Option<&str>, gamemode: bool, mangohud: bool) -> LaunchCommand {
+pub fn umu_command(launch: LaunchCommand, exe: &str, proton: Option<&Path>, prefix: &Path, steam_app_id: Option<&str>, gamemode: bool, mangohud: bool) -> LaunchCommand {
     let mut argv: Vec<String> = std::iter::once(launch.command).chain(launch.args).collect();
     let at = argv.iter().position(|a| a == exe).unwrap_or(0);
     argv.insert(at, "umu-run".into());
@@ -142,7 +166,11 @@ pub fn umu_command(launch: LaunchCommand, exe: &str, proton: &Path, prefix: &Pat
         argv.insert(0, "gamemoderun".into());
     }
     // PROTON_LOG as upstream: Proton writes ~/steam-<id>.log for bug reports.
-    let mut env = vec![("PROTON_LOG".to_string(), "1".to_string()), ("WINEPREFIX".to_string(), prefix.to_string_lossy().into_owned()), ("PROTONPATH".to_string(), proton.to_string_lossy().into_owned())];
+    let mut env = vec![("PROTON_LOG".to_string(), "1".to_string()), ("WINEPREFIX".to_string(), prefix.to_string_lossy().into_owned())];
+    if let Some(proton) = proton {
+        // Without PROTONPATH, umu-run fetches and uses UMU-Proton, as upstream relies on.
+        env.push(("PROTONPATH".into(), proton.to_string_lossy().into_owned()));
+    }
     if let Some(id) = steam_app_id {
         // umu-database keys protonfixes by Steam app id.
         env.push(("GAMEID".into(), format!("umu-{id}")));
@@ -158,6 +186,15 @@ pub fn umu_command(launch: LaunchCommand, exe: &str, proton: &Path, prefix: &Pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_process_needs_the_prefix_and_a_wine_name() {
+        assert!(is_stale_compat_process("wineserver", None, Some("/p"), "/p"));
+        assert!(is_stale_compat_process("Game.EXE", None, Some("/p"), "/p"));
+        assert!(is_stale_compat_process("x", Some("/opt/proton/files/bin/wine64-preloader"), Some("/p"), "/p"));
+        assert!(!is_stale_compat_process("wineserver", None, Some("/other"), "/p"));
+        assert!(!is_stale_compat_process("bash", Some("/usr/bin/bash"), Some("/p"), "/p"));
+    }
 
     #[test]
     fn strips_appimage_env() {
@@ -194,11 +231,11 @@ mod tests {
     #[test]
     fn wraps_the_exe_with_umu_inside_user_wrappers() {
         let launch = LaunchCommand { command: "gamescope".into(), args: vec!["-f".into(), "--".into(), "/g/a.exe".into(), "-x".into()], env: vec![("A".into(), "1".into())] };
-        let cmd = umu_command(launch, "/g/a.exe", Path::new("/p/GE"), Path::new("/pfx"), Some("105600"), true, false);
+        let cmd = umu_command(launch, "/g/a.exe", Some(Path::new("/p/GE")), Path::new("/pfx"), Some("105600"), true, false);
         assert_eq!(cmd.command, "gamemoderun");
         assert_eq!(cmd.args, ["gamescope", "-f", "--", "umu-run", "/g/a.exe", "-x"]);
         assert_eq!(cmd.env, [("PROTON_LOG".into(), "1".into()), ("WINEPREFIX".into(), "/pfx".into()), ("PROTONPATH".into(), "/p/GE".into()), ("GAMEID".into(), "umu-105600".into()), ("A".to_string(), "1".to_string())]);
-        let plain = umu_command(LaunchCommand { command: "/g/a.exe".into(), args: vec![], env: vec![] }, "/g/a.exe", Path::new("/p"), Path::new("/x"), None, false, true);
+        let plain = umu_command(LaunchCommand { command: "/g/a.exe".into(), args: vec![], env: vec![] }, "/g/a.exe", None, Path::new("/x"), None, false, true);
         assert_eq!((plain.command.as_str(), plain.args.as_slice()), ("umu-run", ["/g/a.exe".to_string()].as_slice()));
         assert!(plain.env.contains(&("MANGOHUD".into(), "1".into())));
     }
