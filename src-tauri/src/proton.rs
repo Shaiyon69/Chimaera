@@ -10,7 +10,7 @@ use crate::games::is_proton_dir;
 use crate::launch::LaunchCommand;
 
 fn steam_roots(home: &Path) -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = [".local/share/Steam", ".steam/root", ".steam/steam", ".var/app/com.valvesoftware.Steam/data/Steam"]
+    let mut roots: Vec<PathBuf> = [".local/share/Steam", ".steam/root", ".steam/steam", ".var/app/com.valvesoftware.Steam/data/Steam", ".var/app/com.valvesoftware.Steam/.local/share/Steam", "snap/steam/common/.local/share/Steam"]
         .iter()
         .filter_map(|r| std::fs::canonicalize(home.join(r)).ok())
         .collect();
@@ -35,8 +35,12 @@ pub fn installed_versions() -> Vec<Value> {
     for dir in tool_dirs {
         found.extend(proton_dirs_in(&dir, |_| true).into_iter().map(|(n, p)| (n, p, "compatibility_tools")));
     }
-    for root in steam_roots(&home_dir()) {
-        found.extend(proton_dirs_in(&root.join("steamapps/common"), |n| n.starts_with("Proton")).into_iter().map(|(n, p)| (n, p, "steam")));
+    // Steam can install Proton into any of its libraries, not only its own folder.
+    let mut libraries: Vec<PathBuf> = steam_roots(&home_dir()).iter().flat_map(|root| crate::scan::library_folders(root)).filter_map(|p| std::fs::canonicalize(p).ok()).collect();
+    libraries.sort();
+    libraries.dedup();
+    for library in libraries {
+        found.extend(proton_dirs_in(&library.join("steamapps/common"), |n| n.starts_with("Proton")).into_iter().map(|(n, p)| (n, p, "steam")));
     }
     found.sort_by(|a, b| natural_cmp(&b.0, &a.0));
     found.dedup_by(|a, b| a.1 == b.1);
