@@ -15,6 +15,7 @@ use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::data_location::DataDir;
 use crate::games::{game_key, with_executable_path};
 use crate::installer;
 use crate::library::now_ms;
@@ -322,7 +323,7 @@ fn read_elevated_output(output: &str) -> Outcome {
 }
 
 #[cfg(windows)]
-fn spawn_installer(installer: &Path, _wine_prefix: Option<&str>, _games_root: &Path) -> Option<Waiter> {
+fn spawn_installer(installer: &Path, _compat: &Compat, _games_root: &Path) -> Option<Waiter> {
     use std::os::windows::process::CommandExt;
     const ERROR_ELEVATION_REQUIRED: i32 = 740;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -390,21 +391,49 @@ fn map_games_drive(prefix: &Path, games_root: &Path) {
     }
 }
 
+/// Where a Windows installer runs on Linux: the game's prefix and Proton, as Play uses them.
+#[derive(Default)]
+struct Compat {
+    prefix: Option<PathBuf>,
+    proton: Option<PathBuf>,
+    log: Option<PathBuf>,
+    steam_id: Option<String>,
+}
+
+/// launchInstallerWithUmu: umu-run first, plain wine when umu-run is missing or fails.
 #[cfg(not(windows))]
-fn spawn_installer(installer: &Path, wine_prefix: Option<&str>, games_root: &Path) -> Option<Waiter> {
+fn spawn_installer(installer: &Path, compat: &Compat, games_root: &Path) -> Option<Waiter> {
     if !cfg!(target_os = "linux") {
         return None;
     }
-    let prefix = wine_prefix
-        .map(PathBuf::from)
+    let prefix = compat.prefix.clone()
         .or_else(|| std::env::var_os("WINEPREFIX").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".wine")));
     if let Some(prefix) = &prefix {
+        let _ = fs::create_dir_all(prefix);
         map_games_drive(prefix, games_root);
     }
+    let cwd = installer.parent().unwrap_or(Path::new("."));
+    if let (Some(prefix), Some(log), true) = (&prefix, &compat.log, crate::proton::on_path("umu-run")) {
+        let exe = installer.to_string_lossy().into_owned();
+        let plain = crate::launch::LaunchCommand { command: exe.clone(), args: Vec::new(), env: Vec::new() };
+        let command = crate::proton::umu_command(plain, &exe, compat.proton.as_deref(), prefix, compat.steam_id.as_deref(), false, false);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let hooks = crate::umu_launch::Hooks { on_status: Box::new(|_| {}), game_detected: Box::new(|| false), on_exit: Box::new(move |code| drop(tx.send(code))) };
+        match crate::umu_launch::launch(&command, cwd, log, crate::umu_launch::QUICK_EXIT, hooks).map(crate::umu_launch::Pending::wait) {
+            Ok(Ok(_)) => return Some(Box::new(move || Outcome::Exit(rx.recv().ok().flatten()))),
+            // A quick exit with nothing wrong in umu's output is an installer that finished.
+            Ok(Err(early)) if early.failure.is_none() => {
+                eprintln!("[GameInstaller] installer exited early under umu-run: {early}");
+                return Some(Box::new(move || Outcome::Exit(early.code)));
+            }
+            Ok(Err(early)) => eprintln!("[GameInstaller] umu-run failed, trying wine: {early}"),
+            Err(e) => eprintln!("[GameInstaller] could not start umu-run, trying wine: {e}"),
+        }
+    }
     let mut command = Command::new("wine");
-    crate::proton::use_host_env(&mut command).arg(installer).current_dir(installer.parent().unwrap_or(Path::new("."))).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    if let Some(prefix) = wine_prefix {
+    crate::proton::use_host_env(&mut command).arg(installer).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    if let Some(prefix) = &compat.prefix {
         command.env("WINEPREFIX", prefix);
     }
     match command.spawn() {
@@ -502,7 +531,18 @@ pub async fn open(app: &AppHandle, shop: &str, object_id: &str) -> Result<bool, 
     let key = game_key(shop, object_id);
     let download = store.get("downloads", &key)?;
     let game = store.get("games", &key)?;
-    let wine_prefix = game["winePrefixPath"].as_str().filter(|p| !p.is_empty()).map(String::from);
+    let compat = if cfg!(target_os = "linux") {
+        let prefs = store.get("", "userPreferences")?;
+        Compat {
+            prefix: Some(crate::proton::prefix_for(&game, &prefs, &key)),
+            proton: crate::proton::resolve(&game, &prefs, &crate::proton::installed_versions()),
+            log: app.path().chimaera_data_dir().ok().map(|d| crate::umu_launch::log_path(&d.join("logs"), &key)),
+            steam_id: (shop == "steam").then(|| object_id.to_string()),
+        }
+    } else {
+        Compat::default()
+    };
+    let wine_prefix = compat.prefix.as_ref().map(|p| p.to_string_lossy().into_owned()).or_else(|| game["winePrefixPath"].as_str().filter(|p| !p.is_empty()).map(String::from));
     let default = app.path().download_dir().map_err(|e| e.to_string())?;
     let root = installer::downloads_path(&store, &default);
 
@@ -532,7 +572,10 @@ pub async fn open(app: &AppHandle, shop: &str, object_id: &str) -> Result<bool, 
         json!({ "installerLaunched": true, "installerRunning": running, "installerStartedAt": started_at, "installerPath": installer_path.to_string_lossy() })
     };
 
-    let Some(waiter) = spawn_installer(&installer_path, wine_prefix.as_deref(), &games_root) else {
+    // umu-run blocks for its quick-exit check, so it starts off the async runtime.
+    let (spawn_path, spawn_root) = (installer_path.clone(), games_root.clone());
+    let waiter = tauri::async_runtime::spawn_blocking(move || spawn_installer(&spawn_path, &compat, &spawn_root)).await.ok().flatten();
+    let Some(waiter) = waiter else {
         release(&mut runs().running, &key, started_at);
         let launched = app.opener().open_path(installer_path.to_string_lossy(), None::<&str>).is_ok();
         if launched {
