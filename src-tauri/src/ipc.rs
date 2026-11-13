@@ -383,8 +383,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         }
         "isGamemodeAvailable" => Ok(json!(cfg!(target_os = "linux") && proton::on_path("gamemoderun"))),
         "isMangohudAvailable" => Ok(json!(cfg!(target_os = "linux") && proton::on_path("mangohud"))),
-        // shortcut: winetricks runs are not ported, so the button stays hidden; port with the winetricks dialog.
-        "isWinetricksAvailable" => Ok(json!(false)),
+        "isWinetricksAvailable" => Ok(json!(cfg!(target_os = "linux") && proton::on_path("winetricks"))),
         "getInstalledProtonVersions" => Ok(json!(if cfg!(target_os = "linux") { proton::installed_versions() } else { Vec::new() })),
         "getGameLaunchProtonVersion" => {
             let store = app.state::<Store>();
@@ -734,10 +733,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "installRetroArch" => Ok(retroarch::install(app, arg_str(args, 0).unwrap_or_default()).await),
         "installRetroArchCore" => Ok(retroarch::install_core(app, arg_str(args, 0).unwrap_or_default()).await),
         "installAllRetroArchCores" => Ok(retroarch::install_all_cores(app).await),
-        "openGameWinetricks" => {
-            let app_data = app.path().chimaera_data_dir().map_err(|e| e.to_string())?;
-            emulators::open_winetricks(&app.state::<Store>(), &app_data, shop(args), object_id(args)).map(Value::from)
-        }
+        "openGameWinetricks" => emulators::open_winetricks(&app.state::<Store>(), shop(args), object_id(args)).map(Value::from),
         "getEmulatorConfigs" => emulators::all_configs(&app.state::<Store>()),
         "getEmulatorRomExtensions" => {
             let k = emulators::known(arg_str(args, 0).unwrap_or_default())?;

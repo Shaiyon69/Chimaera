@@ -128,6 +128,26 @@ pub fn use_host_env(command: &mut std::process::Command) -> &mut std::process::C
     command
 }
 
+/// getWinePrefixWindowsUserProfilePath: `USERPROFILE` from user.reg's Volatile Environment, as `C:/users/<name>`.
+pub fn windows_user_profile(user_reg: &str) -> Option<String> {
+    let mut in_section = false;
+    for line in user_reg.lines() {
+        if line.starts_with('[') {
+            in_section = line.starts_with("[Volatile Environment]");
+        } else if let Some(value) = line.strip_prefix("\"USERPROFILE\"=\"").filter(|_| in_section) {
+            let raw = value.strip_suffix('"')?;
+            let mut path = String::new();
+            for c in raw.chars() {
+                // Backslashes are escaped in .reg files; any run of them is one separator.
+                if c == '\\' { if !path.ends_with('/') { path.push('/') } } else { path.push(c) }
+            }
+            let path = path.trim_end_matches('/');
+            return (!path.trim().is_empty()).then(|| path.to_string());
+        }
+    }
+    None
+}
+
 /// cleanupStaleCompatibilityProcesses: a Wine process, an .exe or wineserver left in `prefix`.
 pub fn is_stale_compat_process(name: &str, exe: Option<&str>, compat_data: Option<&str>, prefix: &str) -> bool {
     let name = name.to_lowercase();
@@ -186,6 +206,14 @@ pub fn umu_command(launch: LaunchCommand, exe: &str, proton: Option<&Path>, pref
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_user_profile_from_user_reg() {
+        let reg = "[Software\\\\Wine] 1\n\"USERPROFILE\"=\"C:\\\\wrong\"\n\n[Volatile Environment] 1794494193\n#time=1\n\"HOMEDRIVE\"=\"C:\"\n\"USERPROFILE\"=\"C:\\\\users\\\\steamuser\"\n";
+        assert_eq!(windows_user_profile(reg).as_deref(), Some("C:/users/steamuser"));
+        assert_eq!(windows_user_profile("[Volatile Environment]\n\"USERPROFILE\"=\"\"\n"), None);
+        assert_eq!(windows_user_profile(""), None);
+    }
 
     #[test]
     fn stale_process_needs_the_prefix_and_a_wine_name() {
