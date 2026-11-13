@@ -54,6 +54,7 @@ mod notifications;
 mod optiscaler;
 mod processed_image;
 mod proton;
+mod umu_monitor;
 mod retro_achievements;
 mod retroarch;
 mod rom_scan;
