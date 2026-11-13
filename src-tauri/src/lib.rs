@@ -40,6 +40,8 @@ mod installer;
 mod ipc;
 mod launch;
 mod launcher_import;
+#[cfg(test)]
+mod live_games;
 mod library;
 mod memcard_saves;
 mod memory_card;

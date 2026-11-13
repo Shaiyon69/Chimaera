@@ -209,7 +209,7 @@ pub fn kill_stale_prefix_processes(prefix: &Path) {
     let mut system = sysinfo::System::new();
     let kind = sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always).with_environ(sysinfo::UpdateKind::Always);
     system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, kind);
-    for process in system.processes().values() {
+    for process in system.processes().values().filter(|p| p.thread_kind().is_none()) {
         let compat = process.environ().iter().filter_map(|e| e.to_str()).find_map(|e| e.strip_prefix("STEAM_COMPAT_DATA_PATH="));
         let compat = compat.map(|c| std::fs::canonicalize(c).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| c.to_string()));
         let exe = process.exe().map(|e| e.to_string_lossy().into_owned());

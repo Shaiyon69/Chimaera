@@ -377,7 +377,8 @@ pub fn close_game(store: &Store, shop: &str, object_id: &str) -> Result<Value, S
         system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always).with_cwd(sysinfo::UpdateKind::Always));
     }
     let in_game_folder = |p: Option<&Path>| p.zip(folder.as_deref()).is_some_and(|(p, f)| crate::watcher::in_folder(&path_key(&p.to_string_lossy()), f));
-    for process in system.processes().values() {
+    // sysinfo lists every thread too; killing the process ends them, so only processes are sent the signal.
+    for process in system.processes().values().filter(|p| p.thread_kind().is_none()) {
         let matched = process.exe().is_some_and(|exe| targets.contains(&path_key(&exe.to_string_lossy()))) || in_game_folder(process.exe()) || in_game_folder(process.cwd());
         if matched && !process.kill() {
             eprintln!("[launch] could not kill pid {}", process.pid());
