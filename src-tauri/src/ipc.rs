@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, dxvk, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, genres, gog, google_drive, graphics_scan, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, dxvk, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, genres, gog, google_drive, graphics_scan, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, proton, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
 use crate::data_location::DataDir;
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
@@ -41,6 +41,11 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
     match channel {
         "ping" => Ok(json!("pong")),
         "getVersion" => Ok(json!(app.package_info().version.to_string())),
+        // Colors Noctalia (Linux desktop shell) renders on every theme change; null when absent.
+        "getNoctaliaTheme" => {
+            let file = app.path().config_dir().map_err(|e| e.to_string())?.join("shaiyon-theme/chimaera.css");
+            Ok(std::fs::read_to_string(file).map(Value::String).unwrap_or(Value::Null))
+        }
         "getDefaultDownloadsPath" => {
             let dir = app.path().download_dir().map_err(|e| e.to_string())?;
             Ok(json!(dir.to_string_lossy()))
@@ -338,9 +343,10 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
                 }
             }
             let assets_dir = app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join("Assets");
+            let launcher = shortcuts::launcher_exe(std::env::var("APPIMAGE").ok()).map_err(|e| e.to_string())?;
             let (app, key) = (app.clone(), games::game_key(&shop, &object_id));
             tauri::async_runtime::spawn_blocking(move || {
-                steam_shortcuts::create(&app.state::<Store>(), steam_shortcuts::steam_path().as_deref(), &assets_dir, &key, sources, open_vr)
+                steam_shortcuts::create(&app.state::<Store>(), steam_shortcuts::steam_path().as_deref(), &launcher, &assets_dir, &key, sources, open_vr)
             })
             .await
             .map_err(|e| e.to_string())?
@@ -376,13 +382,16 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let on = args.get(2).and_then(Value::as_bool).unwrap_or(false);
             games::set_field(&app.state::<Store>(), shop(args), object_id(args), "autoRunMangohud", json!(on)).map(|_| Value::Null)
         }
-        // shortcut: gamemode, MangoHud, winetricks and Proton are Linux-only and report their Windows answer;
-        // the Linux launch path (Wine/umu/Proton) ports them for real.
-        "isGamemodeAvailable" => Ok(json!(false)),
-        "isMangohudAvailable" => Ok(json!(false)),
-        "isWinetricksAvailable" => Ok(json!(false)),
-        "getInstalledProtonVersions" => Ok(json!([])),
-        "getGameLaunchProtonVersion" => Ok(Value::Null),
+        "isGamemodeAvailable" => Ok(json!(cfg!(target_os = "linux") && proton::on_path("gamemoderun"))),
+        "isMangohudAvailable" => Ok(json!(cfg!(target_os = "linux") && proton::on_path("mangohud"))),
+        "isWinetricksAvailable" => Ok(json!(cfg!(target_os = "linux") && proton::on_path("winetricks"))),
+        "getInstalledProtonVersions" => Ok(json!(if cfg!(target_os = "linux") { proton::installed_versions() } else { Vec::new() })),
+        "getGameLaunchProtonVersion" => {
+            let store = app.state::<Store>();
+            let game = store.get("games", &games::game_key(shop(args), object_id(args)))?;
+            let path = proton::resolve(&game, &store.get("", "userPreferences")?, &proton::installed_versions());
+            Ok(json!(path.and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))))
+        }
         "getGameArtworkSelection" => app.state::<Store>().get("artworkSelection", &games::game_key(shop(args), object_id(args))),
         "setGameArtworkSelection" => {
             let record = artwork::set_artwork_selection(&app.state::<Store>(), args.first().unwrap_or(&Value::Null))?;
@@ -675,7 +684,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "getNetworkInterfaces" => Ok(misc::network_interfaces()),
         "getProcessedImage" => Ok(processed_image::get(app, arg_str(args, 0), args.get(1).unwrap_or(&Value::Null)).await),
         // shortcut: Wine is not ported (Linux), and Windows has no default prefix.
-        "getDefaultWinePrefixSelectionPath" => Ok(Value::Null),
+        "getDefaultWinePrefixSelectionPath" => Ok(if cfg!(target_os = "linux") { json!(proton::default_prefix_root(&app.state::<Store>().get("", "userPreferences")?).to_string_lossy()) } else { Value::Null }),
         "publishNewRepacksNotification" => {
             notifications::new_repacks(app, args.first().and_then(Value::as_i64).unwrap_or(0));
             Ok(Value::Null)
@@ -725,10 +734,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         "installRetroArch" => Ok(retroarch::install(app, arg_str(args, 0).unwrap_or_default()).await),
         "installRetroArchCore" => Ok(retroarch::install_core(app, arg_str(args, 0).unwrap_or_default()).await),
         "installAllRetroArchCores" => Ok(retroarch::install_all_cores(app).await),
-        "openGameWinetricks" => {
-            let app_data = app.path().chimaera_data_dir().map_err(|e| e.to_string())?;
-            emulators::open_winetricks(&app.state::<Store>(), &app_data, shop(args), object_id(args)).map(Value::from)
-        }
+        "openGameWinetricks" => emulators::open_winetricks(&app.state::<Store>(), shop(args), object_id(args)).map(Value::from),
         "getEmulatorConfigs" => emulators::all_configs(&app.state::<Store>()),
         "getEmulatorRomExtensions" => {
             let k = emulators::known(arg_str(args, 0).unwrap_or_default())?;

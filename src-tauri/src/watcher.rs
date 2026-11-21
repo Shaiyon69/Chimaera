@@ -29,6 +29,10 @@ impl Sessions {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    pub fn contains(&self, key: &str) -> bool {
+        self.lock().contains_key(key)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.lock().is_empty()
     }
@@ -91,7 +95,7 @@ pub fn close_session(store: &Store, key: &str, session: Session, now: Instant) -
     Ok(())
 }
 
-fn running_exes(system: &mut sysinfo::System) -> HashSet<String> {
+pub(crate) fn running_exes(system: &mut sysinfo::System) -> HashSet<String> {
     // Always, not OnlyIfNotSet: sysinfo keys processes by PID only, and Windows recycles PIDs
     // within the 2 s tick, so a cached exe makes an unrelated process look like a game.
     let kind = sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always);
@@ -100,9 +104,18 @@ fn running_exes(system: &mut sysinfo::System) -> HashSet<String> {
     let mut running: HashSet<String> = system.processes().values().filter_map(|p| p.exe()).map(|exe| path_key(&exe.to_string_lossy())).collect();
     if !cfg!(windows) {
         // Wine/Proton games run as the wine binary, so only their working folder shows the game.
-        running.extend(system.processes().values().filter_map(|p| p.cwd()).map(|cwd| format!("{CWD}{}", path_key(&cwd.to_string_lossy()))));
+        let by_folder = system.processes().values().filter(|p| counts_by_folder(&p.name().to_string_lossy(), p.exe()));
+        running.extend(by_folder.filter_map(|p| p.cwd()).map(|cwd| format!("{CWD}{}", path_key(&cwd.to_string_lossy()))));
     }
     running
+}
+
+/// hasLinuxCompatibilityProcessMatch: only a Windows program under wine stands for the game by its
+/// folder. umu-run, pressure-vessel, Proton's steam.exe shim and shells also sit in the game folder
+/// while Proton sets up, sometimes for minutes, and must not count as the game running.
+pub(crate) fn counts_by_folder(name: &str, exe: Option<&std::path::Path>) -> bool {
+    let name = name.to_lowercase();
+    exe.is_some_and(|e| e.to_string_lossy().to_lowercase().contains("wine")) && !matches!(name.as_str(), "" | "steam.exe" | "wineserver")
 }
 
 /// Marks a process's working folder in the running set; exe entries never start with it.
@@ -115,9 +128,17 @@ pub fn linux_game_folder(exe: &str) -> Option<String> {
     if cfg!(windows) || !(exe.to_lowercase().ends_with(".exe") || is_batch_file(exe)) {
         return None;
     }
-    let dir = std::path::Path::new(exe).parent().filter(|d| d.components().count() > 2)?;
-    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let dir = steam_install_root(exe).or_else(|| std::path::Path::new(exe).parent().filter(|d| d.components().count() > 2).map(|d| d.to_path_buf()))?;
+    let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
     Some(path_key(&dir.to_string_lossy()))
+}
+
+/// `<library>/steamapps/common/<Game>` for an exe Steam installed. Steam's native build can run
+/// from anywhere in it (tModLoader's saved exe is LaunchUtils/busybox64.exe, but it runs as dotnet/dotnet).
+fn steam_install_root(exe: &str) -> Option<std::path::PathBuf> {
+    let at = exe.find("/steamapps/common/")? + "/steamapps/common/".len();
+    let game = exe[at..].split('/').next().filter(|g| !g.is_empty())?;
+    exe[at + game.len()..].contains('/').then(|| std::path::PathBuf::from(&exe[..at + game.len()]))
 }
 
 pub(crate) fn in_folder(path_key: &str, folder: &str) -> bool {
@@ -243,6 +264,28 @@ mod tests {
             ("steam:1".into(), json!({ "shop": "steam", "executablePath": r"C:\G\a.exe" })),
             ("custom:gog-1".into(), json!({ "shop": "custom", "executablePath": "c:/g/A.exe" })),
         ]
+    }
+
+    #[test]
+    fn steam_games_use_their_install_folder() {
+        assert_eq!(steam_install_root("/s/steamapps/common/tModLoader/LaunchUtils/busybox64.exe"), Some("/s/steamapps/common/tModLoader".into()));
+        assert_eq!(steam_install_root("/s/steamapps/common/Terraria/Terraria.exe"), Some("/s/steamapps/common/Terraria".into()));
+        assert_eq!(steam_install_root("/s/steamapps/common/Game.exe"), None);
+        assert_eq!(steam_install_root("/home/u/Games/RimWorld/RimWorldWin64.exe"), None);
+        let folder = linux_game_folder("/nowhere/steamapps/common/tModLoader/LaunchUtils/busybox64.exe").unwrap();
+        assert!(game_matches(&json!({ "executablePath": "/nowhere/steamapps/common/tModLoader/LaunchUtils/busybox64.exe" }), &running(&["/nowhere/steamapps/common/tModLoader/dotnet/dotnet"])), "{folder}");
+    }
+
+    #[test]
+    fn only_wine_programs_count_by_folder() {
+        let preloader = Some(std::path::Path::new("/s/Proton - Experimental/files/lib/wine/i386-unix/wine64-preloader"));
+        assert!(counts_by_folder("RimWorldWin64.e", preloader));
+        assert!(counts_by_folder("UnityCrashHandl", preloader));
+        assert!(!counts_by_folder("steam.exe", preloader));
+        assert!(!counts_by_folder("umu-run", Some(std::path::Path::new("/usr/bin/python3.14"))));
+        assert!(!counts_by_folder("pv-adverb", Some(std::path::Path::new("/usr/lib/pressure-vessel/from-host/libexec/steam-runtime-tools-0/pv-adverb"))));
+        assert!(!counts_by_folder("zsh", Some(std::path::Path::new("/usr/bin/zsh"))));
+        assert!(!counts_by_folder("x", None));
     }
 
     #[test]

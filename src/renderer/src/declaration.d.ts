@@ -1164,6 +1164,7 @@ declare global {
     /* Misc */
     openExternal: (src: string) => Promise<void>;
     getVersion: () => Promise<string>;
+    getNoctaliaTheme: () => Promise<string | null>;
     getAppSessionId: () => Promise<string>;
     isStaging: () => Promise<boolean>;
     ping: () => string;

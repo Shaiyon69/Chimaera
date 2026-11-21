@@ -294,6 +294,10 @@ pub enum Link {
     RealDebrid { token: String, link: String, expected_name: String, expected_size: u64 },
     TorBox { token: String, torrent_id: i64, file_id: i64 },
     AllDebrid { token: String, link: String },
+    /// One part of a multi-part hoster mirror, resolved when its turn comes. `prepared` is the
+    /// first part's link, already resolved while the download started. A part without a path
+    /// takes the file name its link gives, inside `folder`.
+    Hoster { downloader: i64, uri: String, folder: String, prepared: Option<crate::hosters::Resolved> },
 }
 
 #[derive(Debug, Clone)]
@@ -376,6 +380,8 @@ pub async fn unlock(link: &Link) -> Result<String, String> {
         }
         Link::TorBox { token, torrent_id, file_id } => torbox_link(token, *torrent_id, *file_id).await,
         Link::AllDebrid { token, link } => ad_unlock(token, link).await.map(|(url, _, _)| url),
+        // Resolved by the batch, which holds the app the hoster may need.
+        Link::Hoster { .. } => Err("A hoster part needs the batch to resolve it.".into()),
     }
 }
 

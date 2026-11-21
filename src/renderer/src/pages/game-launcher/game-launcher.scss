@@ -166,6 +166,8 @@
   &__dots {
     display: inline-block;
     width: 20px;
+    // An empty inline-block sits on its bottom edge, so without this the line jumps each time the dots reset.
+    vertical-align: bottom;
 
     &::after {
       content: "";

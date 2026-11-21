@@ -14,6 +14,7 @@ import {
   Downloader,
   getDownloadDirectoryTitle,
   resolveDownloadDirectories,
+  getRepackUriParts,
 } from "@shared";
 import { DOWNLOADER_NAME, IS_DESKTOP } from "../../../constants";
 import useEmblaCarousel from "embla-carousel-react";
@@ -1637,6 +1638,7 @@ function DownloadGameOptions({
       title: game.title,
       shop: game.shop,
       uri: selectedUri,
+      parts: getRepackUriParts(option, selectedUri),
       downloadPath: selectedDownloadPath,
       downloader: resolvedDownloader,
       automaticallyExtract: automaticExtractionEnabled,

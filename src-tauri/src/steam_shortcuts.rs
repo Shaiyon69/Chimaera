@@ -157,8 +157,9 @@ fn int(v: u32) -> Node {
     Node::Fixed(0x02, v.to_le_bytes().to_vec())
 }
 
-/// composeSteamShortcut, field for field.
-pub fn compose(title: &str, exe: &str, icon: Option<&Path>, open_vr: bool) -> Entries {
+/// composeSteamShortcut, field for field. `exe` is Chimaera and `launch_options` its
+/// `chimaera://run` link, so Chimaera starts the game and counts its play time.
+pub fn compose(title: &str, exe: &str, launch_options: &str, icon: Option<&Path>, open_vr: bool) -> Entries {
     let start_dir = Path::new(exe).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     let s = |v: &str| Node::Str(v.into());
     vec![
@@ -168,7 +169,7 @@ pub fn compose(title: &str, exe: &str, icon: Option<&Path>, open_vr: bool) -> En
         ("StartDir".into(), s(&format!("\"{start_dir}\""))),
         ("icon".into(), s(&icon.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default())),
         ("ShortcutPath".into(), s("")),
-        ("LaunchOptions".into(), s("")),
+        ("LaunchOptions".into(), s(&format!("\"{launch_options}\""))),
         ("IsHidden".into(), int(0)),
         ("AllowDesktopConfig".into(), int(1)),
         ("AllowOverlay".into(), int(1)),
@@ -181,11 +182,14 @@ pub fn compose(title: &str, exe: &str, icon: Option<&Path>, open_vr: bool) -> En
     ]
 }
 
-/// matchesGameFallback for shop games. Electron compared against the quoted `Exe` as
-/// stored, which never matched; this compares the unquoted path.
+/// matchesGameFallback for shop games: our run link, an older shortcut that runs the
+/// game's exe directly, or the title.
 fn matches_game(game: &Value, shortcut: &Entries) -> bool {
-    let exe = str_field(shortcut, "Exe").map(|e| e.trim_matches('"'));
-    (game["executablePath"].as_str().is_some_and(|p| Some(p) == exe)) || game["title"].as_str().is_some_and(|t| Some(t) == str_field(shortcut, "appname"))
+    let link = crate::shortcuts::run_link(game["shop"].as_str().unwrap_or_default(), game["objectId"].as_str().unwrap_or_default());
+    let unquote = |name: &str| str_field(shortcut, name).map(|e| e.trim_matches('"'));
+    unquote("LaunchOptions") == Some(link.as_str())
+        || game["executablePath"].as_str().is_some_and(|p| Some(p) == unquote("Exe"))
+        || game["title"].as_str().is_some_and(|t| Some(t) == str_field(shortcut, "appname"))
 }
 
 fn eligible(game: &Value) -> bool {
@@ -268,7 +272,7 @@ pub fn convert(source: &[u8], format: ImageFormat) -> Result<Vec<u8>, String> {
 
 /// createSteamShortcut after the downloads: writes the art, adds the shortcut for every
 /// Steam user that lacks one with this title, and records the appid. Returns the appid.
-pub fn create(store: &Store, steam: Option<&Path>, assets_dir: &Path, key: &str, sources: [Option<Vec<u8>>; 5], open_vr: bool) -> Result<Option<u32>, String> {
+pub fn create(store: &Store, steam: Option<&Path>, launcher: &str, assets_dir: &Path, key: &str, sources: [Option<Vec<u8>>; 5], open_vr: bool) -> Result<Option<u32>, String> {
     let game = store.get("games", key)?;
     if game.is_null() {
         return Ok(None);
@@ -276,7 +280,7 @@ pub fn create(store: &Store, steam: Option<&Path>, assets_dir: &Path, key: &str,
     if game["shop"] == "launchbox" {
         return Err("Classic games cannot get a Steam shortcut yet".into());
     }
-    let exe = game["executablePath"].as_str().ok_or("No executable path found for game")?;
+    game["executablePath"].as_str().ok_or("No executable path found for game")?;
     let title = game["title"].as_str().unwrap_or_default();
     let steam = steam.ok_or("No Steam user ID found")?;
     let users = user_ids(steam);
@@ -297,7 +301,8 @@ pub fn create(store: &Store, steam: Option<&Path>, assets_dir: &Path, key: &str,
         })
         .collect();
 
-    let shortcut = compose(title, exe, files[0].as_deref(), open_vr);
+    let link = crate::shortcuts::run_link(game["shop"].as_str().unwrap_or_default(), game["objectId"].as_str().unwrap_or_default());
+    let shortcut = compose(title, launcher, &link, files[0].as_deref(), open_vr);
     let id = app_id(&shortcut).unwrap_or_default();
     let grid_names = [format!("{id}_hero.jpg"), format!("{id}_logo.png"), format!("{id}p.jpg"), format!("{id}.jpg")];
     for user in &users {
@@ -316,18 +321,10 @@ pub fn create(store: &Store, steam: Option<&Path>, assets_dir: &Path, key: &str,
         write_shortcuts(steam, user, shortcuts)?;
     }
 
-    // configureLinuxWinePrefix: Proton runs the shortcut in its own compatdata prefix.
-    let wine_prefix = (cfg!(target_os = "linux") && !game["winePrefixPath"].is_string())
-        .then(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share/Steam/steamapps/compatdata").join(id.to_string()).join("pfx")))
-        .flatten();
-    if let Some(prefix) = &wine_prefix {
-        fs::create_dir_all(prefix).map_err(|e| e.to_string())?;
-    }
+    // No Proton prefix set up: Steam runs Chimaera natively, and Chimaera launches the game
+    // with the game's own prefix.
     crate::games::update(store, key, |g| {
         g.insert("steamShortcutAppId".into(), json!(id));
-        if let Some(prefix) = wine_prefix {
-            g.insert("winePrefixPath".into(), json!(prefix.to_string_lossy()));
-        }
     })?;
     Ok(Some(id))
 }
@@ -373,7 +370,7 @@ mod tests {
 
     #[test]
     fn vdf_round_trips_unknown_fields() {
-        let mut shortcut = compose("Game", r"C:\Games\game.exe", None, false);
+        let mut shortcut = compose("Game", r"C:\Games\game.exe", "chimaera://run?shop=steam&objectId=1", None, false);
         shortcut.push(("tags".into(), Node::Map(vec![("0".into(), Node::Str("fav".into()))])));
         shortcut.push(("Future".into(), Node::Fixed(0x07, vec![1, 2, 3, 4, 5, 6, 7, 8])));
         let dir = steam_dir("vdf");
@@ -389,7 +386,7 @@ mod tests {
         let id = generate_app_id(r"C:\g.exe", "Game");
         assert_eq!(id, crc32fast::hash(br"C:\g.exeGame") | 0x8000_0000);
         assert!(id >= 0x8000_0000);
-        assert_eq!(app_id(&compose("Game", r"C:\g.exe", None, false)), Some(id));
+        assert_eq!(app_id(&compose("Game", r"C:\g.exe", "", None, false)), Some(id));
     }
 
     #[test]
@@ -404,14 +401,17 @@ mod tests {
         let png = png.into_inner();
 
         assert_eq!(user_ids(&dir), vec!["42".to_string()]);
-        let id = create(&store, Some(&dir), &assets, "steam:1", [Some(png.clone()), Some(png.clone()), Some(png), None, None], true).unwrap().unwrap();
+        let id = create(&store, Some(&dir), "/opt/chimaera", &assets, "steam:1", [Some(png.clone()), Some(png.clone()), Some(png), None, None], true).unwrap().unwrap();
         let grid = dir.join("userdata/42/config/grid");
         assert!(grid.join(format!("{id}_hero.jpg")).is_file() && grid.join(format!("{id}_logo.png")).is_file());
         assert_eq!(image::guess_format(&fs::read(assets.join("steam-1/icon.ico")).unwrap()).unwrap(), ImageFormat::Ico);
         assert_eq!(image::guess_format(&fs::read(grid.join(format!("{id}_hero.jpg"))).unwrap()).unwrap(), ImageFormat::Jpeg);
         // A second create for the same title adds nothing.
-        create(&store, Some(&dir), &assets, "steam:1", [None, None, None, None, None], false).unwrap();
-        assert_eq!(read_shortcuts(&dir, "42").unwrap().len(), 1);
+        create(&store, Some(&dir), "/opt/chimaera", &assets, "steam:1", [None, None, None, None, None], false).unwrap();
+        let shortcuts = read_shortcuts(&dir, "42").unwrap();
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(str_field(&shortcuts[0], "Exe"), Some("\"/opt/chimaera\""));
+        assert_eq!(str_field(&shortcuts[0], "LaunchOptions"), Some("\"chimaera://run?shop=steam&objectId=1\""));
 
         // check finds it by exe even when the record lost its appid.
         crate::games::update(&store, "steam:1", |g| {

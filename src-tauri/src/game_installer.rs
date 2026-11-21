@@ -15,6 +15,7 @@ use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::data_location::DataDir;
 use crate::games::{game_key, with_executable_path};
 use crate::installer;
 use crate::library::now_ms;
@@ -108,7 +109,12 @@ fn target_directories(download_root: &Path, wine_prefix: Option<&Path>) -> Vec<P
     if cfg!(target_os = "linux") {
         let default = std::env::var("WINEPREFIX").ok().or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.wine"))).unwrap_or_default();
         let prefixes = unique(wine_prefix.map(|p| p.to_string_lossy().into_owned()).into_iter().chain([default]));
-        return prefixes.iter().flat_map(|p| WINE_DRIVE_C_GAME_FOLDERS.iter().map(move |f| Path::new(p).join("drive_c").join(f))).collect();
+        // the downloads folder is the installer's G: drive (map_games_drive), so games installed there are found too
+        return prefixes
+            .iter()
+            .flat_map(|p| WINE_DRIVE_C_GAME_FOLDERS.iter().map(move |f| Path::new(p).join("drive_c").join(f)))
+            .chain([download_root.to_path_buf()])
+            .collect();
     }
     Vec::new()
 }
@@ -317,7 +323,7 @@ fn read_elevated_output(output: &str) -> Outcome {
 }
 
 #[cfg(windows)]
-fn spawn_installer(installer: &Path, _wine_prefix: Option<&str>) -> Option<Waiter> {
+fn spawn_installer(installer: &Path, _compat: &Compat, _games_root: &Path) -> Option<Waiter> {
     use std::os::windows::process::CommandExt;
     const ERROR_ELEVATION_REQUIRED: i32 = 740;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -371,14 +377,64 @@ fn spawn_installer(installer: &Path, _wine_prefix: Option<&str>) -> Option<Waite
 
 // shortcut: Linux runs the installer with plain `wine`, not umu-run/Proton, and only in the game's
 // own prefix setting (no per-game default prefix); port both with the Linux launch path.
+/// Maps the prefix's G: drive to the games folder, so an installer's folder picker offers it.
+/// Leaves an existing G: alone: it may be the user's own mapping.
 #[cfg(not(windows))]
-fn spawn_installer(installer: &Path, wine_prefix: Option<&str>) -> Option<Waiter> {
+fn map_games_drive(prefix: &Path, games_root: &Path) {
+    let devices = prefix.join("dosdevices");
+    let drive = devices.join("g:");
+    if drive.symlink_metadata().is_ok() || !games_root.is_dir() {
+        return;
+    }
+    if let Err(e) = fs::create_dir_all(&devices).and_then(|_| std::os::unix::fs::symlink(games_root, &drive)) {
+        eprintln!("[GameInstaller] could not map G: to {}: {e}", games_root.display());
+    }
+}
+
+/// Where a Windows installer runs on Linux: the game's prefix and Proton, as Play uses them.
+#[derive(Default)]
+struct Compat {
+    prefix: Option<PathBuf>,
+    proton: Option<PathBuf>,
+    log: Option<PathBuf>,
+    steam_id: Option<String>,
+    umu: Option<Vec<String>>,
+}
+
+/// launchInstallerWithUmu: umu-run first, plain wine when umu-run is missing or fails.
+#[cfg(not(windows))]
+fn spawn_installer(installer: &Path, compat: &Compat, games_root: &Path) -> Option<Waiter> {
     if !cfg!(target_os = "linux") {
         return None;
     }
+    let prefix = compat.prefix.clone()
+        .or_else(|| std::env::var_os("WINEPREFIX").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".wine")));
+    if let Some(prefix) = &prefix {
+        let _ = fs::create_dir_all(prefix);
+        map_games_drive(prefix, games_root);
+    }
+    let cwd = installer.parent().unwrap_or(Path::new("."));
+    if let (Some(prefix), Some(log), Some(umu)) = (&prefix, &compat.log, &compat.umu) {
+        let exe = installer.to_string_lossy().into_owned();
+        let plain = crate::launch::LaunchCommand { command: exe.clone(), args: Vec::new(), env: Vec::new() };
+        let command = crate::proton::umu_command(umu, plain, &exe, compat.proton.as_deref(), prefix, compat.steam_id.as_deref(), false, false);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let hooks = crate::umu_launch::Hooks { on_status: Box::new(|_| {}), game_detected: Box::new(|| false), on_exit: Box::new(move |code| { let _ = tx.send(code); }) };
+        match crate::umu_launch::launch(&command, cwd, log, crate::umu_launch::QUICK_EXIT, hooks).map(crate::umu_launch::Pending::wait) {
+            Ok(Ok(_)) => return Some(Box::new(move || Outcome::Exit(rx.recv().ok().flatten()))),
+            // A quick exit with nothing wrong in umu's output is an installer that finished.
+            Ok(Err(early)) if early.failure.is_none() => {
+                eprintln!("[GameInstaller] installer exited early under umu-run: {early}");
+                return Some(Box::new(move || Outcome::Exit(early.code)));
+            }
+            Ok(Err(early)) => eprintln!("[GameInstaller] umu-run failed, trying wine: {early}"),
+            Err(e) => eprintln!("[GameInstaller] could not start umu-run, trying wine: {e}"),
+        }
+    }
     let mut command = Command::new("wine");
-    command.arg(installer).current_dir(installer.parent().unwrap_or(Path::new("."))).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    if let Some(prefix) = wine_prefix {
+    crate::proton::use_host_env(&mut command).arg(installer).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    if let Some(prefix) = &compat.prefix {
         command.env("WINEPREFIX", prefix);
     }
     match command.spawn() {
@@ -476,7 +532,19 @@ pub async fn open(app: &AppHandle, shop: &str, object_id: &str) -> Result<bool, 
     let key = game_key(shop, object_id);
     let download = store.get("downloads", &key)?;
     let game = store.get("games", &key)?;
-    let wine_prefix = game["winePrefixPath"].as_str().filter(|p| !p.is_empty()).map(String::from);
+    let compat = if cfg!(target_os = "linux") {
+        let prefs = store.get("", "userPreferences")?;
+        Compat {
+            prefix: Some(crate::proton::prefix_for(&game, &prefs, &key)),
+            proton: crate::proton::resolve(&game, &prefs, &crate::proton::installed_versions()),
+            log: app.path().chimaera_data_dir().ok().map(|d| crate::umu_launch::log_path(&d.join("logs"), &key)),
+            steam_id: (shop == "steam").then(|| object_id.to_string()),
+            umu: app.path().chimaera_data_dir().ok().and_then(|d| crate::umu_updater::umu_program(&d)),
+        }
+    } else {
+        Compat::default()
+    };
+    let wine_prefix = compat.prefix.as_ref().map(|p| p.to_string_lossy().into_owned()).or_else(|| game["winePrefixPath"].as_str().filter(|p| !p.is_empty()).map(String::from));
     let default = app.path().download_dir().map_err(|e| e.to_string())?;
     let root = installer::downloads_path(&store, &default);
 
@@ -494,6 +562,7 @@ pub async fn open(app: &AppHandle, shop: &str, object_id: &str) -> Result<bool, 
     runs().running.insert(key.clone(), started_at);
     stop_polling(&key);
 
+    let games_root = download["downloadPath"].as_str().map(PathBuf::from).unwrap_or_else(|| root.clone());
     let lookup = download.clone();
     let found = tauri::async_runtime::spawn_blocking(move || installer::download_installer(&lookup, &root)).await.ok().flatten();
     let Some(installer_path) = found else {
@@ -505,7 +574,10 @@ pub async fn open(app: &AppHandle, shop: &str, object_id: &str) -> Result<bool, 
         json!({ "installerLaunched": true, "installerRunning": running, "installerStartedAt": started_at, "installerPath": installer_path.to_string_lossy() })
     };
 
-    let Some(waiter) = spawn_installer(&installer_path, wine_prefix.as_deref()) else {
+    // umu-run blocks for its quick-exit check, so it starts off the async runtime.
+    let (spawn_path, spawn_root) = (installer_path.clone(), games_root.clone());
+    let waiter = tauri::async_runtime::spawn_blocking(move || spawn_installer(&spawn_path, &compat, &spawn_root)).await.ok().flatten();
+    let Some(waiter) = waiter else {
         release(&mut runs().running, &key, started_at);
         let launched = app.opener().open_path(installer_path.to_string_lossy(), None::<&str>).is_ok();
         if launched {
@@ -564,8 +636,14 @@ pub async fn recheck(app: &AppHandle, shop: &str, object_id: &str) -> bool {
         }
         runs.last_recheck.insert(key.clone(), now);
     }
-    let wine_prefix = game["winePrefixPath"].as_str().filter(|p| !p.is_empty());
-    let found = search_and_bind(app, shop, object_id, started_at, wine_prefix).await;
+    // The prefix the installer ran in (see open), so a later check looks in the same place.
+    let wine_prefix = if cfg!(target_os = "linux") {
+        let prefs = app.state::<Store>().get("", "userPreferences").unwrap_or_default();
+        Some(crate::proton::prefix_for(&game, &prefs, &key).to_string_lossy().into_owned())
+    } else {
+        game["winePrefixPath"].as_str().filter(|p| !p.is_empty()).map(String::from)
+    };
+    let found = search_and_bind(app, shop, object_id, started_at, wine_prefix.as_deref()).await;
     if found {
         runs().last_recheck.remove(&key);
         eprintln!("[GameInstaller] found the installed executable for {object_id} on a later check");
@@ -619,6 +697,23 @@ mod tests {
         let since = now_ms();
         assert_eq!(folders_changed_since(&[dir.clone()], since, &[&dir.join("Downloads")]), vec![dir.join("New Game")]);
         assert!(folders_changed_since(&[dir.clone()], since + 60_000, &[]).is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn games_drive_maps_once_and_keeps_an_existing_mapping() {
+        let dir = temp_dir("games-drive");
+        let (prefix, games, other) = (dir.join("pfx"), dir.join("Games"), dir.join("Other"));
+        fs::create_dir_all(&games).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        map_games_drive(&prefix, &games);
+        assert_eq!(fs::read_link(prefix.join("dosdevices/g:")).unwrap(), games);
+        fs::remove_file(prefix.join("dosdevices/g:")).unwrap();
+        std::os::unix::fs::symlink(&other, prefix.join("dosdevices/g:")).unwrap();
+        map_games_drive(&prefix, &games);
+        assert_eq!(fs::read_link(prefix.join("dosdevices/g:")).unwrap(), other);
+        assert!(target_directories(&games, Some(&prefix)).contains(&games));
         fs::remove_dir_all(&dir).unwrap();
     }
 }

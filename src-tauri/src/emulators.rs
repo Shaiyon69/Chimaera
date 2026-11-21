@@ -454,24 +454,29 @@ pub fn preview(k: &Known, path: Option<&str>, download_dirs: &[PathBuf]) -> Valu
     found.map(|(p, v)| json!({ "executablePath": p.to_string_lossy(), "detectedVersion": v })).unwrap_or(Value::Null)
 }
 
-/// openGameWinetricks: Linux only, in the game's prefix (or its default one).
-pub fn open_winetricks(store: &Store, app_data: &Path, shop: &str, object_id: &str) -> Result<bool, String> {
+/// openGameWinetricks: Linux only, in the game's effective prefix (the one Play uses).
+pub fn open_winetricks(store: &Store, shop: &str, object_id: &str) -> Result<bool, String> {
     if !cfg!(target_os = "linux") {
         return Ok(false);
     }
-    let game = store.get("games", &crate::games::game_key(shop, object_id))?;
+    let key = crate::games::game_key(shop, object_id);
+    let game = store.get("games", &key)?;
     if !game.is_object() {
         return Ok(false);
     }
-    let prefix = match game["winePrefixPath"].as_str().filter(|p| !p.is_empty()) {
-        Some(p) => PathBuf::from(p),
-        None => {
-            let prefs = store.get("", "userPreferences")?;
-            let root = prefs["defaultWinePrefixPath"].as_str().map(PathBuf::from).unwrap_or_else(|| app_data.join("wine-prefixes"));
-            root.join(object_id)
+    let prefix = crate::proton::prefix_for(&game, &store.get("", "userPreferences")?, &key);
+    let mut command = Command::new("winetricks");
+    crate::proton::use_host_env(&mut command).env("WINEPREFIX", prefix).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    match command.spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+            Ok(true)
         }
-    };
-    Ok(Command::new("winetricks").env("WINEPREFIX", prefix).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().is_ok())
+        Err(e) => {
+            eprintln!("[winetricks] failed to launch: {e}");
+            Ok(false)
+        }
+    }
 }
 
 #[cfg(test)]

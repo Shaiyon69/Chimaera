@@ -7,6 +7,9 @@ export interface ThemePreset {
 }
 
 export const DEFAULT_PRESET = "oled";
+const NOCTALIA_PRESET = "noctalia";
+const NOCTALIA_POLL_MS = 2000;
+let noctaliaTimer: ReturnType<typeof setInterval> | undefined;
 const STORAGE_KEY = "chimaera.themePreset";
 
 // Pure #000 surfaces (pixels off) separated by borders, grayscale accent.
@@ -56,6 +59,21 @@ export const THEME_PRESETS: ThemePreset[] = [
     }`,
     preview: ["#1b2233", "#2a3040", "#0a84ff"],
   },
+  // Follows the Noctalia desktop theme (Linux only); css is filled live from its generated file.
+  ...(navigator.userAgent.includes("Linux")
+    ? [
+        {
+          id: NOCTALIA_PRESET,
+          name: "Noctalia",
+          css: "",
+          preview: ["#121212", "#1e1e1e", "#adc6ff"] as [
+            string,
+            string,
+            string,
+          ],
+        },
+      ]
+    : []),
 ];
 
 // Must come after the app CSS to beat tokens.scss, but before Hydra's
@@ -67,7 +85,7 @@ function applyPreset(css: string) {
     el.id = "theme-preset";
     document.head.insertBefore(el, document.getElementById("custom-css"));
   }
-  el.textContent = css;
+  if (el.textContent !== css) el.textContent = css; // the Noctalia poll re-sends unchanged css
 }
 
 export function getPresetId(): string {
@@ -83,6 +101,19 @@ export function setPreset(id: string) {
     localStorage.setItem(STORAGE_KEY, id);
   } catch {
     // storage blocked: preset still applies for this session
+  }
+  clearInterval(noctaliaTimer);
+  noctaliaTimer = undefined;
+  if (id === NOCTALIA_PRESET) {
+    // shortcut: polls a 1 KB file; switch to a Rust file watcher + event if more live files appear.
+    const sync = () =>
+      window.electron
+        .getNoctaliaTheme()
+        .then((css) => applyPreset(css ?? ""))
+        .catch(() => {});
+    sync();
+    noctaliaTimer = setInterval(sync, NOCTALIA_POLL_MS);
+    return;
   }
   applyPreset(THEME_PRESETS.find((p) => p.id === id)?.css ?? "");
 }

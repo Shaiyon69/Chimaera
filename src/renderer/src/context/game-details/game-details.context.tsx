@@ -10,6 +10,7 @@ import {
   useAppDispatch,
   useAppSelector,
   useDownload,
+  useFeature,
   useUserDetails,
 } from "@renderer/hooks";
 
@@ -123,6 +124,10 @@ export function GameDetailsContextProvider({
 
   const { lastPacket } = useDownload();
   const { userDetails } = useUserDetails();
+  const { isFeatureEnabled, Feature } = useFeature();
+  const multipartHosterDownloads = isFeatureEnabled(
+    Feature.MultipartHosterDownloads
+  );
 
   const userPreferences = useAppSelector(
     (state) => state.userPreferences.value
@@ -465,7 +470,8 @@ export function GameDetailsContextProvider({
           ensureArray<GameRepack>(
             downloads,
             `/games/${shop}/${objectId}/download-sources`
-          )
+          ),
+          multipartHosterDownloads
         );
 
         setRepacks(downloadOptions);
@@ -493,7 +499,7 @@ export function GameDetailsContextProvider({
     return () => {
       cancelled = true;
     };
-  }, [shop, objectId, repacksReloadKey]);
+  }, [shop, objectId, repacksReloadKey, multipartHosterDownloads]);
 
   const getDownloadsPath = async () => {
     if (userPreferences?.downloadsPath) return userPreferences.downloadsPath;

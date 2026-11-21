@@ -1217,6 +1217,7 @@ contextBridge.exposeInMainWorld("electron", {
   /* Misc */
   ping: () => ipcRenderer.invoke("ping"),
   getVersion: () => ipcRenderer.invoke("getVersion"),
+  getNoctaliaTheme: () => ipcRenderer.invoke("getNoctaliaTheme"),
   getDefaultDownloadsPath: () => ipcRenderer.invoke("getDefaultDownloadsPath"),
   getScreenshotsPath: () => ipcRenderer.invoke("getScreenshotsPath"),
   getAchievementSouvenirSyncStatus: () =>

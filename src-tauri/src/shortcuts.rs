@@ -181,6 +181,15 @@ fn write_shortcut(dir: &Path, name: &str, exe: &str, link: &str, icon: Option<&P
     fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())
 }
 
+/// The program a shortcut runs. An AppImage runs from a fresh /tmp/.mount_* folder each time,
+/// so the shortcut must name the .AppImage file itself (its APPIMAGE variable).
+pub fn launcher_exe(appimage: Option<String>) -> std::io::Result<String> {
+    match appimage.filter(|p| !p.is_empty()) {
+        Some(path) => Ok(path),
+        None => Ok(std::env::current_exe()?.to_string_lossy().into_owned()),
+    }
+}
+
 /// createGameShortcut: a desktop or Start Menu shortcut that runs the game through Chimaera.
 pub async fn create_game_shortcut(app: &AppHandle, shop: &str, object_id: &str, location: &str) -> Result<bool, String> {
     let store = app.state::<Store>();
@@ -217,7 +226,7 @@ pub async fn create_game_shortcut(app: &AppHandle, shop: &str, object_id: &str, 
     let icon_dir = paths.chimaera_data_dir().map_err(|e| e.to_string())?.join("Assets").join(format!("{shop}-{object_id}"));
     let icon = shortcut_icon(&icon_dir, &urls).await;
 
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?.to_string_lossy().into_owned();
+    let exe = launcher_exe(std::env::var("APPIMAGE").ok()).map_err(|e| e.to_string())?;
     let name = shortcut_name(game["title"].as_str().unwrap_or_default(), object_id);
     let link = run_link(shop, object_id);
     tauri::async_runtime::spawn_blocking(move || write_shortcut(&output, &name, &exe, &link, icon.as_deref())).await.map_err(|e| e.to_string())??;
@@ -227,6 +236,12 @@ pub async fn create_game_shortcut(app: &AppHandle, shop: &str, object_id: &str, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appimage_shortcuts_name_the_appimage() {
+        assert_eq!(launcher_exe(Some("/home/u/Applications/chimaera.appimage".into())).unwrap(), "/home/u/Applications/chimaera.appimage");
+        assert_eq!(launcher_exe(Some(String::new())).unwrap(), std::env::current_exe().unwrap().to_string_lossy());
+    }
 
     #[test]
     fn run_links_round_trip_and_accept_the_legacy_scheme() {
