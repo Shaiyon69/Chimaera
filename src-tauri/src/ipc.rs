@@ -343,9 +343,10 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
                 }
             }
             let assets_dir = app.path().chimaera_data_dir().map_err(|e| e.to_string())?.join("Assets");
+            let launcher = shortcuts::launcher_exe(std::env::var("APPIMAGE").ok()).map_err(|e| e.to_string())?;
             let (app, key) = (app.clone(), games::game_key(&shop, &object_id));
             tauri::async_runtime::spawn_blocking(move || {
-                steam_shortcuts::create(&app.state::<Store>(), steam_shortcuts::steam_path().as_deref(), &assets_dir, &key, sources, open_vr)
+                steam_shortcuts::create(&app.state::<Store>(), steam_shortcuts::steam_path().as_deref(), &launcher, &assets_dir, &key, sources, open_vr)
             })
             .await
             .map_err(|e| e.to_string())?

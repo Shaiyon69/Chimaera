@@ -183,7 +183,7 @@ fn write_shortcut(dir: &Path, name: &str, exe: &str, link: &str, icon: Option<&P
 
 /// The program a shortcut runs. An AppImage runs from a fresh /tmp/.mount_* folder each time,
 /// so the shortcut must name the .AppImage file itself (its APPIMAGE variable).
-fn launcher_exe(appimage: Option<String>) -> std::io::Result<String> {
+pub fn launcher_exe(appimage: Option<String>) -> std::io::Result<String> {
     match appimage.filter(|p| !p.is_empty()) {
         Some(path) => Ok(path),
         None => Ok(std::env::current_exe()?.to_string_lossy().into_owned()),
