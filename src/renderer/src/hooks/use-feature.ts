@@ -10,6 +10,7 @@ enum Feature {
   AllDebrid = "ALLDEBRID",
   Nimbus = "NIMBUS",
   NimbusPreview = "NIMBUS_PREVIEW",
+  MultipartHosterDownloads = "MULTIPART_HOSTER_DOWNLOADS",
 }
 
 const readCachedFeatures = (): string[] => {

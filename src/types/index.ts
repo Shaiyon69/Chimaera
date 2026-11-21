@@ -23,6 +23,8 @@ export interface GameRepack {
   title: string;
   fileSize: string | null;
   uris: string[];
+  /** Mirrors split into parts. Each group lists one hoster's parts in order. */
+  uriGroups?: string[][];
   unavailableUris: string[];
   uploadDate: string | null;
   downloadSourceId: string;
@@ -153,6 +155,7 @@ export interface StartGameDownloadPayload {
   title: string;
   shop: GameShop;
   uri: string;
+  parts?: string[];
   downloadPath: string;
   downloader: Downloader;
   automaticallyExtract: boolean;
@@ -356,6 +359,7 @@ export interface UpdateProfileRequest {
 export interface DownloadSourceDownload {
   title: string;
   uris: string[];
+  uriGroups?: string[][];
   uploadDate: string;
   fileSize: string;
 }
