@@ -5,8 +5,10 @@ use std::time::Duration;
 
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use serde_json::Value;
+use tauri::webview::{DownloadEvent, NewWindowResponse};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
-use crate::http_download::USER_AGENT;
+use crate::http_download::{self, USER_AGENT};
 
 pub const GOFILE: i64 = 2;
 pub const PIXELDRAIN: i64 = 3;
@@ -16,10 +18,23 @@ pub const FUCKINGFAST: i64 = 9;
 pub const VIKINGFILE: i64 = 10;
 pub const ROOTZ: i64 = 11;
 pub const ARCHIVE_ORG: i64 = 14;
+pub const FILEKEEPER: i64 = 16;
+
+/// Hosters that fetch every part of a multi-part mirror in order (`MULTIPART_DOWNLOADERS`).
+pub const MULTIPART: [i64; 8] = [GOFILE, PIXELDRAIN, DATANODES, MEDIAFIRE, FUCKINGFAST, VIKINGFILE, ROOTZ, FILEKEEPER];
 
 const LOGIN_REQUIRED: &str = "download_error_hoster_unlock_login_required";
 const FILE_NOT_FOUND: &str = "download_error_hoster_unlock_file_not_found";
 const UNAVAILABLE: &str = "download_error_hoster_unlock_unavailable";
+const MULTIPART_INVALID: &str = "download_error_multipart_invalid";
+pub const MULTIPART_NO_NAME: &str = "download_error_multipart_no_name";
+const FUCKINGFAST_TIMEOUT_ERROR: &str = "download_error_fuckingfast_timeout";
+const DATANODES_CLOSED: &str = "download_error_datanodes_closed";
+const DATANODES_LABEL: &str = "datanodes";
+/// Datanodes' pop-under ad swallows every click on "Continue to Download" until its pop-up opens.
+/// Each pop-up gets a hidden window that never loads the ad, so the click goes through while
+/// `window.open` stays native: Cloudflare's Turnstile check fails when it is replaced.
+const DATANODES_POPUP_PREFIX: &str = "datanodes-popup-";
 const ARCHIVE_ORG_INVALID: &str = "download_error_archive_org_invalid_file_url";
 const CHROME_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const GOFILE_MIRROR: &str = "https://gofilecdn.eu.cc";
@@ -30,9 +45,58 @@ const COMPONENT: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(
 
 /// Downloaders this module resolves to a plain HTTP file.
 pub fn is_hoster(downloader: i64) -> bool {
-    matches!(downloader, GOFILE | PIXELDRAIN | DATANODES | MEDIAFIRE | FUCKINGFAST | VIKINGFILE | ROOTZ | ARCHIVE_ORG)
+    matches!(downloader, GOFILE | PIXELDRAIN | DATANODES | MEDIAFIRE | FUCKINGFAST | VIKINGFILE | ROOTZ | ARCHIVE_ORG | FILEKEEPER)
 }
 
+/// `getDownloadParts`: the ordered part links of a multi-part download, None for a single link.
+pub fn download_parts(uri: &str, parts: &Value) -> Result<Option<Vec<String>>, String> {
+    if parts.is_null() {
+        return Ok(None);
+    }
+    let invalid = || MULTIPART_INVALID.to_string();
+    let parts: Vec<String> = parts.as_array().ok_or_else(invalid)?.iter().map(|p| p.as_str().filter(|s| !s.is_empty()).map(str::to_string)).collect::<Option<_>>().ok_or_else(invalid)?;
+    let unique: std::collections::HashSet<&String> = parts.iter().collect();
+    if parts.len() < 2 || parts[0] != uri || unique.len() != parts.len() {
+        return Err(invalid());
+    }
+    Ok(Some(parts))
+}
+
+/// `getMultipartFolderName`: the folder for every part, named after the first part's file.
+pub fn multipart_folder(first_part: &str) -> String {
+    let file = first_part.rsplit(['/', '\\']).next().unwrap_or_default();
+    let base = first_volume_base(file).unwrap_or_else(|| file.rfind('.').map_or(file, |end| &file[..end]));
+    let trimmed = base.trim_end_matches(|c: char| c.is_whitespace() || "._-".contains(c));
+    if trimmed.is_empty() { "download".into() } else { trimmed.to_string() }
+}
+
+/// `name.part01.rar` or `name.7z.001` (any zero padding, any case): the `name` before it.
+fn first_volume_base(file: &str) -> Option<&str> {
+    let lower = file.to_ascii_lowercase();
+    let is_one = |digits: &str| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) && digits.trim_start_matches('0') == "1";
+    if let Some(stem) = lower.strip_suffix(".rar") {
+        let at = stem.rfind(".part")?;
+        return is_one(&stem[at + 5..]).then(|| &file[..at]);
+    }
+    let dot = lower.rfind('.')?;
+    if !is_one(&lower[dot + 1..]) {
+        return None;
+    }
+    let stem = &lower[..dot];
+    [".7z", ".zip", ".rar"].iter().find(|ext| stem.ends_with(*ext)).map(|ext| &file[..dot - ext.len()])
+}
+
+/// `estimateMultipartTotalBytes`: split archives share one volume size, so an unknown part counts
+/// as the largest known one. Only the last part is smaller.
+pub fn estimate_parts_total(sizes: &[Option<u64>], fallback: u64) -> u64 {
+    let known: Vec<u64> = sizes.iter().flatten().copied().filter(|&s| s > 0).collect();
+    match known.iter().max() {
+        None => fallback,
+        Some(&largest) => known.iter().sum::<u64>() + (sizes.len() - known.len()) as u64 * largest,
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Resolved {
     pub url: String,
     pub headers: Vec<(String, String)>,
@@ -45,15 +109,17 @@ fn client(timeout: Duration) -> Result<reqwest::Client, String> {
 }
 
 /// The direct link for `uri` on hoster `downloader`.
-pub async fn resolve(downloader: i64, uri: &str) -> Result<Resolved, String> {
+pub async fn resolve(app: &AppHandle, downloader: i64, uri: &str) -> Result<Resolved, String> {
     let url = match downloader {
         GOFILE => gofile(uri).await?,
         PIXELDRAIN => pixeldrain(uri).await?,
-        // Both unlock through the Hydra API with a signed-in account; Chimaera has no sign-in.
-        DATANODES | VIKINGFILE => return Err(LOGIN_REQUIRED.into()),
+        DATANODES => datanodes(app, uri).await?,
+        // Unlocks through the Hydra API with a signed-in account; Chimaera has no sign-in.
+        VIKINGFILE => return Err(LOGIN_REQUIRED.into()),
         MEDIAFIRE => mediafire(uri).await?,
-        FUCKINGFAST => fuckingfast(uri).await?,
+        FUCKINGFAST => fuckingfast(app, uri).await?,
         ROOTZ => rootz(uri).await?,
+        FILEKEEPER => filekeeper(uri).await?,
         ARCHIVE_ORG => {
             let (url, filename) = archive_org(uri).ok_or(ARCHIVE_ORG_INVALID)?;
             return Ok(Resolved { url, headers: vec![], filename: Some(sanitize(&filename)) });
@@ -129,6 +195,113 @@ async fn gofile(uri: &str) -> Result<String, String> {
         return Ok(url);
     }
     Err(format!("Gofile file {id} is not available on the Gofile download mirror (HTTP {}).", response.status().as_u16()))
+}
+
+/// Destroys every window whose label starts with `prefix` when dropped, so a resolve the batch
+/// drops mid-way (a pause) does not leave its hoster window open.
+struct CloseWindows {
+    app: AppHandle,
+    prefix: &'static str,
+}
+
+impl Drop for CloseWindows {
+    fn drop(&mut self) {
+        for (label, window) in self.app.webview_windows() {
+            if label.starts_with(self.prefix) {
+                let _ = window.destroy();
+            }
+        }
+    }
+}
+
+// ---- Datanodes ----
+
+/// Pages the Datanodes window may load: the site and its Cloudflare Turnstile check.
+fn is_datanodes_page(url: &url::Url) -> bool {
+    matches!(url.scheme(), "about" | "blob" | "data")
+        || matches!(url.host_str(), Some("datanodes.to" | "www.datanodes.to" | "challenges.cloudflare.com"))
+}
+
+/// Datanodes gates free downloads behind a Cloudflare Turnstile check, which only a person can pass.
+/// The page opens in a window; the file link it then navigates to (or downloads) is caught, checked
+/// to answer with a file, and the window closes.
+async fn datanodes(app: &AppHandle, uri: &str) -> Result<String, String> {
+    let page: url::Url = uri.parse().map_err(|_| format!("Invalid datanodes URL: {uri}"))?;
+    if let Some(old) = app.get_webview_window(DATANODES_LABEL) {
+        let _ = old.destroy();
+    }
+    // None means the window closed.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Option<String>>();
+    let (nav_tx, download_tx) = (tx.clone(), tx.clone());
+    let popup_app = app.clone();
+    let mut builder = WebviewWindowBuilder::new(app, DATANODES_LABEL, WebviewUrl::External(page))
+        .title("Datanodes")
+        // Under the site's 768px breakpoint the verification and download button stack in one column,
+        // so they stay visible in a narrow (tiled) window.
+        .inner_size(600.0, 800.0)
+        .on_new_window(move |_, features| popup_sink(&popup_app, features))
+        .on_navigation(move |url| {
+            if is_datanodes_page(url) {
+                return true;
+            }
+            let _ = nav_tx.send(Some(url.to_string()));
+            false
+        })
+        .on_download(move |_, event| {
+            if let DownloadEvent::Requested { url, .. } = event {
+                let _ = download_tx.send(Some(url.to_string()));
+            }
+            false
+        });
+    if let Some(main) = app.get_webview_window("main") {
+        builder = builder.parent(&main).map_err(|e| e.to_string())?;
+    }
+    let window = builder.build().map_err(|e| e.to_string())?;
+    // DATANODES_POPUP_PREFIX starts with DATANODES_LABEL, so the pop-ups close too.
+    let _close = CloseWindows { app: app.clone(), prefix: DATANODES_LABEL };
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Destroyed) {
+            let _ = tx.send(None);
+        }
+    });
+    let found = tokio::time::timeout(Duration::from_secs(600), async {
+        // An ad redirect answers with a web page, so only a link that serves a file counts.
+        while let Some(Some(url)) = rx.recv().await {
+            match http_download::preflight(&url, &[]).await {
+                Ok(()) => return Some(url),
+                Err(e) => eprintln!("[datanodes] caught link is not a file: {e}"),
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten();
+    let _ = window.destroy();
+    for (label, popup) in app.webview_windows() {
+        if label.starts_with(DATANODES_POPUP_PREFIX) {
+            let _ = popup.destroy();
+        }
+    }
+    found.ok_or_else(|| DATANODES_CLOSED.into())
+}
+
+/// A hidden window for a Datanodes pop-up: the opener gets a real window, the ad never loads.
+fn popup_sink(app: &AppHandle, features: tauri::webview::NewWindowFeatures) -> NewWindowResponse<tauri::Wry> {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let label = format!("{DATANODES_POPUP_PREFIX}{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let blank = WebviewUrl::External("about:blank".parse().expect("valid URL"));
+    match WebviewWindowBuilder::new(app, label, blank)
+        .window_features(features)
+        .visible(false)
+        .focused(false)
+        .skip_taskbar(true)
+        .on_navigation(|url| url.scheme() == "about")
+        .build()
+    {
+        Ok(window) => NewWindowResponse::Create { window },
+        Err(_) => NewWindowResponse::Deny,
+    }
 }
 
 // ---- PixelDrain ----
@@ -208,40 +381,196 @@ async fn mediafire(uri: &str) -> Result<String, String> {
 
 // ---- FuckingFast ----
 
-fn fuckingfast_link(html: &str) -> Option<String> {
-    const MARKER: &str = "window.open(\"https://fuckingfast.co/dl/";
-    let mut from = 0;
-    while let Some(at) = html[from..].find(MARKER) {
-        let start = from + at + "window.open(\"".len();
-        let end = start + html[start..].find('"')?;
-        if html[end + 1..].starts_with(')') {
-            return Some(html[start..end].to_string());
-        }
-        from = start;
+const FUCKINGFAST_LABEL: &str = "fuckingfast";
+const FUCKINGFAST_TIMEOUT: Duration = Duration::from_secs(45);
+/// The page script reports here; the window never loads it.
+const FUCKINGFAST_REPORT: &str = "chimaera.invalid";
+/// Waits for the page's download button, posts it like the site does (htmx) and reports the
+/// HX-Redirect file link, or why there is none, by navigating to FUCKINGFAST_REPORT.
+const FUCKINGFAST_SCRIPT: &str = r#"(() => {
+  if (!/(^|\.)fuckingfast\.(co|net)$/.test(location.hostname) || window.__chimaeraFF) return;
+  window.__chimaeraFF = true;
+  const id = location.pathname.split("/").filter(Boolean)[0];
+  if (!id) return;
+  const go = "/f/" + encodeURIComponent(id) + "/go";
+  const report = (query) => { location.href = "https://chimaera.invalid/ff?" + query; };
+  const tick = async () => {
+    if (document.querySelector('[hx-post="' + go + '"]')) {
+      try {
+        const r = await fetch(go, { method: "POST", headers: { "HX-Request": "true", "HX-Current-URL": location.href } });
+        const link = r.headers.get("HX-Redirect");
+        report(link ? "link=" + encodeURIComponent(new URL(link, location.href).href) : "status=" + r.status);
+      } catch (e) { report("status=0"); }
+      return;
     }
-    None
+    const text = document.body ? document.body.innerText : "";
+    if (text.includes("File Not Found Or Deleted")) return report("state=not-found");
+    if (/rate limit/i.test(text)) return report("state=rate-limited");
+    setTimeout(tick, 500);
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick); else tick();
+})();"#;
+
+fn is_fuckingfast_host(url: &url::Url) -> bool {
+    url.scheme() == "https" && url.host_str().is_some_and(|h| ["fuckingfast.co", "fuckingfast.net"].iter().any(|d| h == *d || h.ends_with(&format!(".{d}"))))
 }
 
-async fn fuckingfast(uri: &str) -> Result<String, String> {
-    if !uri.to_ascii_lowercase().contains("fuckingfast.co") {
-        return Err("Unsupported domain. Supported domains: fuckingfast.co".into());
+/// Pages the FuckingFast window may load: the site and its Cloudflare check.
+fn is_fuckingfast_page(url: &url::Url) -> bool {
+    matches!(url.scheme(), "about" | "blob" | "data") || is_fuckingfast_host(url) || url.host_str() == Some("challenges.cloudflare.com")
+}
+
+/// What the page script reported: the file link, or the error to show.
+fn fuckingfast_report(url: &url::Url) -> Result<String, String> {
+    let query: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
+    if let Some(link) = query.get("link") {
+        return match url::Url::parse(link) {
+            Ok(link) if is_fuckingfast_host(&link) => Ok(link.to_string()),
+            _ => Err("Could not extract download link from page".into()),
+        };
     }
-    let response = client(Duration::from_secs(30))?.get(uri).header("user-agent", USER_AGENT).send().await.map_err(|e| e.to_string())?;
-    match response.status().as_u16() {
-        404 => return Err("File not found".into()),
-        429 => return Err("Rate limit exceeded. Please try again later.".into()),
-        403 => return Err("Access denied. File may be private or deleted.".into()),
-        s if s >= 400 => return Err(format!("Network error: {s}")),
-        _ => {}
+    Err(match query.get("state").map(String::as_str) {
+        Some("not-found") => "File not found or deleted".into(),
+        Some("rate-limited") => "Rate limit exceeded. Please wait a few minutes and try again.".into(),
+        _ if query.get("status").map(String::as_str) == Some("429") => "Rate limit exceeded. Please wait a few minutes and try again.".into(),
+        _ => format!("Could not extract download link from page (HTTP {})", query.get("status").map_or("?", String::as_str)),
+    })
+}
+
+/// FuckingFast pages sit behind a Cloudflare check that only a browser passes, so a hidden window
+/// opens the page and asks for the link; the file itself downloads without it. One link at a time.
+async fn fuckingfast(app: &AppHandle, uri: &str) -> Result<String, String> {
+    static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let mut page: url::Url = uri.parse().map_err(|_| "Invalid FuckingFast URL".to_string())?;
+    if !is_fuckingfast_host(&page) {
+        return Err("Unsupported domain. Supported domains: fuckingfast.co, fuckingfast.net".into());
     }
-    let html = response.text().await.map_err(|e| e.to_string())?;
-    if html.to_lowercase().contains("rate limit") {
-        return Err("Rate limit exceeded. Please wait a few minutes and try again.".into());
+    page.set_fragment(None);
+    let _turn = ONE_AT_A_TIME.lock().await;
+    if let Some(old) = app.get_webview_window(FUCKINGFAST_LABEL) {
+        let _ = old.destroy();
     }
-    if html.contains("File Not Found Or Deleted") {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<String, String>>();
+    let window = WebviewWindowBuilder::new(app, FUCKINGFAST_LABEL, WebviewUrl::External(page))
+        .title("FuckingFast")
+        .visible(false)
+        .focused(false)
+        .skip_taskbar(true)
+        .initialization_script(FUCKINGFAST_SCRIPT)
+        .on_new_window(|_, _| NewWindowResponse::Deny)
+        .on_navigation(move |url| {
+            if url.host_str() == Some(FUCKINGFAST_REPORT) {
+                let _ = tx.send(fuckingfast_report(url));
+                return false;
+            }
+            is_fuckingfast_page(url)
+        })
+        .build()
+        .map_err(|e| e.to_string())?;
+    let _close = CloseWindows { app: app.clone(), prefix: FUCKINGFAST_LABEL };
+    let result = tokio::time::timeout(FUCKINGFAST_TIMEOUT, rx.recv()).await;
+    let _ = window.destroy();
+    match result {
+        Ok(Some(result)) => result,
+        _ => Err(FUCKINGFAST_TIMEOUT_ERROR.into()),
+    }
+}
+
+// ---- FileKeeper ----
+
+const FILEKEEPER_MAX_REDIRECTS: usize = 5;
+const FILEKEEPER_MAX_COUNTDOWN_SECS: u64 = 30;
+
+/// `data-<name>="..."` on the FileKeeper page, with HTML entities decoded.
+fn data_attr(html: &str, name: &str) -> Option<String> {
+    let key = format!("data-{name}=\"");
+    let start = html.find(&key)? + key.len();
+    let raw = &html[start..start + html[start..].find('"')?];
+    Some(raw.replace("&quot;", "\"").replace("&#39;", "'").replace("&#x27;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&"))
+}
+
+/// filekeeper.net or one of its subdomains, over https.
+fn is_filekeeper(url: &url::Url) -> bool {
+    url.scheme() == "https" && url.host_str().is_some_and(|h| h == "filekeeper.net" || h.ends_with(".filekeeper.net"))
+}
+
+/// One request that follows FileKeeper's own redirects, keeping its cookies. Returns the response
+/// and its URL, plus true when a redirect left FileKeeper: that URL is the file.
+async fn filekeeper_request(client: &reqwest::Client, mut url: String, cookies: &mut Vec<(String, String)>, mut form: Option<Vec<(&str, String)>>) -> Result<(reqwest::Response, String, bool), String> {
+    for _ in 0..=FILEKEEPER_MAX_REDIRECTS {
+        let cookie = cookies.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("; ");
+        let mut request = match &form {
+            Some(fields) => client.post(&url).header("referer", &url).form(fields),
+            None => client.get(&url),
+        };
+        request = request.header("user-agent", USER_AGENT);
+        if !cookie.is_empty() {
+            request = request.header("cookie", cookie);
+        }
+        let response = request.send().await.map_err(|e| e.to_string())?;
+        for set in response.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()) {
+            if let Some((name, value)) = set.split(';').next().and_then(|pair| pair.split_once('=')) {
+                let name = name.trim();
+                cookies.retain(|(k, _)| k != name);
+                cookies.push((name.trim().to_string(), value.trim().to_string()));
+            }
+        }
+        let Some(location) = response.headers().get("location").and_then(|v| v.to_str().ok()) else {
+            return Ok((response, url, false));
+        };
+        let next = url::Url::parse(&url).and_then(|base| base.join(location)).map_err(|e| e.to_string())?;
+        url = next.to_string();
+        if !is_filekeeper(&next) {
+            return Ok((response, url, true));
+        }
+        // The site moves the file code into a cookie and redirects with a GET.
+        form = None;
+    }
+    Err("FileKeeper redirected too many times".into())
+}
+
+/// FileKeeper runs XFileSharing: the file page shows a short countdown, then a form post
+/// redirects to the file on its download host.
+async fn filekeeper(uri: &str) -> Result<String, String> {
+    let page = url::Url::parse(uri).map_err(|_| "Invalid FileKeeper URL".to_string())?;
+    if !is_filekeeper(&page) {
+        return Err("Invalid FileKeeper URL".into());
+    }
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build().map_err(|e| e.to_string())?;
+    let mut cookies = Vec::new();
+    let (response, page_url, left) = filekeeper_request(&client, uri.to_string(), &mut cookies, None).await?;
+    let status = response.status().as_u16();
+    if status == 404 {
         return Err("File not found or deleted".into());
     }
-    fuckingfast_link(&html).ok_or_else(|| "Could not extract download link from page".into())
+    if !response.status().is_success() || left {
+        return Err(format!("FileKeeper returned HTTP {status}"));
+    }
+    let html = response.text().await.map_err(|e| e.to_string())?;
+    let code = data_attr(&html, "code").filter(|c| !c.is_empty()).ok_or("Could not find the FileKeeper download form")?;
+    if data_attr(&html, "has-password").as_deref() == Some("true") {
+        return Err("FileKeeper file is password protected".into());
+    }
+    if data_attr(&html, "has-captcha").as_deref() == Some("true") {
+        return Err("FileKeeper requires a captcha for this file".into());
+    }
+    // Honor the page's countdown in case the server starts enforcing it.
+    let countdown = data_attr(&html, "countdown").and_then(|c| c.parse::<u64>().ok()).unwrap_or(0).min(FILEKEEPER_MAX_COUNTDOWN_SECS);
+    tokio::time::sleep(Duration::from_secs(countdown)).await;
+    let method = data_attr(&html, "method").filter(|m| !m.is_empty()).unwrap_or_else(|| "Free download".into());
+    let form = vec![
+        ("op", "download2".to_string()),
+        ("id", code),
+        ("rand", data_attr(&html, "rand").unwrap_or_default()),
+        ("referer", data_attr(&html, "referer").unwrap_or_default()),
+        ("method_free", method),
+        ("down_direct", "1".to_string()),
+    ];
+    let (_, file_url, left) = filekeeper_request(&client, page_url, &mut cookies, Some(form)).await?;
+    if !left {
+        return Err("FileKeeper did not return a download link".into());
+    }
+    Ok(file_url)
 }
 
 // ---- Rootz ----
@@ -359,6 +688,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn datanodes_window_keeps_only_site_and_turnstile_pages() {
+        let page = |u: &str| is_datanodes_page(&u.parse().unwrap());
+        assert!(page("https://datanodes.to/download"));
+        assert!(page("https://challenges.cloudflare.com/cdn-cgi/challenge-platform/x"));
+        assert!(page("about:blank"));
+        assert!(!page("https://tunnel5.dlproxy.uk/download/abc"));
+        assert!(!page("https://rwbad2.xyz/pop"));
+    }
+
+    #[test]
     fn filename_hints_follow_resolve_filename() {
         assert_eq!(filename_hint("https://host/f/abc#Game.part1.rar", "https://cdn/x").as_deref(), Some("Game.part1.rar"));
         assert_eq!(filename_hint("https://host/Game%20Setup.zip", "https://cdn/token").as_deref(), Some("Game Setup.zip"));
@@ -377,8 +716,64 @@ mod tests {
     }
 
     #[test]
+    fn multipart_parts_must_be_ordered_unique_links_starting_at_uri() {
+        let parts = |v: Value| download_parts("a", &v);
+        assert_eq!(parts(Value::Null), Ok(None));
+        assert_eq!(parts(serde_json::json!(["a", "b"])), Ok(Some(vec!["a".to_string(), "b".to_string()])));
+        assert!(parts(serde_json::json!(["a"])).is_err());
+        assert!(parts(serde_json::json!(["b", "a"])).is_err());
+        assert!(parts(serde_json::json!(["a", "a"])).is_err());
+        assert!(parts(serde_json::json!(["a", ""])).is_err());
+        assert!(parts(serde_json::json!(["a", 3])).is_err());
+        assert!(parts(serde_json::json!("a")).is_err());
+    }
+
+    #[test]
+    fn multipart_folder_follows_the_first_volume() {
+        assert_eq!(multipart_folder("Game.part01.rar"), "Game");
+        assert_eq!(multipart_folder("Game_v1.2.PART001.RAR"), "Game_v1.2");
+        assert_eq!(multipart_folder("dir/Game.part1.rar"), "Game");
+        assert_eq!(multipart_folder("Game.7z.001"), "Game");
+        assert_eq!(multipart_folder("Game.zip.01"), "Game");
+        assert_eq!(multipart_folder("Game - .part02.rar"), "Game - .part02");
+        assert_eq!(multipart_folder("Setup-Game.bin"), "Setup-Game");
+        assert_eq!(multipart_folder(".part1.rar"), "download");
+    }
+
+    #[test]
+    fn multipart_total_counts_unknown_parts_as_the_largest() {
+        assert_eq!(estimate_parts_total(&[Some(10), Some(4)], 99), 14);
+        assert_eq!(estimate_parts_total(&[Some(10), None, None], 99), 30);
+        assert_eq!(estimate_parts_total(&[None, None], 99), 99);
+        assert_eq!(estimate_parts_total(&[Some(0), None], 7), 7);
+    }
+
+    #[test]
+    fn fuckingfast_window_and_reports() {
+        let url = |u: &str| u.parse::<url::Url>().unwrap();
+        assert!(is_fuckingfast_page(&url("https://fuckingfast.co/abc")));
+        assert!(is_fuckingfast_page(&url("https://fuckingfast.net/abc")));
+        assert!(is_fuckingfast_page(&url("https://challenges.cloudflare.com/x")));
+        assert!(!is_fuckingfast_page(&url("https://ads.example/pop")));
+        assert!(!is_fuckingfast_page(&url("http://fuckingfast.co/abc")));
+        let link = "https://fuckingfast.co/dl/abc?t=1";
+        let report = |q: &str| fuckingfast_report(&url(&format!("https://chimaera.invalid/ff?{q}")));
+        assert_eq!(report(&format!("link={}", utf8_percent_encode(link, COMPONENT))), Ok(link.to_string()));
+        assert!(report("link=https%3A%2F%2Fevil.example%2Fx").is_err());
+        assert_eq!(report("state=not-found"), Err("File not found or deleted".into()));
+        assert!(report("status=429").unwrap_err().starts_with("Rate limit"));
+        assert!(report("status=500").unwrap_err().contains("HTTP 500"));
+    }
+
+    #[test]
     fn page_scrapers() {
-        assert_eq!(fuckingfast_link(r#"x window.open("https://fuckingfast.co/dl/abc?x=1") y"#).as_deref(), Some("https://fuckingfast.co/dl/abc?x=1"));
+        let html = r#"<div data-code="k3x" data-rand="r9" data-has-password="false" data-countdown="5"></div>"#;
+        assert_eq!(data_attr(html, "code").as_deref(), Some("k3x"));
+        assert_eq!(data_attr(html, "countdown").as_deref(), Some("5"));
+        assert_eq!(data_attr(html, "referer"), None);
+        assert_eq!(data_attr(r#"data-referer="https://s/?a=1&amp;b=&quot;2&quot;""#, "referer").as_deref(), Some("https://s/?a=1&b=\"2\""));
+        assert!(is_filekeeper(&"https://www.filekeeper.net/x".parse().unwrap()));
+        assert!(!is_filekeeper(&"https://filekeeper.net.evil.example/x".parse().unwrap()));
         assert_eq!(rootz_page_token(r#"{\"pageToken\":\"tok123\"}"#).as_deref(), Some("tok123"));
         assert_eq!(rootz_page_token(r#""pageToken" : "abc""#).as_deref(), Some("abc"));
         assert_eq!(gofile_id("gofile.io/d/AbC12?password=x").as_deref(), Some("AbC12"));
@@ -394,5 +789,19 @@ mod tests {
         assert_eq!(archive_org("https://archive.org/details/my-item"), None);
         assert_eq!(archive_org("https://archive.org/download/my-item/folder/"), None);
         assert_eq!(archive_org("https://example.com/download/my-item/a.zip"), None);
+    }
+}
+
+#[cfg(test)]
+mod live {
+    /// `CHIMAERA_LIVE_FILEKEEPER=<file page> cargo test --lib live_filekeeper -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn live_filekeeper() {
+        let uri = std::env::var("CHIMAERA_LIVE_FILEKEEPER").expect("set CHIMAERA_LIVE_FILEKEEPER");
+        let url = super::filekeeper(&uri).await.expect("resolves");
+        println!("file link host: {:?}", url::Url::parse(&url).unwrap().host_str());
+        crate::http_download::preflight(&url, &[]).await.expect("serves a file");
+        println!("name: {:?}", crate::http_download::probe_filename(&url, &[]).await.or_else(|| super::filename_hint(&uri, &url)));
     }
 }

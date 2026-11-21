@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::sync::watch;
 
-use crate::debrid::Entry;
+use crate::debrid::{Entry, Link};
 
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0";
 const RANGE_SIZE: u64 = 8 * 1024 * 1024;
@@ -39,8 +39,24 @@ const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
 const STRONG_LAST_MODIFIED_AGE_SECS: i64 = 60;
 const MAX_RANGE_STATE_SIZE: u64 = 1024 * 1024;
 const PREFLIGHT_ATTEMPTS: u32 = 3;
+/// Tries for a connection-bound link to land on its IP: with 1 connection in 3 on it, 20 tries
+/// miss about 1 in 3,000 times.
+const MAX_BOUND_RETRIES: u32 = 20;
+const BOUND_PREFLIGHT_ATTEMPTS: u32 = 12;
+const BOUND_RETRY_DELAY: Duration = Duration::from_millis(500);
 const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(15);
 const RETRYABLE_STATUS: [u16; 6] = [408, 429, 500, 502, 503, 504];
+
+/// Datanodes' file servers lock a link to one public IP and answer 403 ("made for another
+/// connection") to any other. Behind a carrier-grade NAT that hands each connection a different
+/// IP, a 403 there is worth retrying on a new connection.
+fn connection_bound(url: &reqwest::Url, status: u16) -> bool {
+    status == 403 && url.host_str().is_some_and(|h| h == "dlproxy.uk" || h.ends_with(".dlproxy.uk"))
+}
+
+fn new_client() -> Result<Client, String> {
+    Client::builder().connect_timeout(STALL_TIMEOUT).build().map_err(|e| e.to_string())
+}
 
 // ---- Failures ----
 
@@ -66,11 +82,13 @@ struct Failure {
     message: String,
     /// Raised by the parallel range path, which two failures downgrade to one connection.
     parallel: bool,
+    /// A 403 that a new connection may clear (see `connection_bound`).
+    bound: bool,
 }
 
 impl Failure {
     fn new(kind: Kind, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into(), parallel: false }
+        Self { kind, message: message.into(), parallel: false, bound: false }
     }
     fn fatal(message: impl Into<String>) -> Self {
         Self::new(Kind::Fatal, message)
@@ -88,10 +106,13 @@ impl Failure {
     fn status(response: &Response) -> Self {
         let code = response.status().as_u16();
         let retry_after = header(response, "retry-after").and_then(|v| retry_after(&v, unix_now()));
-        Self::new(
-            Kind::Status { retryable: RETRYABLE_STATUS.contains(&code), retry_after },
+        let bound = connection_bound(response.url(), code);
+        let mut failure = Self::new(
+            Kind::Status { retryable: RETRYABLE_STATUS.contains(&code) || bound, retry_after },
             format!("The download link is not available (HTTP {code})."),
-        )
+        );
+        failure.bound = bound;
+        failure
     }
 }
 
@@ -433,7 +454,8 @@ struct Inner {
 struct Ctx {
     options: Options,
     ranges_dir: PathBuf,
-    client: Client,
+    /// Replaced before a status retry, so the retry opens a new connection.
+    client: Mutex<Client>,
     inner: Mutex<Inner>,
     stop: watch::Receiver<bool>,
 }
@@ -446,7 +468,7 @@ pub struct HttpDownload {
 
 impl HttpDownload {
     pub fn start(options: Options, ranges_dir: PathBuf, limit: Option<u64>) -> Result<Arc<Self>, String> {
-        let client = Client::builder().connect_timeout(STALL_TIMEOUT).build().map_err(|e| e.to_string())?;
+        let client = Mutex::new(new_client()?);
         let (stop, stop_rx) = watch::channel(false);
         let ctx = Arc::new(Ctx {
             inner: Mutex::new(Inner {
@@ -597,7 +619,7 @@ impl Ctx {
         let mut stop = self.stop.clone();
         tokio::select! {
             _ = stop.wait_for(|s| *s) => Err(Failure::stopped()),
-            sent = tokio::time::timeout(STALL_TIMEOUT, self.client.get(&self.options.url).headers(headers).send()) => match sent {
+            sent = tokio::time::timeout(STALL_TIMEOUT, self.client.lock().unwrap_or_else(|e| e.into_inner()).clone().get(&self.options.url).headers(headers).send()) => match sent {
                 Err(_) => Err(Failure::new(Kind::Stall, "The download server did not answer")),
                 Ok(Err(e)) => Err(Failure::network(e)),
                 Ok(Ok(response)) => Ok(response),
@@ -643,7 +665,7 @@ fn backoff(attempt: u32) -> Duration {
 /// `startDownloadWithRetry` and `handleDownloadErrorWithRetry`.
 async fn run_with_retry(ctx: &Ctx) -> Result<(), Failure> {
     let (mut retries, mut status_retries, mut budget_resets, mut restarts) = (0u32, 0u32, 0u32, 0u32);
-    let (mut parallel_failures, mut parallel_disabled) = (0u32, false);
+    let (mut parallel_failures, mut parallel_disabled, mut bound_retries) = (0u32, false, 0u32);
     loop {
         if ctx.stopped() {
             return Err(Failure::stopped());
@@ -660,6 +682,10 @@ async fn run_with_retry(ctx: &Ctx) -> Result<(), Failure> {
             status_retries = 0;
             budget_resets += 1;
         }
+        // Bytes arrived, so this connection had the link's IP; each later drop gets a full set of tries.
+        if ctx.lock().attempt_bytes > 0 {
+            bound_retries = 0;
+        }
         if failure.kind == Kind::RangesUnsupported {
             parallel_disabled = true;
         } else if failure.parallel && matches!(failure.kind, Kind::Network | Kind::Stall) {
@@ -667,6 +693,15 @@ async fn run_with_retry(ctx: &Ctx) -> Result<(), Failure> {
             parallel_disabled |= parallel_failures >= PARALLEL_FAILURE_LIMIT;
         }
         let delay = match failure.kind {
+            // Each new connection gets another public IP; quick tries until one is the link's.
+            Kind::Status { .. } if failure.bound && bound_retries < MAX_BOUND_RETRIES => {
+                bound_retries += 1;
+                // One stream keeps the connection that landed on the right IP; parallel ranges would
+                // each need their own lucky connection.
+                parallel_disabled = true;
+                *ctx.client.lock().unwrap_or_else(|e| e.into_inner()) = new_client().map_err(Failure::fatal)?;
+                BOUND_RETRY_DELAY
+            }
             Kind::Status { retryable: true, retry_after } => {
                 if status_retries >= MAX_STATUS_RETRY_ATTEMPTS {
                     return Err(Failure::fatal(format!(
@@ -675,6 +710,9 @@ async fn run_with_retry(ctx: &Ctx) -> Result<(), Failure> {
                     )));
                 }
                 status_retries += 1;
+                if let Ok(client) = new_client() {
+                    *ctx.client.lock().unwrap_or_else(|e| e.into_inner()) = client;
+                }
                 retry_after.map_or_else(|| backoff(status_retries), |d| d.min(MAX_RETRY_AFTER))
             }
             Kind::Network | Kind::Stall | Kind::RangesUnsupported if retries < MAX_RETRY_ATTEMPTS => {
@@ -1014,8 +1052,11 @@ async fn range_worker(
 /// `validateJsDownloadResponse`: a 1-byte GET so a dead or expired link fails before the download
 /// is queued. Transient statuses are retried, then let through for the downloader to retry.
 pub async fn preflight(url: &str, headers: &[(String, String)]) -> Result<(), String> {
-    let client = Client::builder().timeout(PREFLIGHT_TIMEOUT).build().map_err(|e| e.to_string())?;
-    for attempt in 1..=PREFLIGHT_ATTEMPTS {
+    let (mut attempt, mut bound_attempts) = (0, 0);
+    while attempt < PREFLIGHT_ATTEMPTS {
+        attempt += 1;
+        // A client per attempt, so a retry opens a new connection (see `connection_bound`).
+        let client = Client::builder().timeout(PREFLIGHT_TIMEOUT).build().map_err(|e| e.to_string())?;
         let mut request = client.get(url).header("user-agent", USER_AGENT).header("accept-encoding", "identity").header("range", "bytes=0-0");
         for (key, value) in headers {
             request = request.header(key.as_str(), value.as_str());
@@ -1031,6 +1072,13 @@ pub async fn preflight(url: &str, headers: &[(String, String)]) -> Result<(), St
                 continue;
             }
             return Ok(());
+        }
+        if connection_bound(response.url(), status) && bound_attempts < BOUND_PREFLIGHT_ATTEMPTS {
+            // Its own budget: the try does not count toward PREFLIGHT_ATTEMPTS.
+            bound_attempts += 1;
+            attempt -= 1;
+            tokio::time::sleep(BOUND_RETRY_DELAY).await;
+            continue;
         }
         if status >= 400 {
             return Err(format!("The download link is not available (HTTP {status})."));
@@ -1063,10 +1111,21 @@ struct BatchState {
     state: State,
     error: Option<String>,
     limit: Option<u64>,
+    /// Multi-part hoster mirrors: each part's size once known, the part running, and the size
+    /// shown until a part is seen. None for other batches, whose sizes are known up front.
+    parts: Option<PartSizes>,
+}
+
+struct PartSizes {
+    sizes: Vec<Option<u64>>,
+    index: usize,
+    fallback: u64,
 }
 
 impl Batch {
-    pub fn start(entries: Vec<Entry>, folder: Option<String>, save_path: PathBuf, ranges_dir: PathBuf, limit: Option<u64>) -> Arc<Self> {
+    /// `parts_fallback`: Some for a multi-part hoster mirror, with the size to show before any
+    /// part is seen.
+    pub fn start(app: tauri::AppHandle, entries: Vec<Entry>, folder: Option<String>, save_path: PathBuf, ranges_dir: PathBuf, limit: Option<u64>, parts_fallback: Option<u64>) -> Arc<Self> {
         // Unknown sizes (AllDebrid) leave the total to the files themselves.
         let total = if entries.iter().all(|e| e.size.is_some()) { entries.iter().filter_map(|e| e.size).sum() } else { 0 };
         let shared = Arc::new(Mutex::new(BatchState {
@@ -1078,9 +1137,10 @@ impl Batch {
             state: State::Active,
             error: None,
             limit,
+            parts: parts_fallback.map(|fallback| PartSizes { sizes: vec![None; entries.len()], index: 0, fallback }),
         }));
         let (stop, stop_rx) = watch::channel(false);
-        let task = tauri::async_runtime::spawn(run_batch(shared.clone(), entries, save_path, ranges_dir, stop_rx));
+        let task = tauri::async_runtime::spawn(run_batch(app, shared.clone(), entries, save_path, ranges_dir, stop_rx));
         Arc::new(Self { shared, stop, task: tokio::sync::Mutex::new(Some(task)) })
     }
 
@@ -1093,9 +1153,20 @@ impl Batch {
         let current = s.current.as_ref().map(|j| j.progress()).unwrap_or_default();
         let bytes = s.done_bytes + current.bytes;
         let name = if current.folder_name.is_empty() { s.last_name.clone() } else { current.folder_name.clone() };
+        let file_size = match &s.parts {
+            Some(parts) => {
+                let mut sizes = parts.sizes.clone();
+                if let Some(size) = sizes.get_mut(parts.index).filter(|_| current.file_size > 0) {
+                    *size = Some(current.file_size);
+                }
+                crate::hosters::estimate_parts_total(&sizes, parts.fallback).max(bytes)
+            }
+            None if s.total > 0 => s.total.max(bytes),
+            None => s.done_bytes + current.file_size,
+        };
         Progress {
             folder_name: s.folder.clone().unwrap_or(name),
-            file_size: if s.total > 0 { s.total.max(bytes) } else { s.done_bytes + current.file_size },
+            file_size,
             bytes,
             speed: if s.state == State::Active { current.speed } else { 0.0 },
             state: s.state,
@@ -1134,7 +1205,78 @@ impl Batch {
     }
 }
 
-async fn run_batch(shared: Arc<Mutex<BatchState>>, entries: Vec<Entry>, save_path: PathBuf, ranges_dir: PathBuf, stop: watch::Receiver<bool>) {
+/// Where a finished hoster part records its file, so a retry skips it without asking the hoster
+/// again: its link may have expired by then.
+pub(crate) fn receipt_path(dir: &Path, save_path: &Path, uri: &str) -> PathBuf {
+    dir.join(format!("part-{}.json", sha256_hex(&format!("{}\n{uri}", save_path.to_string_lossy()))))
+}
+
+fn read_receipt(path: &Path) -> Option<(String, u64)> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    Some((v["path"].as_str()?.to_string(), v["size"].as_u64()?))
+}
+
+pub(crate) enum PartCheck {
+    /// Finished earlier: its path and size.
+    Done(String, u64),
+    Download,
+    Changed(String),
+}
+
+/// A part with a receipt is done while its file still has the recorded size. A file that changed
+/// is never overwritten; a missing file downloads again.
+pub(crate) fn check_part(receipt: &Path, save_path: &Path) -> PartCheck {
+    let Some((path, size)) = read_receipt(receipt) else { return PartCheck::Download };
+    match std::fs::metadata(save_path.join(&path)).map(|m| m.len()) {
+        Ok(on_disk) if on_disk == size => PartCheck::Done(path, size),
+        Ok(_) => PartCheck::Changed(path),
+        Err(_) => {
+            let _ = std::fs::remove_file(receipt);
+            PartCheck::Download
+        }
+    }
+}
+
+/// The name a link gives its file in Content-Disposition (PixelDrain's `/u/<id>` links have none
+/// in the URL).
+pub async fn probe_filename(url: &str, headers: &[(String, String)]) -> Option<String> {
+    let client = Client::builder().timeout(PREFLIGHT_TIMEOUT).build().ok()?;
+    let mut request = client.get(url).header("user-agent", USER_AGENT).header("accept-encoding", "identity").header("range", "bytes=0-0");
+    for (key, value) in headers {
+        request = request.header(key.as_str(), value.as_str());
+    }
+    let response = request.send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    header(&response, "content-disposition").and_then(|v| disposition_filename(&v))
+}
+
+/// A hoster part's link, headers and path under the download folder.
+async fn resolve_part(app: &tauri::AppHandle, entry: &Entry, used: &mut std::collections::HashSet<String>) -> Result<(String, Vec<(String, String)>, String), String> {
+    let Link::Hoster { downloader, uri, folder, prepared } = &entry.link else { unreachable!("only hoster parts") };
+    let resolved = match prepared {
+        Some(resolved) => resolved.clone(),
+        None => crate::hosters::resolve(app, *downloader, uri).await?,
+    };
+    let path = match &entry.path {
+        Some(path) => path.clone(),
+        None => {
+            let name = match resolved.filename.clone() {
+                Some(name) => Some(name),
+                None => probe_filename(&resolved.url, &resolved.headers).await,
+            };
+            let name = name.map(|n| crate::hosters::sanitize(&n)).filter(|n| !n.trim().is_empty()).ok_or(crate::hosters::MULTIPART_NO_NAME)?;
+            format!("{folder}/{name}")
+        }
+    };
+    if !used.insert(path.to_lowercase()) {
+        return Err("Two download parts have the same file name.".into());
+    }
+    Ok((resolved.url, resolved.headers, path))
+}
+
+async fn run_batch(app: tauri::AppHandle, shared: Arc<Mutex<BatchState>>, entries: Vec<Entry>, save_path: PathBuf, ranges_dir: PathBuf, stop: watch::Receiver<bool>) {
     let lock = || shared.lock().unwrap_or_else(|e| e.into_inner());
     let finish = |state: State, error: Option<String>| {
         let mut s = shared.lock().unwrap_or_else(|e| e.into_inner());
@@ -1144,9 +1286,38 @@ async fn run_batch(shared: Arc<Mutex<BatchState>>, entries: Vec<Entry>, save_pat
             s.error = Some(error);
         }
     };
-    for entry in entries {
+    let set_part_size = |index: usize, size: u64| {
+        if let Some(parts) = lock().parts.as_mut() {
+            parts.sizes[index] = Some(size);
+        }
+    };
+    let mut used = std::collections::HashSet::new();
+    for (index, entry) in entries.into_iter().enumerate() {
         if *stop.borrow() {
             return finish(State::Paused, None);
+        }
+        if let Some(parts) = lock().parts.as_mut() {
+            parts.index = index;
+        }
+        let receipt = match &entry.link {
+            Link::Hoster { uri, .. } => Some(receipt_path(&ranges_dir, &save_path, uri)),
+            _ => None,
+        };
+        if let Some(receipt) = &receipt {
+            match check_part(receipt, &save_path) {
+                PartCheck::Done(path, size) => {
+                    used.insert(path.to_lowercase());
+                    set_part_size(index, size);
+                    let mut s = lock();
+                    s.done_bytes += size;
+                    s.last_name = path;
+                    continue;
+                }
+                PartCheck::Changed(path) => {
+                    return finish(State::Error, Some(format!("The finished download part {path} changed on disk, so it was not downloaded again. Delete it to download it again.")));
+                }
+                PartCheck::Download => {}
+            }
         }
         // A file already complete on disk (and not mid-range) is not fetched again.
         if let (Some(path), Some(size)) = (&entry.path, entry.size) {
@@ -1160,15 +1331,21 @@ async fn run_batch(shared: Arc<Mutex<BatchState>>, entries: Vec<Entry>, save_pat
             }
         }
         let mut stopped = stop.clone();
-        let url = tokio::select! {
-            _ = stopped.wait_for(|s| *s) => return finish(State::Paused, None),
-            url = crate::debrid::unlock(&entry.link) => url,
+        let link = async {
+            match &entry.link {
+                Link::Hoster { .. } => resolve_part(&app, &entry, &mut used).await.map(|(url, headers, path)| (url, headers, Some(path))),
+                link => crate::debrid::unlock(link).await.map(|url| (url, entry.headers.clone(), entry.path.clone())),
+            }
         };
-        let url = match url {
-            Ok(url) => url,
+        let link = tokio::select! {
+            _ = stopped.wait_for(|s| *s) => return finish(State::Paused, None),
+            link = link => link,
+        };
+        let (url, headers, filename) = match link {
+            Ok(link) => link,
             Err(e) => return finish(State::Error, Some(e)),
         };
-        let options = Options { url, save_path: save_path.clone(), filename: entry.path.clone(), headers: entry.headers.clone(), resource_id: entry.resource_id.clone() };
+        let options = Options { url, save_path: save_path.clone(), filename: filename.clone(), headers, resource_id: entry.resource_id.clone() };
         let limit = lock().limit;
         let job = match HttpDownload::start(options, ranges_dir.clone(), limit) {
             Ok(job) => job,
@@ -1189,6 +1366,13 @@ async fn run_batch(shared: Arc<Mutex<BatchState>>, entries: Vec<Entry>, save_pat
         if entry.exact_size && entry.size.is_some_and(|s| s != p.bytes) {
             return finish(State::Error, Some("A downloaded file returned fewer bytes than expected. Its link may have expired.".into()));
         }
+        if let (Some(receipt), Some(path)) = (&receipt, &filename) {
+            let written = std::fs::create_dir_all(&ranges_dir).and_then(|_| std::fs::write(receipt, json!({ "path": path, "size": p.bytes }).to_string()));
+            if let Err(e) = written {
+                eprintln!("[http-download] could not record the finished part {path}: {e}");
+            }
+            set_part_size(index, p.bytes);
+        }
         let mut s = lock();
         s.done_bytes += p.bytes;
         s.last_name = p.folder_name;
@@ -1200,6 +1384,25 @@ async fn run_batch(shared: Arc<Mutex<BatchState>>, entries: Vec<Entry>, save_pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finished_parts_are_skipped_kept_or_downloaded_again() {
+        let dir = std::env::temp_dir().join(format!("chimaera-parts-{}", std::process::id()));
+        let save = dir.join("save");
+        std::fs::create_dir_all(save.join("Game")).unwrap();
+        let receipt = receipt_path(&dir, &save, "https://host/f/1");
+        assert_ne!(receipt, receipt_path(&dir, &dir.join("other"), "https://host/f/1"));
+        assert!(matches!(check_part(&receipt, &save), PartCheck::Download));
+        std::fs::write(save.join("Game/Game.part01.rar"), b"12345").unwrap();
+        std::fs::write(&receipt, json!({ "path": "Game/Game.part01.rar", "size": 5 }).to_string()).unwrap();
+        assert!(matches!(check_part(&receipt, &save), PartCheck::Done(p, 5) if p == "Game/Game.part01.rar"));
+        std::fs::write(save.join("Game/Game.part01.rar"), b"123").unwrap();
+        assert!(matches!(check_part(&receipt, &save), PartCheck::Changed(_)));
+        std::fs::remove_file(save.join("Game/Game.part01.rar")).unwrap();
+        assert!(matches!(check_part(&receipt, &save), PartCheck::Download));
+        assert!(!receipt.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn marks_and_finds_gaps_like_electron() {

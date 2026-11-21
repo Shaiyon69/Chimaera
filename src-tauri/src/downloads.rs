@@ -312,13 +312,13 @@ fn ranges_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 
 /// The files of an HTTP download: one hoster file, checked to answer with a file
 /// (`validateDownloadUrl`), or a debrid service's files.
-async fn prepare_http(store: &Store, d: &Value) -> Result<(Vec<Entry>, Option<String>), String> {
+async fn prepare_http(app: &AppHandle, d: &Value) -> Result<(Vec<Entry>, Option<String>), String> {
     let downloader = d["downloader"].as_i64().unwrap_or(-1);
     let uri = d["uri"].as_str().unwrap_or_default();
     // A resumed download keeps the name it already has on disk.
     let resumed = d["folderName"].as_str().filter(|f| !f.is_empty()).map(str::to_string);
     if debrid::is_debrid(downloader) {
-        let mut plan = debrid::plan(store, d).await?;
+        let mut plan = debrid::plan(&app.state::<Store>(), d).await?;
         if let ([entry], Some(name)) = (plan.entries.as_mut_slice(), &resumed) {
             entry.path = Some(name.clone());
         }
@@ -328,7 +328,16 @@ async fn prepare_http(store: &Store, d: &Value) -> Result<(Vec<Entry>, Option<St
     if !hosters::is_hoster(downloader) {
         return Err(NOT_PORTED.into());
     }
-    let resolved = hosters::resolve(downloader, uri).await?;
+    if let Some(parts) = hosters::download_parts(uri, &d["parts"])? {
+        // A re-added download whose first part already finished keeps that part's folder.
+        let save_path = Path::new(d["downloadPath"].as_str().unwrap_or_default());
+        let finished_folder = match http_download::check_part(&http_download::receipt_path(&ranges_dir(app)?, save_path, &parts[0]), save_path) {
+            http_download::PartCheck::Done(path, _) => path.split_once('/').map(|(folder, _)| folder.to_string()),
+            _ => None,
+        };
+        return prepare_parts(app, downloader, parts, resumed.or(finished_folder)).await;
+    }
+    let resolved = hosters::resolve(app, downloader, uri).await?;
     http_download::preflight(&resolved.url, &resolved.headers).await?;
     let entry = Entry {
         link: Link::Direct(resolved.url),
@@ -341,11 +350,49 @@ async fn prepare_http(store: &Store, d: &Value) -> Result<(Vec<Entry>, Option<St
     Ok((vec![entry], None))
 }
 
+/// A multi-part hoster mirror: every part lands in one folder named after the first part. A fresh
+/// start resolves the first part now, to check it and name the folder; the rest resolve in turn.
+async fn prepare_parts(app: &AppHandle, downloader: i64, parts: Vec<String>, resumed: Option<String>) -> Result<(Vec<Entry>, Option<String>), String> {
+    let (folder, first) = match resumed {
+        Some(folder) => (folder, None),
+        None => {
+            let resolved = hosters::resolve(app, downloader, &parts[0]).await?;
+            http_download::preflight(&resolved.url, &resolved.headers).await?;
+            let name = match resolved.filename.clone() {
+                Some(name) => Some(name),
+                None => http_download::probe_filename(&resolved.url, &resolved.headers).await,
+            };
+            let name = name.map(|n| hosters::sanitize(&n)).filter(|n| !n.trim().is_empty()).ok_or(hosters::MULTIPART_NO_NAME)?;
+            let folder = hosters::multipart_folder(&name);
+            (folder.clone(), Some((format!("{folder}/{name}"), resolved)))
+        }
+    };
+    let mut first = first;
+    let entries = parts
+        .into_iter()
+        .map(|uri| {
+            let (path, prepared) = match first.take() {
+                Some((path, resolved)) => (Some(path), Some(resolved)),
+                None => (hosters::filename_hint(&uri, "").map(|n| format!("{folder}/{}", hosters::sanitize(&n))), None),
+            };
+            Entry {
+                link: Link::Hoster { downloader, uri: uri.clone(), folder: folder.clone(), prepared },
+                path,
+                size: None,
+                exact_size: false,
+                resource_id: uri,
+                headers: vec![],
+            }
+        })
+        .collect();
+    Ok((entries, Some(folder)))
+}
+
 /// `startHttpDownload`: the slot is held while the links resolve, so a pause or cancel then wins.
 async fn start_http(app: &AppHandle, d: &Value) -> Result<(), String> {
     let key = id(d);
     let (previous, generation) = claim_slot(app, &key);
-    let prepared = prepare_http(&app.state::<Store>(), d).await;
+    let prepared = prepare_http(app, d).await;
     let ranges = ranges_dir(app)?;
     let state = app.state::<Downloads>();
     let mut slot = state.slot();
@@ -361,7 +408,8 @@ async fn start_http(app: &AppHandle, d: &Value) -> Result<(), String> {
         Ok(_) if !current => Ok(()),
         Ok((entries, folder)) => {
             let save_path = Path::new(d["downloadPath"].as_str().unwrap_or_default()).to_path_buf();
-            let job = Batch::start(entries, folder, save_path, ranges, slot.limit);
+            let parts_fallback = d["parts"].is_array().then(|| d["fileSize"].as_u64().unwrap_or(0));
+            let job = Batch::start(app.clone(), entries, folder, save_path, ranges, slot.limit, parts_fallback);
             slot.http = Some((key, job));
             Ok(())
         }
@@ -653,6 +701,10 @@ fn new_download(app: &AppHandle, payload: &Value) -> Result<Value, String> {
     if downloader == TORRENT && !uri.starts_with("magnet:") {
         return Err("invalid_magnet".into());
     }
+    let parts = hosters::download_parts(uri, &payload["parts"])?;
+    if parts.is_some() && !hosters::MULTIPART.contains(&downloader) {
+        return Err("download_error_multipart_unsupported".into());
+    }
     let file_size = match num(&payload["selectedFilesSize"]) {
         Some(size) => json!(size),
         None => json!(payload["fileSize"].as_str().and_then(parse_bytes)),
@@ -675,6 +727,9 @@ fn new_download(app: &AppHandle, payload: &Value) -> Result<Value, String> {
         "extracting": false,
         "customTrackers": trackers::global_trackers(app)?,
     });
+    if let Some(parts) = parts {
+        download["parts"] = json!(parts);
+    }
     for key in ["automaticallyExtract", "automaticallyDeleteArchiveFiles", "fileIndices", "selectedFilesSize"] {
         if let Some(v) = payload.get(key).filter(|v| !v.is_null()) {
             download[key] = v.clone();
@@ -773,8 +828,11 @@ pub async fn add_game_to_queue(app: &AppHandle, payload: &Value) -> Value {
         Err(e) => return failed(&e),
     };
     // A queued hoster link is checked now, so a dead link fails here and not when its turn comes.
-    if !is_torrent(&download) {
-        if let Err(e) = prepare_http(&app.state::<Store>(), &download).await {
+    // Skipped where the check is slow and repeats at start: Datanodes needs the user to pass a
+    // captcha, FuckingFast waits on a browser window, FileKeeper on its page countdown.
+    let slow_check = matches!(download["downloader"].as_i64(), Some(hosters::DATANODES | hosters::FUCKINGFAST | hosters::FILEKEEPER));
+    if !is_torrent(&download) && !slow_check {
+        if let Err(e) = prepare_http(app, &download).await {
             return failed(&e);
         }
     }
