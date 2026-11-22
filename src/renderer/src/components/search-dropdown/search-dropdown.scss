@@ -2,7 +2,7 @@
 
 .search-dropdown {
   position: fixed;
-  @include globals.glass(var(--glass-2), 14px);
+  @include globals.glass(var(--glass-2), 12px);
   max-height: 350px;
   overflow-y: auto;
   z-index: 1000;
@@ -87,9 +87,10 @@
     }
   }
 
+  // Rows sit inset with their own corners, so the selected one reads as a soft pill.
   &__list {
     list-style: none;
-    padding: 0;
+    padding: 0 4px;
     margin: 0;
   }
 
@@ -128,17 +129,21 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 12px;
+    padding: 8px;
+    border-radius: 8px;
     cursor: pointer;
-    transition: background-color 0.1s ease;
+    transition: background-color 0.12s ease;
     color: var(--text);
     text-align: left;
     border: none;
     background: transparent;
 
-    &:hover,
+    &:hover {
+      background-color: var(--bg-2);
+    }
+
     &--active {
-      background-color: globals.$background-color;
+      background-color: var(--fill);
     }
 
     &:focus {
@@ -178,11 +183,9 @@
     font-style: italic;
   }
 
+  // Matched letters in gold text, no box behind them.
   &__highlight {
-    background-color: rgba(255, 193, 7, 0.4);
-    color: #ffa000;
+    color: #e8c77d;
     font-weight: 600;
-    padding: 0 2px;
-    border-radius: 2px;
   }
 }

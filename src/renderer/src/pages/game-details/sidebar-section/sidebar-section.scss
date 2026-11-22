@@ -73,9 +73,23 @@
   }
 
   &__content {
-    overflow: hidden;
-    transition: max-height 0.4s cubic-bezier(0, 1, 0, 1);
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.32s var(--ease);
     background-color: transparent;
     position: relative;
+
+    &--open {
+      grid-template-rows: 1fr;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      transition: none;
+    }
+  }
+
+  &__inner {
+    min-height: 0;
+    overflow: hidden;
   }
 }

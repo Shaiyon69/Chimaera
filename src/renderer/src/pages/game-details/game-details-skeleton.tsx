@@ -92,7 +92,7 @@ export function GameDetailsSkeleton() {
                 </div>
               </div>
 
-              <div className="sidebar-section__content">
+              <div className="sidebar-section__content sidebar-section__content--open">
                 <div className="stats__section">
                   <div className="stats__category">
                     <div className="stats__category-title">
@@ -132,7 +132,7 @@ export function GameDetailsSkeleton() {
                 </div>
               </div>
 
-              <div className="sidebar-section__content">
+              <div className="sidebar-section__content sidebar-section__content--open">
                 <ul className="list">
                   {Array.from({ length: 4 }).map((_, index) => (
                     <li key={index}>

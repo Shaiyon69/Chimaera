@@ -425,8 +425,10 @@ $hero-height: 350px;
     position: absolute;
     z-index: -1;
     top: -80px;
-    left: -10%;
-    width: 120%;
+    // Kept inside the page: WebKitGTK fails to paint text inside overflow:clip boxes when
+    // scrolled, so no ancestor clips it any more.
+    left: 0;
+    width: 100%;
     height: 720px;
     object-fit: cover;
     filter: blur(80px) saturate(1.5);
@@ -606,19 +608,6 @@ $hero-height: 350px;
       background-color: var(--line);
       color: globals.$body-color;
     }
-  }
-
-  &__stars-icon-container {
-    width: 16px;
-    height: 16px;
-    position: relative;
-  }
-
-  &__stars-icon {
-    width: 70px;
-    position: absolute;
-    top: -28px;
-    left: -27px;
   }
 }
 

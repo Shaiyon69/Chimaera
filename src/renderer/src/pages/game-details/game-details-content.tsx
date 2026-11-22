@@ -99,8 +99,21 @@ export function GameDetailsContent() {
     return t("no_shop_details");
   }, [shopDetails, t, game?.shop]);
 
+  // Some store pages (Cyberpunk 2077, for one) are only images with the words baked in. The short
+  // description then leads as real text; skipped when the body already opens with it.
+  const leadText = useMemo(() => {
+    const short = shopDetails?.short_description?.trim();
+    if (!short) return null;
+    const body = new DOMParser()
+      .parseFromString(shopDetails?.about_the_game ?? "", "text/html")
+      .body.textContent?.replace(/\s+/g, " ")
+      .trim();
+    return body?.startsWith(short.slice(0, 60)) ? null : short;
+  }, [shopDetails]);
+
   const [backdropOpacity, setBackdropOpacity] = useState(1);
-  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
+  // The full store text shows by default; "Show less" folds it for people who want the page short.
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(true);
   const [isDescriptionOverflowing, setIsDescriptionOverflowing] =
     useState(false);
   const descriptionRef = useRef<HTMLDivElement>(null);
@@ -424,6 +437,10 @@ export function GameDetailsContent() {
               <h2 className="game-details__description-title">
                 {t("about_this_game")}
               </h2>
+            )}
+
+            {shopDetails?.about_the_game && leadText && (
+              <p className="game-details__description-lead">{leadText}</p>
             )}
 
             <div

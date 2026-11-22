@@ -63,12 +63,18 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      opacity: 0.9;
     }
 
     &-label {
       flex: 1;
     }
+  }
+
+  &__sidebar-glyph {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    color: var(--tint);
   }
 
   &__sidebar-group {

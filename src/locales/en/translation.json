@@ -18,8 +18,8 @@
     "no_results": "No results found",
     "start_typing": "Start typing to search...",
     "hot": "Hot now",
-    "weekly": "📅 Top games of the week",
-    "achievements": "🏆 Games to beat"
+    "weekly": "Top games of the week",
+    "achievements": "Games to beat"
   },
   "sidebar": {
     "catalogue": "Catalogue",
@@ -1301,7 +1301,9 @@
     "installed_game_not_found_title": "Couldn't find the installed game",
     "installed_game_not_found_description": "Select the game's executable to finish setting it up.",
     "installer_launch_failed": "Couldn't start the installer",
-    "installing": "Installing…"
+    "installing": "Installing…",
+    "clear_completed": "Clear completed",
+    "clear_completed_hint": "Remove finished downloads from this list. Games stay installed; seeding torrents stay."
   },
   "settings": {
     "profile_data_title": "Profile & data",
@@ -2533,7 +2535,8 @@
     "launcher_battlenet": "Battle.net",
     "launcher_rockstar": "Rockstar Games",
     "launcher_xbox": "Xbox / Microsoft Store",
-    "launcher_steam": "Steam"
+    "launcher_steam": "Steam",
+    "mini_view": "Mini view"
   },
   "achievement": {
     "achievement_unlocked": "Achievement unlocked",
@@ -2769,7 +2772,9 @@
     "online": "Online",
     "playing_time": "Playing {{game}} · {{time}}",
     "signed_out": "Not signed in",
-    "signed_out_hint": "Sign in with your Messapp account from the profile button above Home."
+    "signed_out_hint": "Sign in with your Messapp account from the profile button above Home.",
+    "playing_now": "Playing now",
+    "offline": "Offline"
   },
   "whats_new": {
     "title": "What's new in v{{version}}",

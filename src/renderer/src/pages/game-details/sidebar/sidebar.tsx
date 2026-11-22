@@ -226,42 +226,44 @@ export function Sidebar() {
         </SidebarSection>
       )}
 
-      {stats && (
-        <SidebarSection title={t("stats")}>
-          <div className="stats__section">
-            <div className="stats__category">
-              <p className="stats__category-title">
-                <DownloadIcon size={18} />
-                {t("download_count")}
-              </p>
-              <p>{numberFormatter.format(stats?.downloadCount)}</p>
-            </div>
+      {/* Hydra's stats call can fail or return an empty object; "NaN" rows say nothing. */}
+      {typeof stats?.downloadCount === "number" &&
+        typeof stats?.playerCount === "number" && (
+          <SidebarSection title={t("stats")}>
+            <div className="stats__section">
+              <div className="stats__category">
+                <p className="stats__category-title">
+                  <DownloadIcon size={18} />
+                  {t("download_count")}
+                </p>
+                <p>{numberFormatter.format(stats?.downloadCount)}</p>
+              </div>
 
-            <div className="stats__category">
-              <p className="stats__category-title">
-                <PeopleIcon size={18} />
-                {t("player_count")}
-              </p>
-              <p>{numberFormatter.format(stats?.playerCount)}</p>
-            </div>
+              <div className="stats__category">
+                <p className="stats__category-title">
+                  <PeopleIcon size={18} />
+                  {t("player_count")}
+                </p>
+                <p>{numberFormatter.format(stats?.playerCount)}</p>
+              </div>
 
-            <div className="stats__category">
-              <p className="stats__category-title">
-                <StarIcon size={18} />
-                {t("rating_count")}
-              </p>
-              <StarRating
-                rating={
-                  stats?.averageScore === 0
-                    ? null
-                    : (stats?.averageScore ?? null)
-                }
-                size={16}
-              />
+              <div className="stats__category">
+                <p className="stats__category-title">
+                  <StarIcon size={18} />
+                  {t("rating_count")}
+                </p>
+                <StarRating
+                  rating={
+                    stats?.averageScore === 0
+                      ? null
+                      : (stats?.averageScore ?? null)
+                  }
+                  size={16}
+                />
+              </div>
             </div>
-          </div>
-        </SidebarSection>
-      )}
+          </SidebarSection>
+        )}
 
       {shop === "launchbox" && (
         <LaunchboxDetailsSection

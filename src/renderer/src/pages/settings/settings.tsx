@@ -7,18 +7,20 @@ import { SettingsProfileData } from "./settings-profile-data";
 import { useUserDetails } from "@renderer/hooks";
 import { Fragment, useMemo } from "react";
 import "./settings.scss";
+import type { CSSProperties, ReactNode } from "react";
 import {
-  BellIcon,
-  CloudIcon,
-  DownloadIcon,
-  GearIcon,
-  LinkIcon,
-  PaintbrushIcon,
-  PlayIcon,
-  VideoIcon,
-  ShieldCheckIcon,
-} from "@primer/octicons-react";
-import { Gamepad2, Wrench } from "lucide-react";
+  Bell,
+  Download,
+  Gamepad2,
+  Layers,
+  Link2,
+  Palette,
+  Play,
+  Plug,
+  ShieldCheck,
+  SlidersHorizontal,
+  Tv,
+} from "lucide-react";
 import { SettingsContextGeneral } from "./settings-context-general";
 import { SettingsAppearance } from "./appearance";
 import { SettingsContextDownloads } from "./settings-context-downloads";
@@ -30,6 +32,20 @@ import { SettingsContextCompatibility } from "./settings-context-compatibility";
 import { SettingsContextBigPicture } from "./settings-context-big-picture";
 import { SettingsContextEmulation } from "./emulation/settings-context-emulation";
 
+// Each section's icon has its own colour (palette blues, gold, teal, slate, soft pink, error
+// red; no green, orange or purple), so the list scans by colour as well as by name.
+const tile = (
+  Icon: (props: { size?: number; strokeWidth?: number }) => ReactNode,
+  tint: string
+) => (
+  <span
+    className="settings__sidebar-glyph"
+    style={{ "--tint": tint } as CSSProperties}
+  >
+    <Icon size={17} strokeWidth={2} />
+  </span>
+);
+
 export default function Settings() {
   const { t } = useTranslation("settings");
 
@@ -40,67 +56,67 @@ export default function Settings() {
       {
         id: "general" as const,
         label: t("general"),
-        icon: <GearIcon size={16} />,
+        icon: tile(SlidersHorizontal, "#9fb3c8"),
         group: "general" as const,
       },
       {
         id: "appearance" as const,
         label: t("appearance"),
-        icon: <PaintbrushIcon size={16} />,
+        icon: tile(Palette, "#e8c77d"),
         group: "general" as const,
       },
       {
         id: "notifications" as const,
         label: t("notifications"),
-        icon: <BellIcon size={16} />,
+        icon: tile(Bell, "#e5676f"),
         group: "general" as const,
       },
       {
         id: "account_privacy" as const,
         label: t("profile_data_title"),
-        icon: <ShieldCheckIcon size={16} />,
+        icon: tile(ShieldCheck, "#7fa7e0"),
         group: "general" as const,
       },
       {
         id: "big_picture" as const,
         label: t("big_picture"),
-        icon: <VideoIcon size={16} />,
+        icon: tile(Tv, "#adc6ff"),
         group: "general" as const,
       },
       {
         id: "downloads" as const,
         label: t("downloads"),
-        icon: <DownloadIcon size={16} />,
+        icon: tile(Download, "#4fd1b0"),
         group: "library" as const,
       },
       {
         id: "download_sources" as const,
         label: t("download_sources"),
-        icon: <LinkIcon size={16} />,
+        icon: tile(Link2, "#9fb3c8"),
         group: "library" as const,
       },
       {
         id: "content_gameplay" as const,
         label: t("content_gameplay"),
-        icon: <PlayIcon size={16} />,
+        icon: tile(Play, "#e8c77d"),
         group: "library" as const,
       },
       {
         id: "integrations" as const,
         label: t("integrations"),
-        icon: <CloudIcon size={16} />,
+        icon: tile(Plug, "#adc6ff"),
         group: "library" as const,
       },
       {
         id: "compatibility" as const,
         label: t("compatibility"),
-        icon: <Wrench size={16} />,
+        icon: tile(Layers, "#e0e0e0"),
         group: "games" as const,
       },
       {
         id: "emulation" as const,
         label: t("emulation"),
-        icon: <Gamepad2 size={16} />,
+        icon: tile(Gamepad2, "#f2a7c3"),
         group: "classics" as const,
       },
     ],

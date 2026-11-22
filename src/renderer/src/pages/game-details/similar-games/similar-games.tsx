@@ -52,8 +52,10 @@ export function SimilarGames({ objectId, shop }: Readonly<SimilarGamesProps>) {
   const [emblaRef, emblaApi] = useEmblaCarousel({
     align: "start",
     containScroll: "trimSnaps",
-    slidesToScroll: GAMES_PER_PAGE,
-    duration: 20,
+    // One page = however many covers fit now (3 to 6); a fixed count landed on odd offsets.
+    slidesToScroll: "auto",
+    // Longer glide than the old 20: reads as a slide, not a jump.
+    duration: 32,
   });
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);

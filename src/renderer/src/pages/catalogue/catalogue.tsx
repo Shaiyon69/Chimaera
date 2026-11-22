@@ -65,19 +65,19 @@ type CompatibilityThreshold<Value extends string> = {
   color?: string;
 };
 
-// Chips carry their category in text, so colour is only a marker: one ecosystem blue
-// instead of purple/orange/pink/green hues (red-green colourblind users can't tell those apart).
-const FILTER_BLUE = "#7fa7e0";
+// One colour per filter, picked for red-green colourblind eyes: blues, gold, teal and greys
+// that also differ in lightness. No red/green pair, no orange beside gold, no purple. The text
+// label still names the category, so colour is only a marker.
 const filterCategoryColors = {
-  genres: FILTER_BLUE,
-  tags: FILTER_BLUE,
-  downloadSourceFingerprints: FILTER_BLUE,
-  developers: FILTER_BLUE,
-  publishers: FILTER_BLUE,
-  protondbSupportBadges: FILTER_BLUE,
-  deckCompatibility: FILTER_BLUE,
-  releaseYear: FILTER_BLUE,
-  platforms: FILTER_BLUE,
+  protondbSupportBadges: "#adc6ff", // light blue
+  deckCompatibility: "#adc6ff", // same family as ProtonDB
+  releaseYear: "#e8c77d", // gold
+  genres: "#3b82f6", // strong blue
+  tags: "#4fd1b0", // teal
+  downloadSourceFingerprints: "#e0e0e0", // near white
+  developers: "#9fb3c8", // light slate
+  publishers: "#6b7a8c", // dark slate
+  platforms: "#adc6ff",
 };
 
 const classicsPlatformGroups = [

@@ -10,8 +10,7 @@ import Skeleton, { SkeletonTheme } from "react-loading-skeleton";
 import { Button, GameCard, Hero } from "@renderer/components";
 import type { DownloadSource, ShopAssets, Steam250Game } from "@types";
 
-import flameIconAnimated from "@renderer/assets/icons/flame-animated.gif";
-import starsIconAnimated from "@renderer/assets/icons/stars-animated.gif";
+import { Flame, Shuffle, TrendingUp, Trophy } from "lucide-react";
 
 import { logger } from "@renderer/logger";
 import { buildGameDetailsPath, ensureArray } from "@renderer/helpers";
@@ -19,6 +18,16 @@ import { CatalogueCategory } from "@shared";
 import "./home.scss";
 
 const categories = Object.values(CatalogueCategory);
+
+// Drawn icons in the palette instead of emoji or GIFs: they match the dock and stay crisp.
+const categoryIcons: Record<
+  CatalogueCategory,
+  { Icon: typeof Flame; tint: string }
+> = {
+  [CatalogueCategory.Hot]: { Icon: Flame, tint: "#e5676f" },
+  [CatalogueCategory.Weekly]: { Icon: TrendingUp, tint: "#7fa7e0" },
+  [CatalogueCategory.Achievements]: { Icon: Trophy, tint: "#e8c77d" },
+};
 
 // Seconds each card takes to pass by; keeps speed constant across row lengths.
 const SECONDS_PER_CARD = 4;
@@ -124,32 +133,25 @@ export default function Home() {
             theme="outline"
             disabled={!randomGame}
           >
-            <div className="home__icon-wrapper">
-              <img
-                src={starsIconAnimated}
-                alt=""
-                className="home__stars-icon"
-              />
-            </div>
+            <Shuffle size={15} color="#e8c77d" aria-hidden="true" />
             {t("surprise_me")}
           </Button>
         </section>
 
         {categories.map((category) => {
           const games = catalogue[category];
+          const { Icon, tint } = categoryIcons[category];
 
           return (
             <section className="home__row" key={category}>
               <h2 className="home__title">
-                {category === CatalogueCategory.Hot && (
-                  <div className="home__title-icon">
-                    <img
-                      src={flameIconAnimated}
-                      alt=""
-                      className="home__title-flame-icon"
-                    />
-                  </div>
-                )}
+                <Icon
+                  size={20}
+                  strokeWidth={2.2}
+                  color={tint}
+                  className="home__title-icon"
+                  aria-hidden="true"
+                />
 
                 {t(category)}
               </h2>

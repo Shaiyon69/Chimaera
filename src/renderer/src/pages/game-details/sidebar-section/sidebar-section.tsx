@@ -1,5 +1,5 @@
 import { ChevronDownIcon, LinkExternalIcon } from "@primer/octicons-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import "./sidebar-section.scss";
 
 export interface SidebarSectionProps {
@@ -15,17 +15,7 @@ export function SidebarSection({
   subtitleHref,
   children,
 }: SidebarSectionProps) {
-  const content = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(true);
-  const [height, setHeight] = useState(0);
-
-  useEffect(() => {
-    if (content.current && content.current.scrollHeight !== height) {
-      setHeight(isOpen ? content.current.scrollHeight : 0);
-    } else if (!isOpen) {
-      setHeight(0);
-    }
-  }, [isOpen, children, height]);
 
   return (
     <div className="sidebar-section">
@@ -59,12 +49,14 @@ export function SidebarSection({
         )}
       </div>
 
+      {/* A grid row sized 1fr/0fr: it follows content that grows after load (icons, lazy
+          sections), where a measured max-height clipped it. */}
       <div
-        ref={content}
-        className="sidebar-section__content"
-        style={{ maxHeight: `${height}px` }}
+        className={`sidebar-section__content${
+          isOpen ? " sidebar-section__content--open" : ""
+        }`}
       >
-        {children}
+        <div className="sidebar-section__inner">{children}</div>
       </div>
     </div>
   );

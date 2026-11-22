@@ -1,11 +1,32 @@
 @use "../../../scss/globals.scss";
 
+// Stays in view beside the long left column instead of ending and leaving an empty black strip;
+// a sidebar taller than the window scrolls on its own.
 .content-sidebar {
   min-width: 0;
   width: 100%;
   display: flex;
   flex-direction: column;
   gap: calc(globals.$spacing-unit * 2);
+  position: sticky;
+  top: calc(globals.$spacing-unit * 2);
+  align-self: start;
+  max-height: calc(100vh - var(--window-title-bar-height, 40px) - 120px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+
+  // Sections keep their full height and the sidebar scrolls, instead of squeezing them.
+  > * {
+    flex-shrink: 0;
+  }
+
+  // One column on narrow windows: back to normal flow.
+  @media (max-width: 1024px) {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
 }
 
 .requirement {

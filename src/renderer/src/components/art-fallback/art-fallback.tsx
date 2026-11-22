@@ -1,3 +1,4 @@
+import { Sparkle } from "lucide-react";
 import "./art-fallback.scss";
 
 export interface ArtFallbackProps {
@@ -22,7 +23,7 @@ export function ArtFallback({
         .join(" ")}
     >
       <div className="art-fallback__frame" aria-hidden="true">
-        <span className="art-fallback__star">✦</span>
+        <Sparkle className="art-fallback__star" strokeWidth={1.75} />
         <span className="art-fallback__title">{title}</span>
         <span className="art-fallback__rule" />
         <span className="art-fallback__brand">Chimaera</span>

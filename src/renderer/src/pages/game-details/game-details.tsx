@@ -6,7 +6,7 @@ import type { GameRepack, GameShop, Steam250Game } from "@types";
 import { Button, ConfirmationModal } from "@renderer/components";
 import { buildGameDetailsPath } from "@renderer/helpers";
 
-import starsIconAnimated from "@renderer/assets/icons/stars-animated.gif";
+import { Shuffle } from "lucide-react";
 
 import { useTranslation } from "react-i18next";
 import { SkeletonTheme } from "react-loading-skeleton";
@@ -189,13 +189,7 @@ export default function GameDetails() {
                   theme="outline"
                   disabled={!randomGame || randomizerLocked}
                 >
-                  <div className="game-details__stars-icon-container">
-                    <img
-                      src={starsIconAnimated}
-                      alt=""
-                      className="game-details__stars-icon"
-                    />
-                  </div>
+                  <Shuffle size={15} color="#e8c77d" aria-hidden="true" />
                   {t("next_suggestion")}
                 </Button>
               )}
