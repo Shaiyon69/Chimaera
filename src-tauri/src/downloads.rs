@@ -351,12 +351,16 @@ async fn prepare_http(app: &AppHandle, d: &Value) -> Result<(Vec<Entry>, Option<
 }
 
 /// A multi-part hoster mirror: every part lands in one folder named after the first part. A fresh
-/// start resolves the first part now, to check it and name the folder; the rest resolve in turn.
+/// start resolves the first part now, to check it and name the folder; the rest resolve in turn,
+/// except Datanodes, whose parts all resolve now (`hosters::resolve_upfront`).
 async fn prepare_parts(app: &AppHandle, downloader: i64, parts: Vec<String>, resumed: Option<String>) -> Result<(Vec<Entry>, Option<String>), String> {
+    let mut later = Vec::new().into_iter();
     let (folder, first) = match resumed {
         Some(folder) => (folder, None),
         None => {
-            let resolved = hosters::resolve(app, downloader, &parts[0]).await?;
+            let mut upfront = hosters::resolve_upfront(app, downloader, &parts).await?.into_iter();
+            let resolved = upfront.next().ok_or(hosters::MULTIPART_NO_NAME)?;
+            later = upfront;
             http_download::preflight(&resolved.url, &resolved.headers).await?;
             let name = match resolved.filename.clone() {
                 Some(name) => Some(name),
@@ -373,7 +377,7 @@ async fn prepare_parts(app: &AppHandle, downloader: i64, parts: Vec<String>, res
         .map(|uri| {
             let (path, prepared) = match first.take() {
                 Some((path, resolved)) => (Some(path), Some(resolved)),
-                None => (hosters::filename_hint(&uri, "").map(|n| format!("{folder}/{}", hosters::sanitize(&n))), None),
+                None => (hosters::filename_hint(&uri, "").map(|n| format!("{folder}/{}", hosters::sanitize(&n))), later.next()),
             };
             Entry {
                 link: Link::Hoster { downloader, uri: uri.clone(), folder: folder.clone(), prepared },
@@ -901,6 +905,26 @@ pub async fn cancel_by_id(app: &AppHandle, shop: &str, object_id: &str) -> Resul
     Ok(true)
 }
 
+/// Finished downloads the list can drop: complete ones only. Seeding torrents stay, since
+/// removing them would stop the seed, and so do ones still extracting, whose job writes the record.
+fn clearable(downloads: &[Value]) -> Vec<String> {
+    downloads.iter().filter(|d| status(d) == "complete" && !flag(d, "extracting")).map(id).collect()
+}
+
+/// `clearCompletedDownloads`: removes finished entries from the Downloads list. The games and
+/// their files stay; only the download records go, as Hydra's `clearFinishedDownload` does.
+pub fn clear_completed(app: &AppHandle) -> Result<usize, String> {
+    let store = app.state::<Store>();
+    let keys = clearable(&all(&store)?);
+    for key in &keys {
+        store.del("downloads", key)?;
+    }
+    if !keys.is_empty() {
+        updated(app);
+    }
+    Ok(keys.len())
+}
+
 /// `moveDownloadPlacement(shop, objectId, targetArea, targetIndex)`.
 pub async fn move_placement(app: &AppHandle, shop: &str, object_id: &str, area: &str, index: Option<i64>) -> Result<bool, String> {
     let state = app.state::<Downloads>();
@@ -1398,6 +1422,18 @@ pub fn spawn(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_complete_downloads_are_clearable() {
+        let downloads = vec![
+            json!({ "shop": "steam", "objectId": "1", "status": "complete" }),
+            json!({ "shop": "steam", "objectId": "2", "status": "seeding" }),
+            json!({ "shop": "steam", "objectId": "3", "status": "active" }),
+            json!({ "shop": "steam", "objectId": "4", "status": "paused" }),
+            json!({ "shop": "steam", "objectId": "5", "status": "complete", "extracting": true }),
+        ];
+        assert_eq!(clearable(&downloads), vec![id(&downloads[0])]);
+    }
 
     fn dl(object_id: &str, status: &str, queued: bool, timestamp: u64) -> Value {
         json!({ "shop": "steam", "objectId": object_id, "status": status, "queued": queued, "timestamp": timestamp })

@@ -60,7 +60,7 @@ import {
   XCircleIcon,
   GraphIcon,
 } from "@primer/octicons-react";
-import { MoreVertical, FileArchive, FolderOpen } from "lucide-react";
+import { MoreVertical, FileArchive, FolderOpen, ListX } from "lucide-react";
 import { average } from "color.js";
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -1264,6 +1264,21 @@ export function DownloadGroup({
   const isDownloadingGroup = title === t("download_in_progress");
   const isQueuedGroup = title === t("queued_downloads");
   const isCompletedGroup = title === t("downloads_completed");
+  // Seeding torrents stay listed: clearing them would stop the seed. Extracting ones stay too.
+  const clearableCount = isCompletedGroup
+    ? library.filter(
+        (game) =>
+          game.download?.status === "complete" && !game.download.extracting
+      ).length
+    : 0;
+
+  const handleClearCompleted = async () => {
+    try {
+      await window.electron.clearCompletedDownloads();
+    } catch (error) {
+      logger.error("Failed to clear completed downloads", error);
+    }
+  };
 
   if (isDownloadingGroup && library.length > 0) {
     const game = library[0];
@@ -1348,6 +1363,17 @@ export function DownloadGroup({
             <h2>{title}</h2>
             <h3 className="download-group__header-count">{library.length}</h3>
           </div>
+          {clearableCount > 0 && (
+            <Button
+              theme="outline"
+              className="download-group__clear"
+              onClick={handleClearCompleted}
+              title={t("clear_completed_hint")}
+            >
+              <ListX size={14} aria-hidden="true" />
+              {t("clear_completed")}
+            </Button>
+          )}
         </div>
 
         <ul className="download-group__simple-list">

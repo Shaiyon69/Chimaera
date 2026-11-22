@@ -187,6 +187,7 @@ declare global {
     addGameToQueue: (
       payload: StartGameDownloadPayload
     ) => Promise<{ ok: boolean; error?: string }>;
+    clearCompletedDownloads: () => Promise<number>;
     cancelGameDownload: (shop: GameShop, objectId: string) => Promise<void>;
     pauseGameDownload: (
       shop: GameShop,

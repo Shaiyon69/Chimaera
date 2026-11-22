@@ -189,6 +189,19 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let version = app.package_info().version.to_string();
             let (object_id, shop) = (arg_str(args, 0).unwrap_or_default(), arg_str(args, 1).unwrap_or_default());
             let force_fresh = args.get(2).and_then(|o| o["forceFresh"].as_bool()).unwrap_or(false);
+            // Old art shows at once and refreshes behind the page, instead of the page waiting on
+            // Hydra's API (seconds when it is slow). Same pattern as the shop details cache.
+            if !force_fresh {
+                if let Some(stale) = library::stale_assets(&app.state::<Store>(), object_id, shop)? {
+                    let (app, object_id, shop) = (app.clone(), object_id.to_string(), shop.to_string());
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(error) = library::get_game_assets(&app.state::<Store>(), &version, &object_id, &shop, false).await {
+                            eprintln!("[assets] background refresh of {shop}:{object_id} failed: {error}");
+                        }
+                    });
+                    return Ok(stale);
+                }
+            }
             library::get_game_assets(&app.state::<Store>(), &version, object_id, shop, force_fresh).await
         }
         // Electron merges /profile/games from Hydra, which local mode blocks, so it fails there too.
@@ -530,6 +543,7 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
         }
         "startGameDownload" => Ok(downloads::start_game_download(app, args.first().unwrap_or(&Value::Null)).await),
         "addGameToQueue" => Ok(downloads::add_game_to_queue(app, args.first().unwrap_or(&Value::Null)).await),
+        "clearCompletedDownloads" => downloads::clear_completed(app).map(|n| json!(n)),
         "cancelGameDownload" => downloads::cancel_by_id(app, shop(args), object_id(args)).await.map(|ok| json!(ok)),
         // `confirmed` (args[2]) only matters for TorBox zip transfers, which arrive with debrid.
         "pauseGameDownload" => downloads::pause_by_id(app, shop(args), object_id(args)).await.map(|ok| json!(ok)),
