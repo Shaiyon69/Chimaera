@@ -306,9 +306,14 @@ async fn datanodes_all(app: &AppHandle, uris: &[String]) -> Result<Vec<String>, 
                 if found.contains(&url) {
                     continue;
                 }
+                // Out of the way while the link is checked; it comes back if the link is no file.
+                let _ = window.hide();
                 match http_download::preflight(&url, &[]).await {
                     Ok(()) => return Some(url),
-                    Err(e) => eprintln!("[datanodes] caught link is not a file: {e}"),
+                    Err(e) => {
+                        eprintln!("[datanodes] caught link is not a file: {e}");
+                        let _ = window.show();
+                    }
                 }
             }
             None

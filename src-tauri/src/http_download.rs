@@ -1061,7 +1061,15 @@ pub async fn preflight(url: &str, headers: &[(String, String)]) -> Result<(), St
         for (key, value) in headers {
             request = request.header(key.as_str(), value.as_str());
         }
-        let response = request.send().await.map_err(|e| if e.is_timeout() { "Download URL validation timed out".to_string() } else { e.to_string() })?;
+        let response = match request.send().await {
+            Ok(response) => response,
+            // A dropped or refused connection (download tunnels reset some) gets another try, as a 5xx does.
+            Err(e) if !e.is_timeout() && attempt < PREFLIGHT_ATTEMPTS => {
+                tokio::time::sleep(Duration::from_secs(u64::from(attempt))).await;
+                continue;
+            }
+            Err(e) => return Err(if e.is_timeout() { "Download URL validation timed out".to_string() } else { e.to_string() }),
+        };
         let status = response.status().as_u16();
         if status == 416 {
             return Ok(());
