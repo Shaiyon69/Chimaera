@@ -29,3 +29,4 @@ export * from "./use-scroll-restoration";
 export * from "./use-fill-scroll-target";
 export * from "./use-game-genres";
 export * from "./use-protondb";
+export * from "./use-prefetch-game";

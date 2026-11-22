@@ -1,5 +1,6 @@
 import type { ShopAssets } from "@types";
 import { cachedImage } from "@shared";
+import { usePrefetchGame } from "@renderer/hooks/use-prefetch-game";
 
 import "./game-card.scss";
 
@@ -12,8 +13,22 @@ export interface GameCardProps
 }
 
 export function GameCard({ game, ...props }: GameCardProps) {
+  const prefetch = usePrefetchGame(game.shop, game.objectId);
+
   return (
-    <button {...props} type="button" className="game-card">
+    <button
+      {...props}
+      type="button"
+      className="game-card"
+      onMouseEnter={(event) => {
+        prefetch.onMouseEnter();
+        props.onMouseEnter?.(event);
+      }}
+      onMouseLeave={(event) => {
+        prefetch.onMouseLeave();
+        props.onMouseLeave?.(event);
+      }}
+    >
       <div className="game-card__media">
         <img
           src={cachedImage(game.libraryImageUrl ?? undefined)}

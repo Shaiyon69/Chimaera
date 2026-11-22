@@ -1,5 +1,10 @@
 import { buildGameDetailsPath } from "@renderer/helpers";
-import { useAppSelector, useLibrary } from "@renderer/hooks";
+import {
+  useAppSelector,
+  useLibrary,
+  usePrefetchGame,
+  useProtonDB,
+} from "@renderer/hooks";
 import { useMemo, useState, useEffect } from "react";
 import { Link } from "@renderer/components/link/link";
 
@@ -101,11 +106,22 @@ export function GameItem({ game }: GameItemProps) {
     game.protondbSupportBadge ??
     game.protondbSupportBadges?.[0] ??
     null;
-  const protonBadge = toProtonTier(rawProtonValue);
+  const prefetch = usePrefetchGame(game.shop, game.objectId);
+  const searchTier = toProtonTier(rawProtonValue);
+  // Search results only carry a tier for some games; Steam ones without it ask ProtonDB.
+  const lookedUp = useProtonDB(
+    searchTier ? undefined : game.shop,
+    game.objectId
+  );
+  const protonBadge = searchTier ?? toProtonTier(lookedUp.data?.tier);
 
   return (
     <article className="game-item">
-      <Link to={buildGameDetailsPath(game)} className="game-item__content-link">
+      <Link
+        to={buildGameDetailsPath(game)}
+        className="game-item__content-link"
+        {...prefetch}
+      >
         <div className="game-item__cover-wrapper">
           {libraryImage}
 

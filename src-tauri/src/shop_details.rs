@@ -37,6 +37,8 @@ pub fn parse_steam_app_details(response: &Value, object_id: &str) -> Option<Valu
 async fn fetch_steam_app_details(object_id: &str, language: &str) -> Option<Value> {
     let response = reqwest::Client::new()
         .get("https://store.steampowered.com/api/appdetails")
+        // Steam's store API sometimes stalls; the page must not wait on it forever.
+        .timeout(std::time::Duration::from_secs(10))
         .query(&[("appids", object_id), ("l", steam_language(language)), ("cc", "us")])
         .send()
         .await

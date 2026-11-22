@@ -232,6 +232,21 @@ pub fn now_ms() -> u64 {
 /// `getGameAssets`: catalogue assets cached for 8 hours, artwork selection applied.
 // shortcut: bundled custom games (Bloodborne, Horizon) get their art from bundledGameService
 // in Electron; here a "custom" game returns its cached assets until milestone F8 ports it.
+/// Cached assets past the 8-hour window, ready to show while a refresh runs; None when they are
+/// fresh (the normal path answers from cache anyway) or were never fetched.
+pub fn stale_assets(store: &Store, object_id: &str, shop: &str) -> Result<Option<Value>, String> {
+    if shop == "custom" {
+        return Ok(None);
+    }
+    let key = format!("{shop}:{object_id}");
+    let cached = store.get("gameShopAssets", &key)?;
+    let fresh = cached["updatedAt"].as_u64().is_some_and(|at| at + ASSETS_CACHE_MS > now_ms());
+    if cached.is_null() || fresh {
+        return Ok(None);
+    }
+    composed_assets_for(store, &key).map(Some)
+}
+
 pub async fn get_game_assets(store: &Store, version: &str, object_id: &str, shop: &str, force_fresh: bool) -> Result<Value, String> {
     let key = format!("{shop}:{object_id}");
     let cached = store.get("gameShopAssets", &key)?;
@@ -281,11 +296,53 @@ pub fn iso_now() -> String {
 }
 
 /// `<a ... data-title="Name" ... href=".../app/620">` entries, as the jsdom query read them.
+/// The few HTML entities steam250 titles use: named ones plus numeric `&#39;` / `&#x20;`.
+fn decode_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        let Some(end) = tail.find(';').filter(|&e| e <= 10) else {
+            out.push('&');
+            rest = &tail[1..];
+            continue;
+        };
+        let entity = &tail[1..end];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            _ => entity
+                .strip_prefix("#x")
+                .or_else(|| entity.strip_prefix("#X"))
+                .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                .or_else(|| entity.strip_prefix('#').and_then(|dec| dec.parse().ok()))
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => out.push(c),
+            None => out.push_str(&tail[..=end]),
+        }
+        rest = &tail[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn parse_steam250(html: &str) -> Vec<Value> {
+    // The site minifies its HTML, so values come quoted or bare (`data-title=Stardew&#x20;Valley`).
     let attr = |tag: &str, name: &str| -> Option<String> {
-        let start = tag.find(&format!("{name}=\""))? + name.len() + 2;
-        let end = tag[start..].find('"')? + start;
-        Some(tag[start..end].replace("&amp;", "&").replace("&#39;", "'").replace("&quot;", "\""))
+        let key = format!("{name}=");
+        let start = tag.match_indices(&key).map(|(i, _)| i).find(|&i| i == 0 || tag[..i].ends_with(char::is_whitespace))? + key.len();
+        let rest = &tag[start..];
+        let value = match rest.chars().next()? {
+            quote @ ('"' | '\'') => &rest[1..rest[1..].find(quote)? + 1],
+            _ => &rest[..rest.find(char::is_whitespace).unwrap_or(rest.len())],
+        };
+        Some(decode_entities(value))
     };
     html.split("<a ")
         .skip(1)
@@ -328,6 +385,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stale_assets_only_for_old_non_custom_entries() {
+        let store = Store::memory().unwrap();
+        let old = now_ms() - ASSETS_CACHE_MS - 1;
+        store.put("gameShopAssets", "steam:1", &json!({ "title": "Old", "updatedAt": old })).unwrap();
+        store.put("gameShopAssets", "steam:2", &json!({ "title": "New", "updatedAt": now_ms() })).unwrap();
+        store.put("gameShopAssets", "custom:3", &json!({ "title": "Mine", "updatedAt": old })).unwrap();
+        assert!(stale_assets(&store, "1", "steam").unwrap().is_some());
+        assert!(stale_assets(&store, "2", "steam").unwrap().is_none());
+        assert!(stale_assets(&store, "3", "custom").unwrap().is_none());
+        assert!(stale_assets(&store, "4", "steam").unwrap().is_none());
+    }
+
+    #[test]
     fn civil_year() {
         assert_eq!(year_from_unix(0), 1970);
         assert_eq!(year_from_unix(1_793_404_800), 2026); // 2026-10-31
@@ -335,6 +405,18 @@ mod tests {
         assert_eq!(iso_from_ms(0), "1970-01-01T00:00:00.000Z");
         assert_eq!(iso_from_ms(1_793_448_245_007), "2026-10-31T12:04:05.007Z");
         assert_eq!(iso_from_ms(951_782_400_000), "2000-02-29T00:00:00.000Z");
+    }
+
+    #[test]
+    fn parses_minified_steam250_links() {
+        // The live markup since late 2026: unquoted attributes, numeric entities, club.steam250.com links.
+        let html = "<div class=img><a data-hx=1/2/3 data-title=Stardew&#x20;Valley data-video=9 href=https://club.steam250.com/app/413150><img alt=logo></a></div>\
+                    <a data-title=\"Baldur&#39;s Gate 3\" href=\"https://store.steampowered.com/app/1086940/\">x</a><a href=/other>y</a>";
+        assert_eq!(
+            parse_steam250(html),
+            vec![json!({ "title": "Stardew Valley", "objectId": "413150" }), json!({ "title": "Baldur's Gate 3", "objectId": "1086940" })]
+        );
+        assert_eq!(decode_entities("A &amp; B &#x26; C &bogus D"), "A & B & C &bogus D");
     }
 
     #[test]
