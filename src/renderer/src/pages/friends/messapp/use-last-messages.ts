@@ -14,6 +14,39 @@ const parseKey = (raw: string | null): JsonWebKey | null => {
   }
 };
 
+// Who was messaged when, kept between sessions so the list opens in its real order instead of
+// reshuffling once messages load. Only peer ids and times: never message text.
+const orderKey = (userId: string) => `messapp-dm-order:${userId}`;
+
+const readOrder = (userId: string | null) => {
+  const order = new Map<string, LastMessage>();
+  if (!userId) return order;
+  try {
+    const raw = JSON.parse(localStorage.getItem(orderKey(userId)) ?? "{}");
+    for (const [peer, createdAt] of Object.entries(raw)) {
+      if (typeof createdAt === "string") {
+        order.set(peer, { createdAt, mine: false, text: null, cached: true });
+      }
+    }
+  } catch {
+    // No remembered order: the list sorts once messages load, as before.
+  }
+  return order;
+};
+
+const writeOrder = (userId: string, last: Map<string, LastMessage>) => {
+  try {
+    localStorage.setItem(
+      orderKey(userId),
+      JSON.stringify(
+        Object.fromEntries([...last].map(([peer, m]) => [peer, m.createdAt]))
+      )
+    );
+  } catch {
+    // Storage off: only the first paint is affected.
+  }
+};
+
 /**
  * The newest message with each accepted friend, for list order and previews.
  * `refreshKey` re-reads after activity in the open chat; conversations that
@@ -25,13 +58,17 @@ export function useLastMessages(
   keyring: DmKeyring | null,
   refreshKey: number
 ) {
-  const [last, setLast] = useState<Map<string, LastMessage>>(new Map());
+  const [last, setLast] = useState<Map<string, LastMessage>>(() =>
+    readOrder(userId)
+  );
 
   const accepted = friends.filter((f) => f.friendship.status === "accepted");
   const signature = accepted.map((f) => f.profile.id).join(",");
 
   useEffect(() => {
     if (!userId || !signature) return;
+    // Sign-in can finish after the first render; seed the remembered order once it does.
+    setLast((prev) => (prev.size > 0 ? prev : readOrder(userId)));
 
     let cancelled = false;
 
@@ -66,7 +103,11 @@ export function useLastMessages(
       );
 
       if (!cancelled) {
-        setLast(new Map(entries.flatMap((entry) => (entry ? [entry] : []))));
+        const fresh = new Map(
+          entries.flatMap((entry) => (entry ? [entry] : []))
+        );
+        setLast(fresh);
+        writeOrder(userId, fresh);
       }
     })().catch((err) => logger.error("Failed to load last messages", err));
 

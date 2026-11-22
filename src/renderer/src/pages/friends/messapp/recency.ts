@@ -8,6 +8,8 @@ export interface LastMessage {
   mine: boolean;
   /** Decrypted text; "" for an image, null when this device can't read it. */
   text: string | null;
+  /** From the order remembered last session: sorts the list, shows no preview. */
+  cached?: boolean;
 }
 
 /** peer id → room id, for rooms holding exactly me and one other person. */

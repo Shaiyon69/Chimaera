@@ -42,6 +42,7 @@ function PersonLabel({
   presence?: FriendPresence;
   unread?: boolean;
 }>) {
+  const isPlaying = !!presence?.playing;
   const { t } = useTranslation("messapp");
   const now = useMinuteClock();
   const time = playtimeLabel(presence?.playing?.startedAt, now);
@@ -50,14 +51,18 @@ function PersonLabel({
       ? t("playing_time", { game: presence.playing.title, time })
       : t("playing", { game: presence.playing.title })
     : undefined;
-  const subline = preview ?? playing ?? profile.status_text;
+  // What they play leads; an unread message still wins so it is never missed.
+  const subline =
+    (unread ? preview : undefined) ?? playing ?? preview ?? profile.status_text;
 
   return (
     <>
       {/* Decorative: the row's name and buttons already carry the person's name. */}
-      <span className="friends__avatar">
+      <span
+        className={`friends__avatar${isPlaying ? " friends__avatar--playing" : ""}`}
+      >
         <Avatar size={32} src={profile.avatar_url} alt="" />
-        {presence?.online && (
+        {presence?.online && !isPlaying && (
           <span className="friends__online" title={t("online")} />
         )}
       </span>
@@ -69,13 +74,25 @@ function PersonLabel({
         </span>
         {subline && (
           <span
-            className={`friends__status${unread ? " friends__status--unread" : ""}`}
+            className={`friends__status${unread ? " friends__status--unread" : ""}${
+              isPlaying && subline === playing
+                ? " friends__status--playing"
+                : ""
+            }`}
           >
             {subline}
           </span>
         )}
       </span>
       {unread && <span className="friends__unread" title={t("unread")} />}
+      {presence?.playing?.iconUrl && (
+        <img
+          className="friends__game-icon"
+          src={presence.playing.iconUrl}
+          alt=""
+          loading="lazy"
+        />
+      )}
     </>
   );
 }
@@ -116,10 +133,16 @@ export function FriendsList({
     friends.filter((f) => f.friendship.status === "accepted"),
     lastMessages
   );
+  // Playing first, then online, then the rest; recency order holds inside each group.
+  const playingNow = accepted.filter((f) => presenceOf(f.profile.id).playing);
+  const onlineNow = accepted.filter(
+    (f) => presenceOf(f.profile.id).online && !presenceOf(f.profile.id).playing
+  );
+  const offlineNow = accepted.filter((f) => !presenceOf(f.profile.id).online);
 
   const previewFor = (friend: FriendRow) => {
     const last = lastMessages.get(friend.profile.id);
-    if (!last) return undefined;
+    if (!last || last.cached) return undefined;
 
     let body = last.text;
     if (last.text === null) body = t("preview_encrypted");
@@ -274,7 +297,9 @@ export function FriendsList({
           </>
         )}
 
-        <h3 className="friends__heading">{t("friends")}</h3>
+        {accepted.length === 0 && (
+          <h3 className="friends__heading">{t("friends")}</h3>
+        )}
         {accepted.length === 0 && friendsStatus === "loading" && (
           <p className="friends__empty" role="status">
             {t("loading_friends")}
@@ -291,31 +316,61 @@ export function FriendsList({
         {accepted.length === 0 && friendsStatus === "ready" && (
           <p className="friends__empty">{t("no_friends")}</p>
         )}
-        <ul className="friends__group">
-          {accepted.map((friend) => (
-            <li key={friend.friendship.id} className="friends__row">
-              <button
-                type="button"
-                className={`friends__select ${
-                  activeId === friend.profile.id
-                    ? "friends__select--active"
-                    : ""
-                }`}
-                aria-current={
-                  activeId === friend.profile.id ? "true" : undefined
-                }
-                onClick={() => onSelect(friend)}
-              >
-                <PersonLabel
-                  profile={friend.profile}
-                  preview={previewFor(friend)}
-                  presence={presenceOf(friend.profile.id)}
-                  unread={unread.has(friend.profile.id)}
-                />
-              </button>
-            </li>
-          ))}
-        </ul>
+        {(
+          [
+            ["playing_now", playingNow],
+            ["online", onlineNow],
+            ["offline", offlineNow],
+          ] as const
+        ).map(
+          ([group, members]) =>
+            members.length > 0 && (
+              <section key={group} className="friends__section">
+                <h3 className="friends__heading">
+                  {t(group)}
+                  <span className="friends__count">{members.length}</span>
+                </h3>
+                <ul className="friends__group">
+                  {members.map((friend) => {
+                    const presence = presenceOf(friend.profile.id);
+                    return (
+                      <li
+                        key={friend.friendship.id}
+                        className={`friends__row friends__row--${group}`}
+                        style={
+                          presence.playing
+                            ? ({
+                                "--glow": presence.playing.accent ?? "#e8c77d",
+                              } as React.CSSProperties)
+                            : undefined
+                        }
+                      >
+                        <button
+                          type="button"
+                          className={`friends__select ${
+                            activeId === friend.profile.id
+                              ? "friends__select--active"
+                              : ""
+                          }`}
+                          aria-current={
+                            activeId === friend.profile.id ? "true" : undefined
+                          }
+                          onClick={() => onSelect(friend)}
+                        >
+                          <PersonLabel
+                            profile={friend.profile}
+                            preview={previewFor(friend)}
+                            presence={presence}
+                            unread={unread.has(friend.profile.id)}
+                          />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )
+        )}
 
         {outgoing.length > 0 && (
           <>
