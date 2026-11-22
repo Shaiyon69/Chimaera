@@ -251,6 +251,21 @@ jobs:
           yarn tauri:build --bundles appimage --config '{"bundle":{"createUpdaterArtifacts":true}}'
           test -f resources/companions/terraria/_data/pages.json || { echo "::error::Terraria Guide bundle missing"; exit 1; }
 
+      # The bundled Ubuntu 22.04 WebKitGTK froze the window and forced the Adwaita theme on newer
+      # distros, so the AppImage runs on the host's webkit2gtk-4.1 instead (scripts/thin-appimage.sh).
+      # Repacking changes the file, so it is signed again for the updater.
+      - name: Use the system WebKitGTK
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool" https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          app=$(ls src-tauri/target/release/bundle/appimage/*.AppImage)
+          APPIMAGETOOL="$RUNNER_TEMP/appimagetool" bash scripts/thin-appimage.sh "$app"
+          rm -f "$app.sig"
+          yarn tauri signer sign "$app"
+          test -s "$app.sig"
+
       # Renamed to the site's download pattern (data/apptic.json: ^chimaera-.*\.AppImage$).
       - name: Collect release files
         run: |
