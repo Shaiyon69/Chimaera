@@ -2749,5 +2749,11 @@
     "playing_time": "Playing {{game}} · {{time}}",
     "signed_out": "Not signed in",
     "signed_out_hint": "Sign in with your Messapp account from the profile button above Home."
+  },
+  "whats_new": {
+    "title": "What's new in v{{version}}",
+    "whats_new": "What's new",
+    "all_releases": "All releases",
+    "got_it": "Got it"
   }
 }

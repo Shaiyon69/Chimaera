@@ -1,0 +1,45 @@
+@use "../../scss/globals.scss";
+
+.whats-new {
+  display: flex;
+  flex-direction: column;
+  gap: calc(globals.$spacing-unit * 3);
+  width: min(560px, 80vw);
+
+  &__sections {
+    display: flex;
+    flex-direction: column;
+    gap: calc(globals.$spacing-unit * 3);
+    max-height: min(60vh, 520px);
+    overflow-y: auto;
+    padding-right: globals.$spacing-unit;
+  }
+
+  &__section-title {
+    margin: 0 0 globals.$spacing-unit;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  &__list {
+    margin: 0;
+    padding-left: calc(globals.$spacing-unit * 2.5);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.45;
+
+    li::marker {
+      color: var(--faint);
+    }
+  }
+
+  &__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: globals.$spacing-unit;
+  }
+}

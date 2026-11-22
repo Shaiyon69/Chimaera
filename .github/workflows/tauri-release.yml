@@ -256,13 +256,22 @@ jobs:
       GH_TOKEN: ${{ secrets.SKIBIDEVS_TOKEN }}
       SITE_REPO: Shaiyon69/Skibidevs
     steps:
+      # Full history: the release notes cover every commit since the previous version cut.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v4
         with:
           pattern: chimaera-*
           path: release
           merge-multiple: true
+
+      # Outside release/, which is uploaded as the release's files.
+      - name: Write release notes
+        run: |
+          node scripts/release-notes.mjs > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
 
       - name: Write updater manifest
         run: |
@@ -275,6 +284,7 @@ jobs:
             const entry = (file) => ({ signature: fs.readFileSync(`release/${file}.sig`, "utf8").trim(), url: `${base}/${file}` });
             const manifest = {
               version,
+              notes: fs.readFileSync(`${process.env.RUNNER_TEMP}/notes.md`, "utf8").trim(),
               pub_date: new Date().toISOString(),
               platforms: {
                 "windows-x86_64": entry(`chimaera-${version}-setup.exe`),
@@ -295,8 +305,9 @@ jobs:
           TAG="chimaera-v$VERSION"
           if gh release view "$TAG" --repo "$SITE_REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber --repo "$SITE_REPO"
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md" --repo "$SITE_REPO"
           else
-            gh release create "$TAG" release/* --title "Chimaera v$VERSION" --notes "Chimaera v$VERSION" --repo "$SITE_REPO"
+            gh release create "$TAG" release/* --title "Chimaera v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --repo "$SITE_REPO"
           fi
 
       # The site refreshes its download list and updater manifests on this event.
