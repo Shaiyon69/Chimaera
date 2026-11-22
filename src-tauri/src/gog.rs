@@ -724,6 +724,15 @@ impl GogSync {
     }
 }
 
+/// Frees the cancel slot before the state goes idle, and only if it is still this run's flag,
+/// so a sync started right after keeps its own.
+fn release_cancel(sync: &GogSync, cancel: &Arc<AtomicBool>) {
+    let mut slot = lock(&sync.cancel);
+    if slot.as_ref().is_some_and(|flag| Arc::ptr_eq(flag, cancel)) {
+        *slot = None;
+    }
+}
+
 /// startGogSync: runs in the background; a second start while one runs returns the current state.
 pub fn start(app: &AppHandle, origin: &'static str) -> Value {
     let sync = app.state::<GogSync>();
@@ -742,6 +751,7 @@ pub fn start(app: &AppHandle, origin: &'static str) -> Value {
         let finished = match run(&app, &cancel).await {
             Ok(status) => {
                 eprintln!("[gog] sync succeeded");
+                release_cancel(&sync, &cancel);
                 sync.set_state(&app, json!({ "status": "idle" }));
                 json!({ "ok": true, "status": status, "origin": origin })
             }
@@ -749,11 +759,11 @@ pub fn start(app: &AppHandle, origin: &'static str) -> Value {
                 let message = if error.is_abort() { ABORTED.to_string() } else { error.message() };
                 eprintln!("[gog] sync failed: {message}");
                 let reconnect = message == SESSION_REQUIRED || message == ACCOUNT_MISMATCH;
+                release_cancel(&sync, &cancel);
                 sync.set_state(&app, if reconnect { json!({ "status": "idle", "requiresReconnect": true }) } else { json!({ "status": "idle" }) });
                 json!({ "ok": false, "message": message, "origin": origin })
             }
         };
-        *lock(&sync.cancel) = None;
         let _ = app.emit("on-gog-sync-finished", finished);
     });
     sync.state()
