@@ -82,7 +82,8 @@ const LARGE_CARD_ESTIMATED_HEIGHT = 300;
 const FALLBACK_ITEM_WIDTH = 150;
 
 const COLUMN_BREAKPOINTS = [3000, 2600, 2000, 1300, 900] as const;
-const COLUMNS: Record<"grid" | "compact", readonly number[]> = {
+const COLUMNS: Record<"mini" | "grid" | "compact", readonly number[]> = {
+  mini: [20, 16, 12, 10, 8, 5],
   grid: [12, 8, 6, 5, 4, 2],
   compact: [14, 12, 9, 7, 5, 3],
 };
@@ -958,6 +959,7 @@ export default function Library() {
                       <LibraryGameCard
                         key={`${game.shop}-${game.objectId}`}
                         game={game}
+                        mini={viewMode === "mini"}
                         onContextMenu={handleOpenContextMenu}
                       />
                     )

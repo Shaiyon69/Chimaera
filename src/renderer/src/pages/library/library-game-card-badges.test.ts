@@ -50,6 +50,10 @@ function renderCard(
       isAnimatedCoverCandidate: () => false,
       useAnimatedSourceWarmup: () => {},
       useFormat: () => ({ numberFormatter: new Intl.NumberFormat("en") }),
+      usePrefetchGame: () => ({
+        onMouseEnter: () => {},
+        onMouseLeave: () => {},
+      }),
       // Mirrors the real hook: only Steam games get data, hidden badges pass no shop.
       useProtonDB: (shop?: string) => ({
         isLoading: false,

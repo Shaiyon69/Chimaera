@@ -1,8 +1,9 @@
 import { AppsIcon, RowsIcon, SquareIcon } from "@primer/octicons-react";
+import { Grid3x3 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "./view-options.scss";
 
-export type ViewMode = "grid" | "compact" | "large";
+export type ViewMode = "mini" | "grid" | "compact" | "large";
 
 interface ViewOptionsProps {
   viewMode: ViewMode;
@@ -18,6 +19,13 @@ export function ViewOptions({
   return (
     <div className="library-view-options__container">
       <div className="library-view-options__options">
+        <button
+          className={`library-view-options__option ${viewMode === "mini" ? "active" : ""}`}
+          onClick={() => onViewModeChange("mini")}
+          title={t("mini_view")}
+        >
+          <Grid3x3 size={16} />
+        </button>
         <button
           className={`library-view-options__option ${viewMode === "compact" ? "active" : ""}`}
           onClick={() => onViewModeChange("compact")}

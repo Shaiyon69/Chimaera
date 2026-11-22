@@ -7,6 +7,7 @@ import {
   isAnimatedCoverCandidate,
   useAppSelector,
   useAnimatedSourceWarmup,
+  usePrefetchGame,
   useProtonDB,
 } from "@renderer/hooks";
 import {
@@ -40,6 +41,8 @@ import { linkedLauncherIds } from "./linked-games";
 
 interface LibraryGameCardProps {
   game: LibraryGame;
+  /** Mini view: the cover alone, title on hover; badges would not fit. */
+  mini?: boolean;
   onContextMenu: (
     game: LibraryGame,
     position: { x: number; y: number }
@@ -88,6 +91,7 @@ export const resolveImageSource = (
 
 export const LibraryGameCard = memo(function LibraryGameCard({
   game,
+  mini = false,
   onContextMenu,
 }: Readonly<LibraryGameCardProps>) {
   const { t } = useTranslation("library");
@@ -112,9 +116,11 @@ export const LibraryGameCard = memo(function LibraryGameCard({
     userPreferences?.autoplayAnimatedArtwork ?? false;
 
   const isInstalled = isGameReadyToPlay(game);
+  const prefetch = usePrefetchGame(game.shop, game.objectId);
   // Hidden badges skip the request entirely.
   const protonTier = toProtonTier(
-    useProtonDB(hideBadges ? undefined : game.shop, game.objectId).data?.tier
+    useProtonDB(hideBadges || mini ? undefined : game.shop, game.objectId).data
+      ?.tier
   );
   const linkedLaunchers = linkedLauncherIds(game)
     .map((id) => t(`launcher_${id}`))
@@ -250,9 +256,18 @@ export const LibraryGameCard = memo(function LibraryGameCard({
   return (
     <button
       type="button"
-      onMouseEnter={() => setIsCoverHovered(true)}
-      onMouseLeave={() => setIsCoverHovered(false)}
-      className="library-game-card__wrapper"
+      onMouseEnter={() => {
+        setIsCoverHovered(true);
+        prefetch.onMouseEnter();
+      }}
+      onMouseLeave={() => {
+        setIsCoverHovered(false);
+        prefetch.onMouseLeave();
+      }}
+      className={cn("library-game-card__wrapper", {
+        "library-game-card__wrapper--mini": mini,
+      })}
+      title={mini ? game.title : undefined}
       onClick={handleCardClick}
       onContextMenu={handleContextMenuClick}
     >

@@ -442,3 +442,15 @@
   height: auto;
   aspect-ratio: 215 / 320;
 }
+
+// Mini view: as many covers as fit, nothing on top of them.
+.library-game-card__wrapper--mini {
+  .library-game-card__top-section,
+  .library-game-card__achievements {
+    display: none;
+  }
+
+  .library-game-card__overlay {
+    background: none;
+  }
+}

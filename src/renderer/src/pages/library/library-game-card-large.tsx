@@ -7,6 +7,7 @@ import {
   useCoverPoster,
   useGameCard,
   useAnimatedSourceWarmup,
+  usePrefetchGame,
   useProtonDB,
 } from "@renderer/hooks";
 import {
@@ -121,6 +122,7 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
   const [isCoverHovered, setIsCoverHovered] = useState(false);
 
   const isInstalled = isGameReadyToPlay(game);
+  const prefetch = usePrefetchGame(game.shop, game.objectId);
   // Hidden badges skip the request entirely.
   const protonTier = toProtonTier(
     useProtonDB(hideBadges ? undefined : game.shop, game.objectId).data?.tier
@@ -345,8 +347,14 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
     <button
       type="button"
       className={`library-game-card-large ${renderClassicsBlurred ? "library-game-card-large--classics" : ""}`}
-      onMouseEnter={() => setIsCoverHovered(true)}
-      onMouseLeave={() => setIsCoverHovered(false)}
+      onMouseEnter={() => {
+        setIsCoverHovered(true);
+        prefetch.onMouseEnter();
+      }}
+      onMouseLeave={() => {
+        setIsCoverHovered(false);
+        prefetch.onMouseLeave();
+      }}
       onClick={handleCardClick}
       onContextMenu={handleContextMenuClick}
     >
