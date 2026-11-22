@@ -11,7 +11,7 @@ import { Link } from "@renderer/components";
 import { gameDetailsContext } from "@renderer/context";
 import { MAX_MINUTES_TO_SHOW_IN_PLAYTIME } from "@renderer/constants";
 import { getDisplayedPlayTimeInMilliseconds } from "@shared";
-import { AlertFillIcon } from "@primer/octicons-react";
+import { AlertFillIcon, ClockIcon, HistoryIcon } from "@primer/octicons-react";
 import { Tooltip } from "react-tooltip";
 import "./hero-panel-playtime.scss";
 
@@ -127,9 +127,9 @@ export function HeroPanelPlaytime() {
   }
 
   return (
-    <>
-      <p
-        className="hero-panel-playtime__play-time"
+    <div className="hero-panel-playtime__stats">
+      <div
+        className="hero-panel-playtime__stat"
         data-tooltip-place="right"
         data-tooltip-content={
           game.hasManuallyUpdatedPlaytime
@@ -142,25 +142,36 @@ export function HeroPanelPlaytime() {
             : undefined
         }
       >
-        {game.hasManuallyUpdatedPlaytime && (
-          <AlertFillIcon
-            size={16}
-            className="hero-panel-playtime__manual-warning"
-          />
-        )}
-        {t("play_time", {
-          amount: formattedPlayTime,
-        })}
-      </p>
+        <ClockIcon size={16} className="hero-panel-playtime__icon" />
+        <div className="hero-panel-playtime__stat-text">
+          <span className="hero-panel-playtime__label">
+            {t("playtime_label")}
+          </span>
+          <span className="hero-panel-playtime__value">
+            {formattedPlayTime}
+            {game.hasManuallyUpdatedPlaytime && (
+              <AlertFillIcon
+                size={12}
+                className="hero-panel-playtime__manual-warning"
+                aria-label={t("manual_playtime_tooltip")}
+              />
+            )}
+          </span>
+        </div>
+      </div>
 
       {isExtracting && extractionInProgressInfo}
       {!isExtracting && hasDownload && downloadInProgressInfo}
-      {!isExtracting && !hasDownload && (
-        <p>
-          {t("last_time_played", {
-            period: lastTimePlayed,
-          })}
-        </p>
+      {!isExtracting && !hasDownload && lastTimePlayed && (
+        <div className="hero-panel-playtime__stat">
+          <HistoryIcon size={16} className="hero-panel-playtime__icon" />
+          <div className="hero-panel-playtime__stat-text">
+            <span className="hero-panel-playtime__label">
+              {t("last_played_label")}
+            </span>
+            <span className="hero-panel-playtime__value">{lastTimePlayed}</span>
+          </div>
+        </div>
       )}
 
       {game.hasManuallyUpdatedPlaytime && (
@@ -172,6 +183,6 @@ export function HeroPanelPlaytime() {
           openOnClick={false}
         />
       )}
-    </>
+    </div>
   );
 }

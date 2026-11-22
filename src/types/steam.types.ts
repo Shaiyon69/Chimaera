@@ -1,6 +1,8 @@
 export interface SteamGenre {
   id: string;
   name: string;
+  /** Steam's own field; `name` is only set by Chimaera's mapped shops. */
+  description?: string;
 }
 
 export interface SteamCategory {

@@ -1226,7 +1226,12 @@
     "loading_download_options": "Loading download options",
     "download_options_shown": "{{shown}} of {{total}}",
     "download_options_total_one": "{{count}} option",
-    "download_options_total_other": "{{count}} options"
+    "download_options_total_other": "{{count}} options",
+    "developer_label": "Developer",
+    "publisher_label": "Publisher",
+    "released_label": "Released",
+    "playtime_label": "Playtime",
+    "last_played_label": "Last played"
   },
   "activation": {
     "title": "Activate Chimaera",
