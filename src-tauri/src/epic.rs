@@ -383,7 +383,10 @@ fn key_image(item: &Value, kinds: &[&str]) -> Option<String> {
 }
 
 /// A catalog item as a game, or None for DLC, add-ons and anything without a title.
-fn parse_catalog_item(item: &Value) -> Option<(String, Option<String>, Option<String>, Option<String>)> {
+/// (title, cover, hero, logo).
+type CatalogGame = (String, Option<String>, Option<String>, Option<String>);
+
+fn parse_catalog_item(item: &Value) -> Option<CatalogGame> {
     let categories: Vec<&str> = item["categories"].as_array().into_iter().flatten().filter_map(|c| c["path"].as_str()).collect();
     // Same rule as the launcher import: add-ons are skipped unless Epic marks them launchable.
     let is_dlc = categories.contains(&"addons") && !categories.contains(&"addons/launchable");
@@ -469,7 +472,7 @@ async fn fetch_library(session: &Session, cancel: &AtomicBool) -> Result<(Vec<Li
     for game in &mut games {
         game.play_ms = playtime.as_ref().map(|p| p.get(&game.app_name).copied().unwrap_or(0));
     }
-    games.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    games.sort_by_key(|g| g.title.to_lowercase());
     Ok((games, listed))
 }
 
