@@ -155,7 +155,8 @@ export function useSearchSuggestions(
   );
 
   const debouncedFetchCatalogue = useRef(
-    debounce(fetchCatalogueSuggestions, 300)
+    // Short: the API answers fast now that its connection is reused (hydra_api.rs).
+    debounce(fetchCatalogueSuggestions, 150)
   ).current;
 
   useEffect(() => {

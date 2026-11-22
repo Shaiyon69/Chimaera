@@ -358,10 +358,16 @@ fn query_pairs(params: &Value) -> Vec<(String, String)> {
 /// Client and full URL for a request to the public Hydra API.
 pub fn public_request(version: &str, url: &str) -> Result<(reqwest::Client, String), String> {
     let base = option_env!("CHIMAERA_API_URL").ok_or("MAIN_VITE_API_URL was not set in .env at build time")?;
-    let client = reqwest::Client::builder()
-        .user_agent(format!("Hydra Launcher v{version}"))
-        .build()
-        .map_err(|e| e.to_string())?;
+    // One shared client keeps connections alive: a fresh one per call paid DNS + TLS on every
+    // request, which made search suggestions lag. The version is fixed for the process.
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let client = match CLIENT.get() {
+        Some(client) => client.clone(),
+        None => {
+            let built = reqwest::Client::builder().user_agent(format!("Hydra Launcher v{version}")).build().map_err(|e| e.to_string())?;
+            CLIENT.get_or_init(|| built).clone()
+        }
+    };
     Ok((client, format!("{}{url}", base.trim_end_matches('/'))))
 }
 
