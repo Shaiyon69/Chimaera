@@ -9,6 +9,7 @@ export interface SyncableGame {
   playTimeInMilliseconds?: number | null;
   steamPlayTimeInMilliseconds?: number | null;
   gogPlayTimeInMilliseconds?: number | null;
+  epicPlayTimeInMilliseconds?: number | null;
   lastTimePlayed?: Date | string | null;
   achievementCount?: number;
   unlockedAchievementCount?: number;

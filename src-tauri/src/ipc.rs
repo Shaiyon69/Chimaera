@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::launch::LauncherStatuses;
 use crate::store::{assert_renderer_access, Store};
 use crate::watcher::Sessions;
-use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, dxvk, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, genres, gog, google_drive, graphics_scan, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, proton, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
+use crate::{achievement_popup, achievements, artwork, big_picture, bundled_games, classics_import, classics_launch, common_redist, debrid, decky, download_sources, downloads, dxvk, epic, emulator_install, emulators, extraction, file_saves, file_system, game_installer, games, genres, gog, google_drive, graphics_scan, hydra_api, hydra_backup, installer, launch, launcher_import, library, memcard_saves, messapp_keys, misc, notifications, optiscaler, processed_image, profile, proton, retro_achievements, retroarch, rpcs3_root, save_backups, scan, screenshots, shop_details, shortcuts, steam, steam_shortcuts, themes, torrenting, trackers, transfer, updater};
 use crate::data_location::DataDir;
 
 /// Changes on every launch; the renderer clears session-scoped localStorage when it does.
@@ -287,6 +287,18 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             Ok(Value::Null)
         }
         "getGogSyncState" => Ok(app.state::<gog::GogSync>().state()),
+        "startEpicAuth" => epic::start_login(app).map(|_| Value::Null),
+        "getEpicConnection" => Ok(epic::integration_status(&app.state::<Store>())),
+        "disconnectEpic" => {
+            let delete_imported = args.first().and_then(Value::as_bool).unwrap_or(false);
+            epic::disconnect(app, delete_imported).await.map(|_| Value::Null)
+        }
+        "startEpicSync" => Ok(epic::start(app, "manual")),
+        "cancelEpicSync" => {
+            app.state::<epic::EpicSync>().cancel(app).await;
+            Ok(Value::Null)
+        }
+        "getEpicSyncState" => Ok(app.state::<epic::EpicSync>().state()),
         "isSteamAppExecutable" => {
             let (app_id, executable) = (arg_str(args, 0).unwrap_or_default().to_string(), arg_str(args, 1).unwrap_or_default().to_string());
             tauri::async_runtime::spawn_blocking(move || {

@@ -53,6 +53,8 @@ import type {
   SteamConnectErrorCode,
   GogSyncState,
   GogSyncFinishedPayload,
+  EpicSyncState,
+  EpicSyncFinishedPayload,
   ExtractionFailure,
 } from "@types";
 import type { Downloader } from "@shared";
@@ -1594,6 +1596,41 @@ contextBridge.exposeInMainWorld("electron", {
     const listener = (_event: Electron.IpcRendererEvent) => cb();
     ipcRenderer.on("on-gog-connect-error", listener);
     return () => ipcRenderer.removeListener("on-gog-connect-error", listener);
+  },
+
+  /* Epic */
+  startEpicAuth: () => ipcRenderer.invoke("startEpicAuth"),
+  getEpicConnection: () => ipcRenderer.invoke("getEpicConnection"),
+  disconnectEpic: (deleteImportedData: boolean) =>
+    ipcRenderer.invoke("disconnectEpic", deleteImportedData),
+  startEpicSync: () => ipcRenderer.invoke("startEpicSync"),
+  cancelEpicSync: () => ipcRenderer.invoke("cancelEpicSync"),
+  getEpicSyncState: () => ipcRenderer.invoke("getEpicSyncState"),
+  onEpicSyncProgress: (cb: (state: EpicSyncState) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      state: EpicSyncState
+    ) => cb(state);
+    ipcRenderer.on("on-epic-sync-progress", listener);
+    return () => ipcRenderer.removeListener("on-epic-sync-progress", listener);
+  },
+  onEpicSyncFinished: (cb: (payload: EpicSyncFinishedPayload) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: EpicSyncFinishedPayload
+    ) => cb(payload);
+    ipcRenderer.on("on-epic-sync-finished", listener);
+    return () => ipcRenderer.removeListener("on-epic-sync-finished", listener);
+  },
+  onEpicConnected: (cb: () => void) => {
+    const listener = (_event: Electron.IpcRendererEvent) => cb();
+    ipcRenderer.on("on-epic-connected", listener);
+    return () => ipcRenderer.removeListener("on-epic-connected", listener);
+  },
+  onEpicConnectError: (cb: () => void) => {
+    const listener = (_event: Electron.IpcRendererEvent) => cb();
+    ipcRenderer.on("on-epic-connect-error", listener);
+    return () => ipcRenderer.removeListener("on-epic-connect-error", listener);
   },
 
   /* Notifications */

@@ -81,6 +81,7 @@ export interface Game {
   playTimeInMilliseconds: number;
   steamPlayTimeInMilliseconds?: number;
   gogPlayTimeInMilliseconds?: number;
+  epicPlayTimeInMilliseconds?: number;
   hasActiveSteamImport?: boolean;
   enableHydraPlaytimeTracking?: boolean;
   unsyncedDeltaPlayTimeInMilliseconds?: number;

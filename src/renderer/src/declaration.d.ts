@@ -82,6 +82,9 @@ import type {
   GogIntegrationStatus,
   GogSyncState,
   GogSyncFinishedPayload,
+  EpicIntegrationStatus,
+  EpicSyncState,
+  EpicSyncFinishedPayload,
   ExtractionFailure,
 } from "@types";
 
@@ -1311,6 +1314,21 @@ declare global {
     ) => () => Electron.IpcRenderer;
     onGogConnected: (cb: () => void) => () => Electron.IpcRenderer;
     onGogConnectError: (cb: () => void) => () => Electron.IpcRenderer;
+    /* Epic */
+    startEpicAuth: () => Promise<void>;
+    getEpicConnection: () => Promise<EpicIntegrationStatus>;
+    disconnectEpic: (deleteImportedData: boolean) => Promise<void>;
+    startEpicSync: () => Promise<EpicSyncState>;
+    cancelEpicSync: () => Promise<void>;
+    getEpicSyncState: () => Promise<EpicSyncState>;
+    onEpicSyncProgress: (
+      cb: (state: EpicSyncState) => void
+    ) => () => Electron.IpcRenderer;
+    onEpicSyncFinished: (
+      cb: (payload: EpicSyncFinishedPayload) => void
+    ) => () => Electron.IpcRenderer;
+    onEpicConnected: (cb: () => void) => () => Electron.IpcRenderer;
+    onEpicConnectError: (cb: () => void) => () => Electron.IpcRenderer;
     /* User */
     getComparedUnlockedAchievements: (
       objectId: string,
