@@ -1256,8 +1256,9 @@ pub async fn probe_filename(url: &str, headers: &[(String, String)]) -> Option<S
 async fn resolve_part(app: &tauri::AppHandle, entry: &Entry, used: &mut std::collections::HashSet<String>) -> Result<(String, Vec<(String, String)>, String), String> {
     let Link::Hoster { downloader, uri, folder, prepared } = &entry.link else { unreachable!("only hoster parts") };
     let resolved = match prepared {
-        Some(resolved) => resolved.clone(),
-        None => crate::hosters::resolve(app, *downloader, uri).await?,
+        // A link resolved ahead of its turn may have expired while earlier parts downloaded.
+        Some(resolved) if preflight(&resolved.url, &resolved.headers).await.is_ok() => resolved.clone(),
+        _ => crate::hosters::resolve(app, *downloader, uri).await?,
     };
     let path = match &entry.path {
         Some(path) => path.clone(),

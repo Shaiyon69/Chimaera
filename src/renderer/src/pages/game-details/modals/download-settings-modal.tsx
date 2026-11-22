@@ -422,10 +422,13 @@ export function DownloadSettingsModal({
     ) as Downloader[];
 
     const getDownloaderPriority = (option: {
+      downloader: Downloader;
       isAvailable: boolean;
       isAvailableButNotConfigured: boolean;
     }) => {
-      if (option.isAvailable) return 0;
+      // Datanodes needs a manual Cloudflare check per file, so any other working host goes first.
+      if (option.isAvailable)
+        return option.downloader === Downloader.Datanodes ? 0.5 : 0;
       if (option.isAvailableButNotConfigured) return 2;
       return 1;
     };

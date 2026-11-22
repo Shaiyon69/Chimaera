@@ -126,7 +126,24 @@ pub async fn resolve(app: &AppHandle, downloader: i64, uri: &str) -> Result<Reso
         }
         other => return Err(format!("Unsupported download host: {other}")),
     };
-    Ok(Resolved { filename: filename_hint(uri, &url).map(|f| sanitize(&f)), url, headers: vec![] })
+    Ok(resolved(uri, url))
+}
+
+fn resolved(uri: &str, url: String) -> Resolved {
+    Resolved { filename: filename_hint(uri, &url).map(|f| sanitize(&f)), url, headers: vec![] }
+}
+
+/// The parts of a multi-part mirror to resolve before it starts: all of them for Datanodes, whose
+/// per-file checks then come back to back in one window instead of between part downloads; only
+/// the first for other hosters, whose later parts resolve on their own when their turn comes.
+/// May return fewer than `uris` (never none); the rest then resolve in turn.
+pub async fn resolve_upfront(app: &AppHandle, downloader: i64, uris: &[String]) -> Result<Vec<Resolved>, String> {
+    if downloader == DATANODES {
+        let urls = datanodes_all(app, uris).await?;
+        return Ok(uris.iter().zip(urls).map(|(uri, url)| resolved(uri, url)).collect());
+    }
+    let first = uris.first().ok_or(MULTIPART_INVALID)?;
+    Ok(vec![resolve(app, downloader, first).await?])
 }
 
 /// `sanitizeFilename`.
@@ -222,11 +239,22 @@ fn is_datanodes_page(url: &url::Url) -> bool {
         || matches!(url.host_str(), Some("datanodes.to" | "www.datanodes.to" | "challenges.cloudflare.com"))
 }
 
-/// Datanodes gates free downloads behind a Cloudflare Turnstile check, which only a person can pass.
-/// The page opens in a window; the file link it then navigates to (or downloads) is caught, checked
-/// to answer with a file, and the window closes.
 async fn datanodes(app: &AppHandle, uri: &str) -> Result<String, String> {
-    let page: url::Url = uri.parse().map_err(|_| format!("Invalid datanodes URL: {uri}"))?;
+    datanodes_all(app, &[uri.to_string()]).await.map(|mut urls| urls.remove(0))
+}
+
+fn datanodes_title(index: usize, total: usize) -> String {
+    if total == 1 { "Datanodes".into() } else { format!("Datanodes (part {} of {total})", index + 1) }
+}
+
+/// Datanodes gates free downloads behind a Cloudflare Turnstile check, which only a person can pass,
+/// and its token is single use, so every file needs its own check. Each page opens in turn in one
+/// window; the file link it then navigates to (or downloads) is caught, checked to answer with a
+/// file, and the window moves on to the next page, closing after the last. Returns the links of the
+/// pages passed in order, which may be fewer than asked if the window closes or a check times out.
+async fn datanodes_all(app: &AppHandle, uris: &[String]) -> Result<Vec<String>, String> {
+    let pages = uris.iter().map(|uri| uri.parse::<url::Url>().map_err(|_| format!("Invalid datanodes URL: {uri}"))).collect::<Result<Vec<_>, _>>()?;
+    let page = pages.first().cloned().ok_or(MULTIPART_INVALID)?;
     if let Some(old) = app.get_webview_window(DATANODES_LABEL) {
         let _ = old.destroy();
     }
@@ -235,7 +263,7 @@ async fn datanodes(app: &AppHandle, uri: &str) -> Result<String, String> {
     let (nav_tx, download_tx) = (tx.clone(), tx.clone());
     let popup_app = app.clone();
     let mut builder = WebviewWindowBuilder::new(app, DATANODES_LABEL, WebviewUrl::External(page))
-        .title("Datanodes")
+        .title(datanodes_title(0, pages.len()))
         // Under the site's 768px breakpoint the verification and download button stack in one column,
         // so they stay visible in a narrow (tiled) window.
         .inner_size(600.0, 800.0)
@@ -264,26 +292,51 @@ async fn datanodes(app: &AppHandle, uri: &str) -> Result<String, String> {
             let _ = tx.send(None);
         }
     });
-    let found = tokio::time::timeout(Duration::from_secs(600), async {
-        // An ad redirect answers with a web page, so only a link that serves a file counts.
-        while let Some(Some(url)) = rx.recv().await {
-            match http_download::preflight(&url, &[]).await {
-                Ok(()) => return Some(url),
-                Err(e) => eprintln!("[datanodes] caught link is not a file: {e}"),
-            }
+    let mut found = Vec::new();
+    for (index, page) in pages.iter().enumerate() {
+        if index > 0 {
+            close_datanodes_popups(app);
+            let _ = window.set_title(&datanodes_title(index, pages.len()));
+            window.navigate(page.clone()).map_err(|e| e.to_string())?;
         }
-        None
-    })
-    .await
-    .ok()
-    .flatten();
+        let url = tokio::time::timeout(Duration::from_secs(600), async {
+            // An ad redirect answers with a web page, so only a link that serves a file counts.
+            while let Some(Some(url)) = rx.recv().await {
+                // A late second catch of an earlier page's link (navigation, then download) is no new part.
+                if found.contains(&url) {
+                    continue;
+                }
+                match http_download::preflight(&url, &[]).await {
+                    Ok(()) => return Some(url),
+                    Err(e) => eprintln!("[datanodes] caught link is not a file: {e}"),
+                }
+            }
+            None
+        })
+        .await
+        .ok()
+        .flatten();
+        match url {
+            Some(url) => found.push(url),
+            None => break,
+        }
+    }
     let _ = window.destroy();
+    close_datanodes_popups(app);
+    // The checks passed so far are kept; the parts after them resolve on their own when their turn comes.
+    if found.is_empty() {
+        Err(DATANODES_CLOSED.into())
+    } else {
+        Ok(found)
+    }
+}
+
+fn close_datanodes_popups(app: &AppHandle) {
     for (label, popup) in app.webview_windows() {
         if label.starts_with(DATANODES_POPUP_PREFIX) {
             let _ = popup.destroy();
         }
     }
-    found.ok_or_else(|| DATANODES_CLOSED.into())
 }
 
 /// A hidden window for a Datanodes pop-up: the opener gets a real window, the ad never loads.
