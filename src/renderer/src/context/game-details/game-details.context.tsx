@@ -164,11 +164,9 @@ export function GameDetailsContextProvider({
           setIsLoading(false);
         }
 
-        // A bundled game's local trophy list needs no Hydra account.
-        if (
-          (userDetails && shop !== "custom") ||
-          findBundledGame({ shop, objectId })?.achievements
-        ) {
+        // A bundled game's local trophy list needs no Hydra account. Custom games
+        // can have achievements too (a chosen Steam appid, or a GOG/Epic sync).
+        if (userDetails || findBundledGame({ shop, objectId })?.achievements) {
           const achievementUpdateCount = achievementUpdateCountRef.current;
           const isStaleAchievementResult = () =>
             abortController.signal.aborted ||

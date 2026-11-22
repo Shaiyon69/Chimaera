@@ -19,6 +19,7 @@ import type { ClassicsDisc, LibraryGame, ShortcutLocation } from "@types";
 import { DotIcon, FileIcon } from "@primer/octicons-react";
 import { HardDrive, X, FolderOpen, ChevronDown } from "lucide-react";
 import { gameDetailsContext } from "@renderer/context";
+import { SteamAppIdSection } from "./steam-app-id-section";
 import {
   getSkuRegion,
   getSkuRegionFlag,
@@ -946,6 +947,11 @@ export function GeneralSettingsSection({
             }
           />
         </div>
+      )}
+
+      {game.shop === "custom" && (
+        // Remount on a new id so the field never shows a stale value.
+        <SteamAppIdSection key={game.steamAppId ?? ""} game={game} />
       )}
     </>
   );

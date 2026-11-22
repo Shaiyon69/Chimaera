@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::achievement_files::{self, AchievementFile, Roots, Unlock};
 use crate::achievement_popup;
 use crate::games::{game_key, update};
-use crate::library::{group_winners, now_ms};
+use crate::library::{chosen_steam_app_id, group_winners, now_ms};
 use crate::store::Store;
 
 const INTERVAL: Duration = Duration::from_secs(2);
@@ -55,11 +55,17 @@ fn steam_client(store: &Store) -> Option<PathBuf> {
 pub async fn catalogue(app: &AppHandle, shop: &str, object_id: &str, fresh: bool) -> Vec<Value> {
     let store = app.state::<Store>();
     let key = game_key(shop, object_id);
-    if shop == "custom" {
+    // A custom game tied to a Steam appid uses that game's list, cached under its own key.
+    let chosen = (shop == "custom").then(|| chosen_steam_app_id(&store.get("games", &key).unwrap_or(Value::Null))).flatten();
+    if shop == "custom" && chosen.is_none() {
         // Hydra has no list for custom games; a store sync (GOG) may have cached one.
         // shortcut: bundled games (Bloodborne trophies) get their own list in the Bloodborne slice.
         return store.get(CATALOGUE, &key).ok().and_then(|c| c["achievements"].as_array().cloned()).unwrap_or_default();
     }
+    let (shop, object_id) = match &chosen {
+        Some(app_id) => ("steam", app_id.as_str()),
+        None => (shop, object_id),
+    };
     let lang = language(&store);
     let cached = store.get(CATALOGUE, &key).unwrap_or(Value::Null);
     let cached_list = || cached["achievements"].as_array().cloned().unwrap_or_default();
@@ -285,18 +291,27 @@ fn roots(app: &AppHandle, prefixes: &[PathBuf]) -> Vec<Roots> {
 /// A watched game's every install: their exes, and on Linux their Wine prefixes.
 #[derive(Debug, PartialEq)]
 struct Group {
+    /// The Steam appid emulators file the achievements under; None means nothing to watch.
+    app_id: Option<String>,
     exes: Vec<String>,
     prefixes: Vec<PathBuf>,
 }
 
-/// Steam-catalogue games still in the library: (shop, objectId, every install).
+/// Steam games, and custom games tied to a Steam appid, still in the library:
+/// (shop, objectId, every install).
 fn watched_games(store: &Store) -> Vec<(String, String, Group)> {
     let live = live_games(store);
     let winners = group_winners(&live);
     let prefs = preferences(store);
     live.iter()
-        .filter(|(_, g)| g["shop"] == "steam")
-        .filter_map(|(key, g)| Some(("steam".to_string(), g["objectId"].as_str()?.to_string(), group(&live, &winners, key, &prefs))))
+        .filter(|(key, g)| {
+            // A custom copy grouped under a Steam record is already watched through that record.
+            g["shop"] == "steam" || (g["shop"] == "custom" && !winners.get(key).is_some_and(|w| w.starts_with("steam:")))
+        })
+        .filter_map(|(key, g)| {
+            let group = group(&live, &winners, key, &prefs);
+            group.app_id.is_some().then(|| Some((g["shop"].as_str()?.to_string(), g["objectId"].as_str()?.to_string(), group))).flatten()
+        })
         .collect()
 }
 
@@ -311,6 +326,13 @@ fn group(live: &[(String, Value)], winners: &HashMap<String, String>, key: &str,
     let own = live.iter().filter(|(k, _)| k == key);
     let others = live.iter().filter(|(k, _)| k != key && group.is_some() && winners.get(k) == group);
     let members: Vec<&(String, Value)> = own.chain(others).collect();
+    let app_id = live.iter().find(|(k, _)| k == key).and_then(|(_, g)| {
+        if g["shop"] == "steam" {
+            g["objectId"].as_str().map(str::to_string)
+        } else {
+            chosen_steam_app_id(g)
+        }
+    });
     let exes = members.iter().filter_map(|(_, g)| g["executablePath"].as_str().map(str::to_string)).collect();
     let mut prefixes: Vec<PathBuf> = Vec::new();
     if cfg!(target_os = "linux") {
@@ -322,7 +344,7 @@ fn group(live: &[(String, Value)], winners: &HashMap<String, String>, key: &str,
             }
         }
     }
-    Group { exes, prefixes }
+    Group { app_id, exes, prefixes }
 }
 
 fn group_for(store: &Store, key: &str) -> Group {
@@ -394,7 +416,8 @@ pub fn spawn(app: AppHandle) {
                     .into_iter()
                     .filter_map(|(shop, id, group)| {
                         let roots = roots(&scan_app, &group.prefixes);
-                        let changed = watcher.changed(&watcher.files_for(&roots, steam.as_deref(), &id, &group.exes));
+                        let app_id = group.app_id.as_deref().unwrap_or(&id);
+                        let changed = watcher.changed(&watcher.files_for(&roots, steam.as_deref(), app_id, &group.exes));
                         (!changed.is_empty()).then(|| (shop, id, parse_all(&changed)))
                     })
                     .collect::<Vec<_>>()
@@ -438,10 +461,10 @@ pub fn spawn(app: AppHandle) {
 /// `getUnlockedAchievements`: reads the game's files once per session, then answers with a fresh catalogue.
 pub async fn get_unlocked_achievements(app: &AppHandle, object_id: &str, shop: &str) -> Result<Value, String> {
     let key = game_key(shop, object_id);
-    let first_look = shop == "steam" && lock(&app.state::<AchievementWatcher>().synced).insert(key.clone());
-    if first_look {
-        let group = group_for(&app.state::<Store>(), &key);
-        let (scan_app, id) = (app.clone(), object_id.to_string());
+    let group = group_for(&app.state::<Store>(), &key);
+    let first_look = group.app_id.is_some() && lock(&app.state::<AchievementWatcher>().synced).insert(key.clone());
+    if let Some(id) = group.app_id.clone().filter(|_| first_look) {
+        let scan_app = app.clone();
         let (steam_unlocks, other_unlocks) = tauri::async_runtime::spawn_blocking(move || {
             let store = scan_app.state::<Store>();
             let steam = steam_client(&store);
@@ -490,7 +513,8 @@ pub async fn reset(app: &AppHandle, shop: &str, object_id: &str) -> Result<(), S
     }
     // Every grouped copy: their unlocks merge into this record, so leftovers would come back.
     let group = group_for(&app.state::<Store>(), &key);
-    let files = achievement_files::game_files(&roots(app, &group.prefixes), object_id, &group.exes, None);
+    let app_id = group.app_id.as_deref().unwrap_or(object_id);
+    let files = achievement_files::game_files(&roots(app, &group.prefixes), app_id, &group.exes, None);
     let watcher = app.state::<AchievementWatcher>();
     {
         let mut mtimes = lock(&watcher.mtimes);
@@ -500,7 +524,7 @@ pub async fn reset(app: &AppHandle, shop: &str, object_id: &str) -> Result<(), S
             mtimes.remove(&file.path);
         }
     }
-    lock(&watcher.files).remove(object_id);
+    lock(&watcher.files).remove(app_id);
     lock(&watcher.synced).remove(&key);
     let store = app.state::<Store>();
     store.del(UNLOCKED, &key)?;
@@ -593,6 +617,23 @@ mod tests {
         let watched = watched_games(&store);
         assert_eq!(watched.len(), 1);
         assert_eq!(watched[0].2.exes, [r"C:\Steam\ln2.exe", r"C:\GOG\ln2.exe"]);
+    }
+
+    #[test]
+    fn watches_a_custom_game_by_its_chosen_steam_app_id() {
+        let store = Store::memory().unwrap();
+        store.put("games", "custom:mine", &json!({ "shop": "custom", "objectId": "mine", "title": "Mine", "steamAppId": "620", "executablePath": "/g/p2.exe" })).unwrap();
+        store.put("games", "custom:other", &json!({ "shop": "custom", "objectId": "other", "title": "Other" })).unwrap();
+        let watched = watched_games(&store);
+        assert_eq!(watched.len(), 1);
+        assert_eq!((watched[0].0.as_str(), watched[0].1.as_str(), watched[0].2.app_id.as_deref()), ("custom", "mine", Some("620")));
+
+        // Once the Steam record is in the library, the copy is watched through it instead.
+        store.put("games", "steam:620", &json!({ "shop": "steam", "objectId": "620", "title": "Portal 2" })).unwrap();
+        let watched = watched_games(&store);
+        assert_eq!(watched.len(), 1);
+        assert_eq!(watched[0].1, "620");
+        assert_eq!(watched[0].2.exes, ["/g/p2.exe"]);
     }
 
     #[test]

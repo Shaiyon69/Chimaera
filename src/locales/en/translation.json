@@ -1231,7 +1231,14 @@
     "publisher_label": "Publisher",
     "released_label": "Released",
     "playtime_label": "Playtime",
-    "last_played_label": "Last played"
+    "last_played_label": "Last played",
+    "steam_app_id": "Steam App ID for achievements",
+    "steam_app_id_description": "Tie this game to its Steam version so Chimaera can read the achievements it unlocks. Paste the Steam store link or the number from it.",
+    "steam_app_id_placeholder": "e.g. 620 or https://store.steampowered.com/app/620/",
+    "steam_app_id_saved": "Steam App ID saved",
+    "steam_app_id_cleared": "Steam App ID cleared",
+    "steam_app_id_invalid": "That is not a Steam App ID or store link",
+    "steam_app_id_save": "Save"
   },
   "activation": {
     "title": "Activate Chimaera",

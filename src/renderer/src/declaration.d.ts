@@ -412,6 +412,12 @@ declare global {
       objectId: string,
       excluded: boolean
     ) => Promise<void>;
+    /** Returns the saved appid, or null when cleared; rejects `invalid-steam-app-id`. */
+    updateGameSteamAppId: (
+      shop: GameShop,
+      objectId: string,
+      steamAppId: string | null
+    ) => Promise<string | null>;
     updateLaunchOptions: (
       shop: GameShop,
       objectId: string,

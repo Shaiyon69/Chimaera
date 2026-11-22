@@ -796,6 +796,11 @@ contextBridge.exposeInMainWorld("electron", {
     objectId: string,
     excluded: boolean
   ) => ipcRenderer.invoke("setGameDedupeExcluded", shop, objectId, excluded),
+  updateGameSteamAppId: (
+    shop: GameShop,
+    objectId: string,
+    steamAppId: string | null
+  ) => ipcRenderer.invoke("updateGameSteamAppId", shop, objectId, steamAppId),
   updateLaunchOptions: (
     shop: GameShop,
     objectId: string,

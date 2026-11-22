@@ -212,6 +212,58 @@ pub fn set_launch_options(store: &Store, shop: &str, object_id: &str, options: O
     update(store, &game_key(shop, object_id), set("launchOptions", json!(options))).map(|_| ())
 }
 
+/// A Steam appid from what the user typed: the number itself, or a Steam store or SteamDB
+/// link. Ok(None) clears it; anything else is rejected.
+pub fn parse_steam_app_id(input: &str) -> Result<Option<String>, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Ok(None);
+    }
+    let digits = |s: &str| -> String { s.chars().take_while(char::is_ascii_digit).collect() };
+    let id = if input.bytes().all(|b| b.is_ascii_digit()) {
+        input.to_string()
+    } else {
+        ["/app/", "/apps/"].iter().find_map(|marker| input.find(marker).map(|at| digits(&input[at + marker.len()..]))).unwrap_or_default()
+    };
+    // Steam appids are at most 10 digits (u32).
+    if id.is_empty() || id.len() > 10 || id.trim_start_matches('0').is_empty() {
+        return Err("invalid-steam-app-id".into());
+    }
+    Ok(Some(id))
+}
+
+/// `updateGameSteamAppId`: ties a non-Steam game to a Steam appid so its emulator
+/// achievement files and Steam's achievement list are found. Returns the saved id.
+pub fn set_steam_app_id(store: &Store, shop: &str, object_id: &str, input: Option<&str>) -> Result<Value, String> {
+    if shop != "custom" {
+        return Err("game/not-custom".into());
+    }
+    let key = game_key(shop, object_id);
+    let game = store.get("games", &key)?;
+    if game.is_null() {
+        return Err("game/not-found-local".into());
+    }
+    let id = parse_steam_app_id(input.unwrap_or_default())?;
+    let previous = crate::library::chosen_steam_app_id(&game);
+    // The cached list and its unlocks belonged to the old id (or a store sync); they would
+    // not match the new game's names.
+    let drop_unlocks = previous != id && (previous.is_some() || !store.get(crate::achievements::CATALOGUE, &key)?.is_null());
+    if previous != id {
+        store.del(crate::achievements::CATALOGUE, &key)?;
+    }
+    if drop_unlocks {
+        store.del(crate::achievements::UNLOCKED, &key)?;
+    }
+    update(store, &key, |g| {
+        g.insert("steamAppId".into(), json!(id));
+        if drop_unlocks {
+            g.insert("unlockedAchievementCount".into(), json!(0));
+            g.remove("achievementCount");
+        }
+    })?;
+    Ok(json!(id))
+}
+
 /// `setGameVisibility`: returns the saved pair, as the Hydra API response did.
 pub fn set_visibility(store: &Store, shop: &str, object_id: &str, field: &str, value: bool) -> Result<Value, String> {
     let key = game_key(shop, object_id);
@@ -438,6 +490,35 @@ mod tests {
         store.put("games", "custom:mine", &json!({ "shop": "custom", "objectId": "mine", "iconUrl": LN2_ART, "title": "Mine" })).unwrap();
         store.put("games", "custom:gog-2", &json!({ "shop": "custom", "objectId": "gog-2", "launcher": "gog", "iconUrl": LN2_ART, "isDeleted": true })).unwrap();
         assert_eq!(backfill_steam_records(&store).unwrap(), 0);
+    }
+
+    #[test]
+    fn steam_app_id_from_number_or_link() {
+        assert_eq!(parse_steam_app_id(" 620 ").unwrap().as_deref(), Some("620"));
+        assert_eq!(parse_steam_app_id("https://store.steampowered.com/app/860510/Little_Nightmares_II/").unwrap().as_deref(), Some("860510"));
+        assert_eq!(parse_steam_app_id("https://steamdb.info/app/292030/").unwrap().as_deref(), Some("292030"));
+        assert_eq!(parse_steam_app_id("").unwrap(), None);
+        assert!(parse_steam_app_id("portal").is_err());
+        assert!(parse_steam_app_id("0").is_err());
+        assert!(parse_steam_app_id("12345678901").is_err());
+    }
+
+    #[test]
+    fn changing_the_steam_app_id_drops_the_old_achievements() {
+        use crate::achievements::{CATALOGUE, UNLOCKED};
+        let store = Store::memory().unwrap();
+        store.put("games", "custom:mine", &json!({ "shop": "custom", "objectId": "mine", "title": "Mine" })).unwrap();
+        assert_eq!(set_steam_app_id(&store, "custom", "mine", Some("620")).unwrap(), json!("620"));
+        store.put(CATALOGUE, "custom:mine", &json!({ "achievements": [{ "name": "A" }] })).unwrap();
+        store.put(UNLOCKED, "custom:mine", &json!([{ "name": "A", "unlockTime": 1 }])).unwrap();
+        // Saving the same id keeps everything.
+        set_steam_app_id(&store, "custom", "mine", Some("https://store.steampowered.com/app/620/")).unwrap();
+        assert!(!store.get(UNLOCKED, "custom:mine").unwrap().is_null());
+        set_steam_app_id(&store, "custom", "mine", Some("")).unwrap();
+        assert!(store.get(CATALOGUE, "custom:mine").unwrap().is_null());
+        assert!(store.get(UNLOCKED, "custom:mine").unwrap().is_null());
+        assert_eq!(store.get("games", "custom:mine").unwrap()["steamAppId"], Value::Null);
+        assert!(set_steam_app_id(&store, "steam", "620", Some("620")).is_err());
     }
 
     #[test]

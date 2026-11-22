@@ -227,6 +227,11 @@ pub async fn dispatch(app: &AppHandle, window: &WebviewWindow, channel: &str, ar
             let pin = args.get(2).and_then(Value::as_bool).unwrap_or(false);
             games::set_pin(&app.state::<Store>(), shop(args), object_id(args), pin).map(|_| Value::Null)
         }
+        "updateGameSteamAppId" => {
+            let saved = games::set_steam_app_id(&app.state::<Store>(), shop(args), object_id(args), arg_str(args, 2))?;
+            app.emit("on-library-batch-complete", ()).map_err(|e| e.to_string())?;
+            Ok(saved)
+        }
         "updateLaunchOptions" => games::set_launch_options(&app.state::<Store>(), shop(args), object_id(args), arg_str(args, 2)).map(|_| Value::Null),
         "setGameVisibility" => {
             let (field, value) = (arg_str(args, 2).unwrap_or_default(), args.get(3).and_then(Value::as_bool).unwrap_or(false));

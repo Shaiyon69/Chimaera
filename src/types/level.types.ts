@@ -100,6 +100,8 @@ export interface Game {
   trackingExecutablePaths?: string[] | null;
   trackingExecutablePathsUpdatedAt?: Date | null;
   launchOptions?: string | null;
+  /** Steam appid a custom game is tied to, so its achievements are found. */
+  steamAppId?: string | null;
   autoRunMangohud?: boolean | null;
   autoRunGamemode?: boolean | null;
   favorite?: boolean;

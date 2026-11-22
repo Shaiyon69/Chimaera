@@ -59,11 +59,19 @@ pub fn library_entry(key: &str, game: Value, download: Value, composed: Value) -
     Value::Object(entry)
 }
 
-/// The Steam appid a record stands for: its own id on the steam shop, else the first
-/// `/steam/apps/<id>/` in the art URLs that the launcher import picked from Steam.
+/// The Steam appid the user set on a non-Steam game (Game options), for its achievements.
+pub fn chosen_steam_app_id(game: &Value) -> Option<String> {
+    game["steamAppId"].as_str().filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).map(str::to_string)
+}
+
+/// The Steam appid a record stands for: its own id on the steam shop, the one the user
+/// chose, else the first `/steam/apps/<id>/` in the art URLs the launcher import picked from Steam.
 pub fn steam_app_id(game: &Value) -> Option<String> {
     if game["shop"] == "steam" {
         return game["objectId"].as_str().filter(|id| !id.is_empty()).map(str::to_string);
+    }
+    if let Some(id) = chosen_steam_app_id(game) {
+        return Some(id);
     }
     ["iconUrl", "libraryHeroImageUrl", "logoImageUrl"].iter().find_map(|field| {
         let url = game[*field].as_str()?;
@@ -528,6 +536,9 @@ mod tests {
         assert_eq!(steam_app_id(&json!({ "shop": "custom", "iconUrl": "https://cdn.example.com/x.png" })), None);
         assert_eq!(steam_app_id(&json!({ "shop": "custom", "iconUrl": null })), None);
         assert_eq!(steam_app_id(&json!({ "shop": "custom", "logoImageUrl": LN2_ART })), Some("860510".into()));
+        // A chosen id wins over art from another game.
+        assert_eq!(steam_app_id(&json!({ "shop": "custom", "steamAppId": "620", "logoImageUrl": LN2_ART })), Some("620".into()));
+        assert_eq!(chosen_steam_app_id(&json!({ "steamAppId": "62a" })), None);
         let out = dedupe_library(vec![
             ("custom:a".into(), json!({ "shop": "custom", "title": "Hades", "iconUrl": "https://cdn.example.com/x.png" })),
             ("custom:b".into(), json!({ "shop": "custom", "title": "HADES!", "iconUrl": null })),
