@@ -423,6 +423,7 @@ export function GameArtworkPicker({
     hasMore,
     isStale,
     hasFailed,
+    isUnavailable,
     pendingId,
     loadNextPage,
     reloadSelection,
@@ -590,6 +591,8 @@ export function GameArtworkPicker({
       </div>
     );
   }
+
+  if (isUnavailable) return null;
 
   const showReload = isStale || hasFailed;
   const isEmpty = !isLoading && items.length === 0;

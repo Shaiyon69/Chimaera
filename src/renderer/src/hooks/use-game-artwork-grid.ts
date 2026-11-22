@@ -120,6 +120,8 @@ export function useGameArtworkGrid({
   const [hasMore, setHasMore] = useState(true);
   const [isStale, setIsStale] = useState(false);
   const [hasFailed, setHasFailed] = useState(false);
+  // No artwork source for this game (custom game, or Hydra refused the request).
+  const [isUnavailable, setIsUnavailable] = useState(false);
   const [pendingId, setPendingId] = useState<number | null>(null);
 
   const pageRef = useRef(0);
@@ -154,8 +156,11 @@ export function useGameArtworkGrid({
 
         if (!result) {
           setHasMore(false);
+          setIsUnavailable(true);
           return;
         }
+
+        setIsUnavailable(false);
 
         setItems((previous) => {
           const merged = new Map(previous.map((item) => [item.id, item]));
@@ -267,6 +272,7 @@ export function useGameArtworkGrid({
     hasMore,
     isStale,
     hasFailed,
+    isUnavailable,
     pendingId,
     loadNextPage,
     reloadSelection: loadSelection,

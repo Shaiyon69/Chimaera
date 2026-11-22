@@ -388,6 +388,11 @@ fn artwork_page(status: u16, cache: Option<&str>, body: &Value) -> Result<Value,
     if status == 404 {
         return Ok(json!({ "items": [], "cache": "fresh", "hasMore": false }));
     }
+    // Hydra only serves artwork to signed-in accounts, and the Tauri app has no Hydra
+    // sign-in: null hides the picker, as Electron did for a signed-out user.
+    if status == 401 || status == 403 {
+        return Ok(Value::Null);
+    }
     if !(200..300).contains(&status) {
         return Err(format!("Request failed with status code {status}"));
     }
@@ -449,6 +454,7 @@ mod tests {
         assert_eq!(page["hasMore"], true);
         assert_eq!(artwork_page(200, None, &json!({ "data": [{ "id": 1 }] })).unwrap()["hasMore"], false);
         assert!(artwork_page(500, None, &Value::Null).is_err());
+        assert_eq!(artwork_page(401, None, &json!({ "message": "auth/invalid-token" })).unwrap(), Value::Null);
         assert!(artwork_kind_params("nsfw").is_none());
     }
 
