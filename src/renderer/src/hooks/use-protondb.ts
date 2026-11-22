@@ -2,76 +2,92 @@ import { useEffect, useState } from "react";
 import type { ProtonDBData } from "@types";
 import { limitParallel } from "./protondb-core";
 
-const responseCache = new Map<string, ProtonDBData | null>();
+// A failed request (offline, rate limit) is retried after this, not on every remount.
+const FAILURE_TTL_MS = 5 * 60 * 1000;
+
+const responseCache = new Map<
+  string,
+  { data: ProtonDBData | null; expires: number }
+>();
 const inFlightRequests = new Map<string, Promise<ProtonDBData | null>>();
+// Mounted components waiting on each game; a queued request nobody waits for is skipped.
+const wanted = new Map<string, number>();
 
 // Library pages can mount dozens of Steam cards at once; keep Hydra's API from a burst.
 const withSlot = limitParallel(4);
+const SKIPPED = Symbol("skipped");
 
-/** ProtonDB summary for a game, cached for the session. Null when ProtonDB has none. */
-export const getProtonDBData = (shop: string, objectId: string) => {
-  const cacheKey = `${shop}:${objectId}`;
+const readCache = (key: string) => {
+  const entry = responseCache.get(key);
+  if (!entry) return undefined;
+  if (entry.expires > Date.now()) return entry.data;
+  responseCache.delete(key);
+  return undefined;
+};
 
-  if (responseCache.has(cacheKey)) {
-    return Promise.resolve(responseCache.get(cacheKey) ?? null);
-  }
+const want = (key: string, delta: 1 | -1) => {
+  const count = (wanted.get(key) ?? 0) + delta;
+  if (count > 0) wanted.set(key, count);
+  else wanted.delete(key);
+};
 
-  const inFlight = inFlightRequests.get(cacheKey);
+const loadProtonDB = (key: string, objectId: string) => {
+  const inFlight = inFlightRequests.get(key);
   if (inFlight) return inFlight;
 
   const request = withSlot(() =>
-    window.electron.hydraApi.get<ProtonDBData | null>(
-      `/games/${shop}/${objectId}/protondb`,
-      { needsAuth: false }
-    )
+    wanted.has(key)
+      ? window.electron.hydraApi.get<ProtonDBData | null>(
+          `/games/steam/${objectId}/protondb`,
+          { needsAuth: false }
+        )
+      : Promise.reject(SKIPPED)
   )
     .then((data) => {
-      responseCache.set(cacheKey, data);
+      responseCache.set(key, { data, expires: Infinity });
       return data;
     })
-    // Errors are cached as "no data" too, so scrolling a library never retries a failing API.
-    .catch(() => {
-      responseCache.set(cacheKey, null);
+    .catch((error) => {
+      if (error !== SKIPPED) {
+        responseCache.set(key, {
+          data: null,
+          expires: Date.now() + FAILURE_TTL_MS,
+        });
+      }
       return null;
     })
     .finally(() => {
-      inFlightRequests.delete(cacheKey);
+      inFlightRequests.delete(key);
     });
 
-  inFlightRequests.set(cacheKey, request);
+  inFlightRequests.set(key, request);
   return request;
 };
 
 /** ProtonDB data for a Steam game; always null for other shops (ProtonDB is keyed by Steam app id). */
 export function useProtonDB(shop: string | undefined, objectId?: string) {
-  const enabled = shop === "steam" && Boolean(objectId);
-  const [state, setState] = useState<{
-    isLoading: boolean;
-    data: ProtonDBData | null;
-  }>({ isLoading: enabled, data: null });
+  const key = shop === "steam" && objectId ? `steam:${objectId}` : null;
+  // Only a re-render trigger; the answer itself lives in the shared cache.
+  const [, setLoadedKey] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!enabled || !objectId) {
-      setState({ isLoading: false, data: null });
-      return;
-    }
-
-    const cacheKey = `steam:${objectId}`;
-    if (responseCache.has(cacheKey)) {
-      setState({ isLoading: false, data: responseCache.get(cacheKey) ?? null });
-      return;
-    }
+    if (!key || !objectId || readCache(key) !== undefined) return;
 
     let cancelled = false;
-    setState({ isLoading: true, data: null });
-    getProtonDBData("steam", objectId).then((data) => {
-      if (!cancelled) setState({ isLoading: false, data });
+    want(key, 1);
+    loadProtonDB(key, objectId).then(() => {
+      if (!cancelled) setLoadedKey(key);
     });
 
     return () => {
       cancelled = true;
+      want(key, -1);
     };
-  }, [enabled, objectId]);
+  }, [key, objectId]);
 
-  return state;
+  if (!key) return { isLoading: false, data: null };
+  const cached = readCache(key);
+  return cached === undefined
+    ? { isLoading: true, data: null }
+    : { isLoading: false, data: cached };
 }

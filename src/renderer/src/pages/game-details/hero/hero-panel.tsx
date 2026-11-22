@@ -77,6 +77,7 @@ export function HeroPanel() {
             <Link
               to={`https://www.protondb.com/app/${objectId}`}
               className="hero-panel__protondb"
+              aria-label={t("view_on_protondb")}
             >
               <ProtonDBBadge badge={protonTier} />
             </Link>
