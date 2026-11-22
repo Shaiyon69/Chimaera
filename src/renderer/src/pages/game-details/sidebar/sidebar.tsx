@@ -2,7 +2,6 @@ import { findBundledGame } from "@shared";
 import { lazy, Suspense, useContext, useEffect, useState } from "react";
 import type {
   HowLongToBeatCategory,
-  ProtonDBData,
   SteamAppDetails,
   UserAchievement,
 } from "@types";
@@ -16,6 +15,7 @@ import {
   useAppSelector,
   useDate,
   useFormat,
+  useProtonDB,
   useUserDetails,
 } from "@renderer/hooks";
 import {
@@ -38,41 +38,6 @@ const ProtonDBSection = lazy(async () => {
   const mod = await import("./protondb-section");
   return { default: mod.ProtonDBSection };
 });
-
-const protonDBResponseCache = new Map<string, ProtonDBData | null>();
-const protonDBInFlightRequests = new Map<
-  string,
-  Promise<ProtonDBData | null>
->();
-
-const getProtonDBData = (shop: string, objectId: string) => {
-  const cacheKey = `${shop}:${objectId}`;
-
-  if (protonDBResponseCache.has(cacheKey)) {
-    return Promise.resolve(protonDBResponseCache.get(cacheKey) ?? null);
-  }
-
-  const inFlightRequest = protonDBInFlightRequests.get(cacheKey);
-  if (inFlightRequest) {
-    return inFlightRequest;
-  }
-
-  const request = window.electron.hydraApi
-    .get<ProtonDBData | null>(`/games/${shop}/${objectId}/protondb`, {
-      needsAuth: false,
-    })
-    .then((protonData) => {
-      protonDBResponseCache.set(cacheKey, protonData);
-      return protonData;
-    })
-    .catch(() => null)
-    .finally(() => {
-      protonDBInFlightRequests.delete(cacheKey);
-    });
-
-  protonDBInFlightRequests.set(cacheKey, request);
-  return request;
-};
 
 const achievementsPlaceholder: UserAchievement[] = [
   {
@@ -109,15 +74,10 @@ const achievementsPlaceholder: UserAchievement[] = [
 ];
 
 export function Sidebar() {
-  const shouldShowProtonFeatures = window.electron.platform === "linux";
   const [howLongToBeat, setHowLongToBeat] = useState<{
     isLoading: boolean;
     data: HowLongToBeatCategory[] | null;
   }>({ isLoading: true, data: null });
-  const [protonDB, setProtonDB] = useState<{
-    isLoading: boolean;
-    data: ProtonDBData | null;
-  }>({ isLoading: shouldShowProtonFeatures, data: null });
 
   const { userDetails } = useUserDetails();
   const [activeRequirement, setActiveRequirement] =
@@ -125,6 +85,7 @@ export function Sidebar() {
 
   const { gameTitle, shopDetails, objectId, shop, stats, achievements } =
     useContext(gameDetailsContext);
+  const protonDB = useProtonDB(shop, objectId ?? undefined);
   const userPreferences = useAppSelector(
     (state) => state.userPreferences.value
   );
@@ -164,35 +125,16 @@ export function Sidebar() {
     }
   }, [objectId, shop]);
 
-  useEffect(() => {
-    if (!shouldShowProtonFeatures || !objectId) {
-      setProtonDB({ isLoading: false, data: null });
-      return;
-    }
-
-    setProtonDB({ isLoading: true, data: null });
-
-    getProtonDBData(shop, objectId)
-      .then((protonData) => {
-        setProtonDB({ isLoading: false, data: protonData });
-      })
-      .catch(() => {
-        setProtonDB({ isLoading: false, data: null });
-      });
-  }, [shouldShowProtonFeatures, objectId, shop]);
-
   return (
     <aside className="content-sidebar">
       <CompanionSection shop={shop} objectId={objectId} />
-      {shouldShowProtonFeatures && (
-        <Suspense fallback={null}>
-          <ProtonDBSection
-            protonDBData={protonDB.data}
-            isLoading={protonDB.isLoading}
-            objectId={objectId ?? ""}
-          />
-        </Suspense>
-      )}
+      <Suspense fallback={null}>
+        <ProtonDBSection
+          protonDBData={protonDB.data}
+          isLoading={protonDB.isLoading}
+          objectId={objectId ?? ""}
+        />
+      </Suspense>
 
       {userDetails === null && !shouldRenderAchievementsSection && (
         <SidebarSection title={t("achievements")}>

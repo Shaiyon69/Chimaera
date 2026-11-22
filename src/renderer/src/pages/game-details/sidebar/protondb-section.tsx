@@ -1,21 +1,16 @@
-import cn from "classnames";
 import { LinkExternalIcon, StarIcon } from "@primer/octicons-react";
 import { Link } from "@renderer/components/link/link";
 import Skeleton, { SkeletonTheme } from "react-loading-skeleton";
 import { useTranslation } from "react-i18next";
 import type { ProtonDBData } from "@types";
+import {
+  ProtonDBBadge,
+  toProtonTier,
+} from "@renderer/components/protondb-badge/protondb-badge";
 import ProtonDBLogo from "@renderer/assets/protondb-logo.svg?url";
 import SteamDeckLogo from "@renderer/assets/steam-deck-logo.svg?url";
 import { SidebarSection } from "../sidebar-section/sidebar-section";
 import "./sidebar.scss";
-
-const protonTierTranslation: Record<string, string> = {
-  borked: "protondb_tier_borked",
-  bronze: "protondb_tier_bronze",
-  silver: "protondb_tier_silver",
-  gold: "protondb_tier_gold",
-  platinum: "protondb_tier_platinum",
-};
 
 const deckCompatibilityTranslation: Record<string, string> = {
   verified: "deck_verified",
@@ -37,10 +32,7 @@ export function ProtonDBSection({
 }: ProtonDBSectionProps) {
   const { t } = useTranslation(["game_details", "catalogue"]);
 
-  const tier = protonDBData?.tier?.toLowerCase().trim() ?? null;
-  const tierKey = tier ? protonTierTranslation[tier] : null;
-  const isKnownTier = Boolean(tierKey);
-  const tierLabel = tierKey ? t(tierKey) : "-";
+  const tier = toProtonTier(protonDBData?.tier);
 
   const scoreLabel =
     typeof protonDBData?.score === "number"
@@ -71,14 +63,11 @@ export function ProtonDBSection({
                     {t("protondb_tier")}
                   </p>
 
-                  <span
-                    className={cn(
-                      "protondb__tier-badge",
-                      isKnownTier && `protondb__tier-badge--${tier}`
-                    )}
-                  >
-                    <span>{tierLabel}</span>
-                  </span>
+                  {tier ? (
+                    <ProtonDBBadge badge={tier} />
+                  ) : (
+                    <p className="protondb__value">-</p>
+                  )}
                 </div>
 
                 <div className="protondb__category">

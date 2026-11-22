@@ -223,7 +223,6 @@ export default function Catalogue() {
   const dispatch = useAppDispatch();
 
   const { t, i18n } = useTranslation("catalogue");
-  const shouldShowProtonFeatures = window.electron.platform === "linux";
 
   const debouncedSearch = useRef(
     debounce(
@@ -534,9 +533,7 @@ export default function Catalogue() {
         value: publisher,
       })),
 
-      ...(shouldShowProtonFeatures &&
-      protonThreshold &&
-      protonThreshold.values.length
+      ...(protonThreshold && protonThreshold.values.length
         ? [
             {
               label: t(protonThreshold.labelKey),
@@ -548,7 +545,7 @@ export default function Catalogue() {
           ]
         : []),
 
-      ...(shouldShowProtonFeatures && deckCompatible
+      ...(deckCompatible
         ? [
             {
               label: t("steam_deck_compatible"),
@@ -578,7 +575,6 @@ export default function Catalogue() {
     downloadSources,
     steamGenresMapping,
     language,
-    shouldShowProtonFeatures,
     t,
   ]);
 
@@ -708,7 +704,7 @@ export default function Catalogue() {
         >
           <CatalogueModeToggle />
 
-          {mode === "modern" && shouldShowProtonFeatures && (
+          {mode === "modern" && (
             <Suspense fallback={null}>
               <ProtonCompatibilitySection
                 title={t("protondb")}

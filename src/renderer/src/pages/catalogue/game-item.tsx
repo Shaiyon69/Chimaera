@@ -1,6 +1,6 @@
 import { buildGameDetailsPath } from "@renderer/helpers";
 import { useAppSelector, useLibrary } from "@renderer/hooks";
-import { lazy, Suspense, useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Link } from "@renderer/components/link/link";
 
 import "./game-item.scss";
@@ -8,11 +8,10 @@ import { useTranslation } from "react-i18next";
 import { CatalogueSearchResult } from "@types";
 import { QuestionIcon, PlusIcon, CheckIcon } from "@primer/octicons-react";
 import cn from "classnames";
-
-const ProtonDBBadge = lazy(async () => {
-  const mod = await import("./protondb-badge");
-  return { default: mod.ProtonDBBadge };
-});
+import {
+  ProtonDBBadge,
+  toProtonTier,
+} from "@renderer/components/protondb-badge/protondb-badge";
 
 export interface GameItemProps {
   game: CatalogueSearchResult;
@@ -30,7 +29,6 @@ export function GameItem({ game }: GameItemProps) {
   const [added, setAdded] = useState(false);
 
   const { library, updateLibrary } = useLibrary();
-  const shouldShowProtonFeatures = window.electron.platform === "linux";
 
   useEffect(() => {
     const exists = library.some(
@@ -103,14 +101,7 @@ export function GameItem({ game }: GameItemProps) {
     game.protondbSupportBadge ??
     game.protondbSupportBadges?.[0] ??
     null;
-  const protonBadgeValue = rawProtonValue?.toLowerCase().trim() ?? null;
-  const protonBadge =
-    protonBadgeValue &&
-    ["borked", "bronze", "silver", "gold", "platinum"].includes(
-      protonBadgeValue
-    )
-      ? protonBadgeValue
-      : null;
+  const protonBadge = toProtonTier(rawProtonValue);
 
   return (
     <article className="game-item">
@@ -118,10 +109,10 @@ export function GameItem({ game }: GameItemProps) {
         <div className="game-item__cover-wrapper">
           {libraryImage}
 
-          {shouldShowProtonFeatures && protonBadge && (
-            <Suspense fallback={null}>
+          {protonBadge && (
+            <div className="game-item__compatibility-badge-group">
               <ProtonDBBadge badge={protonBadge} />
-            </Suspense>
+            </div>
           )}
         </div>
 

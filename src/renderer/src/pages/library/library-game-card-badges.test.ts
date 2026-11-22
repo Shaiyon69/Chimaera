@@ -50,6 +50,11 @@ function renderCard(
       isAnimatedCoverCandidate: () => false,
       useAnimatedSourceWarmup: () => {},
       useFormat: () => ({ numberFormatter: new Intl.NumberFormat("en") }),
+      // Mirrors the real hook: only Steam games get data, hidden badges pass no shop.
+      useProtonDB: (shop?: string) => ({
+        isLoading: false,
+        data: shop === "steam" ? { tier: "gold" } : null,
+      }),
     },
     "@shared": { getDisplayedPlayTimeInMilliseconds: () => 0 },
     "@renderer/helpers": {
@@ -64,6 +69,9 @@ function renderCard(
     },
     "@renderer/components": {
       SteamLibraryBadge: () => React.createElement("span", null, "Steam"),
+      ProtonDBBadge: ({ badge }: { badge: string }) =>
+        React.createElement("span", null, `ProtonDB ${badge}`),
+      toProtonTier: (tier?: string | null) => tier ?? null,
       AchievementProgress: () => null,
       ArtFallback: () => null,
       VerticalCoverCard: ({ children }: { children: React.ReactNode }) =>
@@ -191,5 +199,30 @@ describe("visibility and playtime badge layout", () => {
       null
     );
     dom.window.close();
+  });
+
+  it("shows the ProtonDB tier for Steam games unless library badges are hidden", () => {
+    const shown = renderCard(layouts[0], { shop: "steam" });
+    assert.match(
+      shown.window.document.querySelector(".library-game-card__top-right")!
+        .textContent!,
+      /ProtonDB gold/
+    );
+    shown.window.close();
+
+    const other = renderCard(layouts[0], { shop: "launchbox" });
+    assert.equal(
+      other.window.document.querySelector(".library-game-card__top-right"),
+      null
+    );
+    other.window.close();
+
+    const hidden = renderCard(
+      layouts[0],
+      { shop: "steam" },
+      { hideLibraryGameBadges: true }
+    );
+    assert.doesNotMatch(hidden.window.document.body.textContent!, /ProtonDB/);
+    hidden.window.close();
   });
 });

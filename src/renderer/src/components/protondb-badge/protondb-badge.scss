@@ -1,0 +1,53 @@
+// Tier scale from the ecosystem's colourblind-safe palette: blue, gold, grey, dark, red outline.
+// Every tier also carries its name, so colour is never the only signal.
+.protondb-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  color: #121212;
+  box-shadow: 0 2px 4px rgb(var(--shade) / 0.28);
+
+  &__logo {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    display: block;
+    // The logo ships white; the light tiers need it dark like their text.
+    filter: brightness(0);
+  }
+
+  &--platinum {
+    background: #adc6ff;
+  }
+
+  &--gold {
+    background: #e8c77d;
+  }
+
+  &--silver {
+    background: #e0e0e0;
+  }
+
+  &--bronze {
+    background: #2a2a2a;
+    border-color: rgb(255 255 255 / 0.2);
+    color: #e0e0e0;
+
+    .protondb-badge__logo {
+      filter: brightness(0) invert(88%);
+    }
+  }
+
+  &--borked {
+    background: #121212;
+    border-color: #e5676f;
+    color: #e5676f;
+  }
+}

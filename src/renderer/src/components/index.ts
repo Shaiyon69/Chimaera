@@ -38,3 +38,4 @@ export * from "./error-boundary/error-boundary";
 export * from "./nav-dock/nav-dock";
 export * from "./traffic-lights/traffic-lights";
 export * from "./art-fallback/art-fallback";
+export * from "./protondb-badge/protondb-badge";

@@ -177,44 +177,6 @@
     text-transform: capitalize;
   }
 
-  &__tier-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 6px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    color: #000000;
-    background: rgb(180, 199, 220);
-    border: 1px solid rgb(var(--shade) / 0.25);
-    line-height: 1.25;
-    white-space: nowrap;
-    box-shadow: 0 2px 4px rgb(var(--shade) / 0.28);
-
-    &--platinum {
-      background: rgb(180, 199, 220);
-    }
-
-    &--gold {
-      background: rgb(207, 181, 59);
-    }
-
-    &--silver {
-      background: rgb(166, 166, 166);
-    }
-
-    &--bronze {
-      background: rgb(205, 127, 50);
-      color: var(--text);
-    }
-
-    &--borked {
-      background: #d72626;
-      color: var(--text);
-    }
-  }
-
   &__logo {
     width: 12px;
     height: 12px;

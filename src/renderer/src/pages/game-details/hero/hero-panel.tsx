@@ -1,7 +1,17 @@
 import { useContext } from "react";
 import { useTranslation } from "react-i18next";
 
-import { useAppSelector, useDate, useDownload } from "@renderer/hooks";
+import {
+  useAppSelector,
+  useDate,
+  useDownload,
+  useProtonDB,
+} from "@renderer/hooks";
+import { Link } from "@renderer/components/link/link";
+import {
+  ProtonDBBadge,
+  toProtonTier,
+} from "@renderer/components/protondb-badge/protondb-badge";
 
 import { HeroPanelActions } from "./hero-panel-actions";
 import { HeroPanelPlaytime } from "./hero-panel-playtime";
@@ -14,7 +24,10 @@ export function HeroPanel() {
 
   const { formatDate } = useDate();
 
-  const { game, repacks } = useContext(gameDetailsContext);
+  const { game, repacks, shop, objectId } = useContext(gameDetailsContext);
+  const protonTier = toProtonTier(
+    useProtonDB(shop, objectId ?? undefined).data?.tier
+  );
 
   const { lastPacket } = useDownload();
 
@@ -60,6 +73,14 @@ export function HeroPanel() {
       <div className="hero-panel">
         <div className="hero-panel__content">{getInfo()}</div>
         <div className="hero-panel__actions">
+          {protonTier && (
+            <Link
+              to={`https://www.protondb.com/app/${objectId}`}
+              className="hero-panel__protondb"
+            >
+              <ProtonDBBadge badge={protonTier} />
+            </Link>
+          )}
           <HeroPanelActions />
         </div>
 

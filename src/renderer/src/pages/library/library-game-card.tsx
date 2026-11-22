@@ -7,6 +7,7 @@ import {
   isAnimatedCoverCandidate,
   useAppSelector,
   useAnimatedSourceWarmup,
+  useProtonDB,
 } from "@renderer/hooks";
 import {
   CLASSICS_PS_PLATFORM_LABELS,
@@ -17,7 +18,9 @@ import {
 import {
   AchievementProgress,
   ArtFallback,
+  ProtonDBBadge,
   SteamLibraryBadge,
+  toProtonTier,
 } from "@renderer/components";
 import { GameVisibilityBadge } from "@renderer/components/game-visibility-badge/game-visibility-badge";
 import { memo, useEffect, useState } from "react";
@@ -109,6 +112,10 @@ export const LibraryGameCard = memo(function LibraryGameCard({
     userPreferences?.autoplayAnimatedArtwork ?? false;
 
   const isInstalled = isGameReadyToPlay(game);
+  // Hidden badges skip the request entirely.
+  const protonTier = toProtonTier(
+    useProtonDB(hideBadges ? undefined : game.shop, game.objectId).data?.tier
+  );
   const linkedLaunchers = linkedLauncherIds(game)
     .map((id) => t(`launcher_${id}`))
     .join(" · ");
@@ -293,9 +300,14 @@ export const LibraryGameCard = memo(function LibraryGameCard({
             )}
           </div>
 
-          {(showSteamLibraryBadge || showPlatformBadge || showReadyBadge) && (
+          {(showSteamLibraryBadge ||
+            showPlatformBadge ||
+            showReadyBadge ||
+            protonTier) && (
             <div className="library-game-card__top-right">
               {showSteamLibraryBadge && <SteamLibraryBadge />}
+
+              {protonTier && <ProtonDBBadge badge={protonTier} />}
 
               {showPlatformBadge && (
                 <div className="library-game-card__classics-badges">

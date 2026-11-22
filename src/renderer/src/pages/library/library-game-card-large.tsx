@@ -7,6 +7,7 @@ import {
   useCoverPoster,
   useGameCard,
   useAnimatedSourceWarmup,
+  useProtonDB,
 } from "@renderer/hooks";
 import {
   CLASSICS_PS_PLATFORM_LABELS,
@@ -17,7 +18,9 @@ import {
 import {
   AchievementProgress,
   ArtFallback,
+  ProtonDBBadge,
   SteamLibraryBadge,
+  toProtonTier,
 } from "@renderer/components";
 import { GameVisibilityBadge } from "@renderer/components/game-visibility-badge/game-visibility-badge";
 import {
@@ -118,6 +121,10 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
   const [isCoverHovered, setIsCoverHovered] = useState(false);
 
   const isInstalled = isGameReadyToPlay(game);
+  // Hidden badges skip the request entirely.
+  const protonTier = toProtonTier(
+    useProtonDB(hideBadges ? undefined : game.shop, game.objectId).data?.tier
+  );
 
   const sizeBars = useMemo(() => {
     const items: {
@@ -425,6 +432,8 @@ export const LibraryGameCardLarge = memo(function LibraryGameCardLarge({
             )}
 
             {showSteamLibraryBadge && <SteamLibraryBadge variant="large" />}
+
+            {protonTier && <ProtonDBBadge badge={protonTier} />}
 
             {!hideClassicsBadges && classicsPlatformLabel && (
               <div className="library-game-card-large__classics-badges">
