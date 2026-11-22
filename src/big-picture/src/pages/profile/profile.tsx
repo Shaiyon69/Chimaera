@@ -458,6 +458,14 @@ function getLibraryCarouselPlaytimeInMilliseconds(
         "steamPlayTimeInMilliseconds" in game
           ? game.steamPlayTimeInMilliseconds
           : undefined,
+      gogPlayTimeInMilliseconds:
+        "gogPlayTimeInMilliseconds" in game
+          ? game.gogPlayTimeInMilliseconds
+          : undefined,
+      epicPlayTimeInMilliseconds:
+        "epicPlayTimeInMilliseconds" in game
+          ? game.epicPlayTimeInMilliseconds
+          : undefined,
     });
   }
 
