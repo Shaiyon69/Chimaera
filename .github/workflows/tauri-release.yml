@@ -1,7 +1,8 @@
 name: Tauri release
 
 # Builds the signed Windows installer and Linux AppImage plus the updater latest.json, then publishes them as the
-# chimaera-v<version> release on Shaiyon69/Skibidevs. Binaries ship only from the website, never from this repo.
+# chimaera-v<version> release on Shaiyon69/Skibidevs. Builds upload straight into a draft of that release, not into
+# Actions artifacts: the account's artifact storage quota blocked the 2.2.0 release twice. Binaries ship only from the website, never from this repo.
 # SKIBIDEVS_TOKEN: fine-grained token with Contents read/write on Shaiyon69/Skibidevs only.
 # BROOD_SSH_KEY: read-only deploy key for Shaiyon69/Chimaera-Brood (the game companions).
 
@@ -9,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the release on Skibidevs (off = build and keep the artifact only)
+        description: Publish the release on Skibidevs (off = build into a draft release only)
         type: boolean
         default: true
 
@@ -18,7 +19,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # One job creates the draft, so the two builds never race to create it.
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.SKIBIDEVS_TOKEN }}
+      SITE_REPO: Shaiyon69/Skibidevs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create the draft release
+        run: |
+          test -n "$GH_TOKEN" || { echo "::error::Set the SKIBIDEVS_TOKEN secret"; exit 1; }
+          TAG="chimaera-v$(node -p 'require("./package.json").version')"
+          # A re-run keeps the existing release (draft or published) and replaces its files.
+          gh release view "$TAG" --repo "$SITE_REPO" >/dev/null 2>&1 \
+            || gh release create "$TAG" --draft --title "${TAG/chimaera-v/Chimaera v}" --notes "${TAG/chimaera-v/Chimaera v}" --repo "$SITE_REPO"
+
   windows:
+    needs: prepare
     runs-on: windows-2022
     permissions:
       contents: read
@@ -127,13 +148,11 @@ jobs:
           cargo build --release --manifest-path installer/src-tauri/Cargo.toml --target-dir installer/target
           cp installer/target/release/chimaera-setup.exe release/Chimaera-Setup.exe
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: chimaera-windows
-          if-no-files-found: error
-          path: release/*
+      - name: Upload to the draft release
+        run: gh release upload "chimaera-v$VERSION" release/* --clobber --repo "$SITE_REPO"
 
   linux:
+    needs: prepare
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -236,16 +255,14 @@ jobs:
       - name: Collect release files
         run: |
           VERSION=$(node -p 'require("./package.json").version')
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           mkdir release
           app=$(ls src-tauri/target/release/bundle/appimage/*.AppImage)
           cp "$app" "release/chimaera-$VERSION-amd64.AppImage"
           cp "$app.sig" "release/chimaera-$VERSION-amd64.AppImage.sig"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: chimaera-linux
-          if-no-files-found: error
-          path: release/*
+      - name: Upload to the draft release
+        run: gh release upload "chimaera-v$VERSION" release/* --clobber --repo "$SITE_REPO"
 
   publish:
     needs: [windows, linux]
@@ -261,13 +278,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: chimaera-*
-          path: release
-          merge-multiple: true
+      # Only the signatures are needed here; the builds are already on the draft release.
+      - name: Fetch the signatures
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          gh release download "chimaera-v$VERSION" --pattern '*.sig' --dir release --repo "$SITE_REPO"
 
-      # Outside release/, which is uploaded as the release's files.
+      # Outside release/, which only holds what goes on the release.
       - name: Write release notes
         run: |
           node scripts/release-notes.mjs > "$RUNNER_TEMP/notes.md"
@@ -294,21 +311,14 @@ jobs:
             fs.writeFileSync("release/latest.json", JSON.stringify(manifest, null, 2) + "\n");
           '
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: updater-manifest
-          path: release/latest.json
+      - name: Add the manifest and notes
+        run: |
+          gh release upload "chimaera-v$VERSION" release/latest.json --clobber --repo "$SITE_REPO"
+          gh release edit "chimaera-v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --repo "$SITE_REPO"
 
       - name: Publish Skibidevs release
         if: inputs.publish
-        run: |
-          TAG="chimaera-v$VERSION"
-          if gh release view "$TAG" --repo "$SITE_REPO" >/dev/null 2>&1; then
-            gh release upload "$TAG" release/* --clobber --repo "$SITE_REPO"
-            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md" --repo "$SITE_REPO"
-          else
-            gh release create "$TAG" release/* --title "Chimaera v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --repo "$SITE_REPO"
-          fi
+        run: gh release edit "chimaera-v$VERSION" --draft=false --repo "$SITE_REPO"
 
       # The site refreshes its download list and updater manifests on this event.
       - name: Tell Skibidevs to refresh
