@@ -60,6 +60,28 @@ impl Roots {
             program_data: env("PROGRAMDATA", r"C:\ProgramData"),
         }
     }
+
+    /// The same folders inside a Wine/Proton prefix, where a Windows game run on Linux writes them.
+    pub fn in_prefix(prefix: &Path) -> Self {
+        let drive_c = prefix.join("drive_c");
+        let from_reg = fs::read_to_string(prefix.join("user.reg"))
+            .ok()
+            .and_then(|reg| crate::proton::windows_user_profile(&reg))
+            .filter(|p| p.get(..3).is_some_and(|d| d.eq_ignore_ascii_case("c:/")))
+            .map(|p| drive_c.join(&p[3..]));
+        // Proton's user is steamuser, plain Wine's is the Linux user.
+        let profile = from_reg.unwrap_or_else(|| {
+            let user = std::env::var("USER").unwrap_or_default();
+            ["steamuser", user.as_str()].iter().map(|u| drive_c.join("users").join(u)).find(|p| p.is_dir()).unwrap_or_else(|| drive_c.join("users/steamuser"))
+        });
+        Roots {
+            app_data: profile.join("AppData").join("Roaming"),
+            local_app_data: profile.join("AppData").join("Local"),
+            documents: profile.join("Documents"),
+            public_documents: drive_c.join("users").join("Public").join("Documents"),
+            program_data: drive_c.join("ProgramData"),
+        }
+    }
 }
 
 /// (cracker, folder, path below it with `<id>` for the app id), per getPathFromCracker.
@@ -358,9 +380,12 @@ fn process_steam_stats(path: &Path) -> Vec<Unlock> {
 }
 
 /// Every achievement file for a Steam-catalogue game (collectGameAchievementFiles).
-pub fn game_files(roots: &Roots, object_id: &str, executables: &[String], steam_path: Option<&Path>) -> Vec<AchievementFile> {
-    let mut files = fixed_location_files(roots, object_id);
-    files.extend(nested_goldberg_files(roots, object_id));
+pub fn game_files(roots: &[Roots], object_id: &str, executables: &[String], steam_path: Option<&Path>) -> Vec<AchievementFile> {
+    let mut files = Vec::new();
+    for roots in roots {
+        files.extend(fixed_location_files(roots, object_id));
+        files.extend(nested_goldberg_files(roots, object_id));
+    }
     for exe in executables.iter().filter(|e| !e.is_empty()) {
         files.extend(game_directory_files(Path::new(exe)));
     }
@@ -639,6 +664,18 @@ mod tests {
     }
 
     #[test]
+    fn prefix_roots_follow_the_user_reg_profile() {
+        let prefix = std::env::temp_dir().join(format!("chimaera-pfx-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&prefix).unwrap();
+        fs::write(prefix.join("user.reg"), "[Volatile Environment]\n\"USERPROFILE\"=\"C:\\\\users\\\\steamuser\"\n").unwrap();
+        let roots = Roots::in_prefix(&prefix);
+        assert_eq!(roots.app_data, prefix.join("drive_c/users/steamuser/AppData/Roaming"));
+        assert_eq!(roots.public_documents, prefix.join("drive_c/users/Public/Documents"));
+        assert_eq!(roots.program_data, prefix.join("drive_c/ProgramData"));
+        fs::remove_dir_all(&prefix).unwrap();
+    }
+
+    #[test]
     fn finds_fixed_nested_and_game_folder_files() {
         let base = std::env::temp_dir().join(format!("chimaera-ach-{}", uuid::Uuid::new_v4()));
         let roots = Roots {
@@ -661,7 +698,7 @@ mod tests {
         fs::write(game.join("portal2.exe"), "").unwrap();
 
         let exe = game.join("portal2.exe");
-        let files = game_files(&roots, "620", &[exe.to_string_lossy().into_owned()], None);
+        let files = game_files(&[roots], "620", &[exe.to_string_lossy().into_owned()], None);
         let kinds: Vec<Cracker> = files.iter().map(|f| f.cracker).collect();
         assert_eq!(kinds, [Cracker::Codex, Cracker::Goldberg, Cracker::Goldberg], "{files:?}");
         assert!(files[2].path.ends_with("steam_settings/620/achievements.json"));

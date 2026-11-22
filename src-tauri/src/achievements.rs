@@ -274,17 +274,29 @@ pub fn user_achievements(catalogue: &[Value], unlocked: &[Value], preferences: &
     Value::Array(list)
 }
 
-fn roots(app: &AppHandle) -> Roots {
-    Roots::from_env(app.path().document_dir().unwrap_or_default())
+/// Where emulators write: inside each Wine prefix on Linux, else the Windows folders.
+fn roots(app: &AppHandle, prefixes: &[PathBuf]) -> Vec<Roots> {
+    if prefixes.is_empty() {
+        return vec![Roots::from_env(app.path().document_dir().unwrap_or_default())];
+    }
+    prefixes.iter().map(|p| Roots::in_prefix(p)).collect()
 }
 
-/// Steam-catalogue games still in the library: (shop, objectId, every install's exe).
-fn watched_games(store: &Store) -> Vec<(String, String, Vec<String>)> {
+/// A watched game's every install: their exes, and on Linux their Wine prefixes.
+#[derive(Debug, PartialEq)]
+struct Group {
+    exes: Vec<String>,
+    prefixes: Vec<PathBuf>,
+}
+
+/// Steam-catalogue games still in the library: (shop, objectId, every install).
+fn watched_games(store: &Store) -> Vec<(String, String, Group)> {
     let live = live_games(store);
     let winners = group_winners(&live);
+    let prefs = preferences(store);
     live.iter()
         .filter(|(_, g)| g["shop"] == "steam")
-        .filter_map(|(key, g)| Some(("steam".to_string(), g["objectId"].as_str()?.to_string(), group_executables(&live, &winners, key))))
+        .filter_map(|(key, g)| Some(("steam".to_string(), g["objectId"].as_str()?.to_string(), group(&live, &winners, key, &prefs))))
         .collect()
 }
 
@@ -294,16 +306,28 @@ fn live_games(store: &Store) -> Vec<(String, Value)> {
 
 /// The exe of `key` and of every copy grouped with it; a copy played instead of the Steam
 /// record writes its achievement files next to its own exe.
-fn group_executables(live: &[(String, Value)], winners: &HashMap<String, String>, key: &str) -> Vec<String> {
+fn group(live: &[(String, Value)], winners: &HashMap<String, String>, key: &str, prefs: &Value) -> Group {
     let group = winners.get(key);
     let own = live.iter().filter(|(k, _)| k == key);
     let others = live.iter().filter(|(k, _)| k != key && group.is_some() && winners.get(k) == group);
-    own.chain(others).filter_map(|(_, g)| g["executablePath"].as_str().map(str::to_string)).collect()
+    let members: Vec<&(String, Value)> = own.chain(others).collect();
+    let exes = members.iter().filter_map(|(_, g)| g["executablePath"].as_str().map(str::to_string)).collect();
+    let mut prefixes: Vec<PathBuf> = Vec::new();
+    if cfg!(target_os = "linux") {
+        // Each copy runs in its own prefix (Steam's compatdata or Chimaera's), so its emulator saves land there.
+        for (k, g) in &members {
+            let prefix = crate::proton::prefix_for(g, prefs, k);
+            if !prefixes.contains(&prefix) {
+                prefixes.push(prefix);
+            }
+        }
+    }
+    Group { exes, prefixes }
 }
 
-fn executables_for(store: &Store, key: &str) -> Vec<String> {
+fn group_for(store: &Store, key: &str) -> Group {
     let live = live_games(store);
-    group_executables(&live, &group_winners(&live), key)
+    group(&live, &group_winners(&live), key, &preferences(store))
 }
 
 fn mtime(path: &PathBuf) -> Option<SystemTime> {
@@ -311,7 +335,7 @@ fn mtime(path: &PathBuf) -> Option<SystemTime> {
 }
 
 impl AchievementWatcher {
-    fn files_for(&self, roots: &Roots, steam: Option<&std::path::Path>, object_id: &str, exes: &[String]) -> Vec<AchievementFile> {
+    fn files_for(&self, roots: &[Roots], steam: Option<&std::path::Path>, object_id: &str, exes: &[String]) -> Vec<AchievementFile> {
         if let Some((at, files)) = lock(&self.files).get(object_id) {
             if at.elapsed() < DISCOVERY_TTL {
                 return files.clone();
@@ -366,11 +390,11 @@ pub fn spawn(app: AppHandle) {
             // File discovery and parsing are blocking disk work.
             let found = tauri::async_runtime::spawn_blocking(move || {
                 let watcher = scan_app.state::<AchievementWatcher>();
-                let roots = roots(&scan_app);
                 games
                     .into_iter()
-                    .filter_map(|(shop, id, exes)| {
-                        let changed = watcher.changed(&watcher.files_for(&roots, steam.as_deref(), &id, &exes));
+                    .filter_map(|(shop, id, group)| {
+                        let roots = roots(&scan_app, &group.prefixes);
+                        let changed = watcher.changed(&watcher.files_for(&roots, steam.as_deref(), &id, &group.exes));
                         (!changed.is_empty()).then(|| (shop, id, parse_all(&changed)))
                     })
                     .collect::<Vec<_>>()
@@ -416,12 +440,12 @@ pub async fn get_unlocked_achievements(app: &AppHandle, object_id: &str, shop: &
     let key = game_key(shop, object_id);
     let first_look = shop == "steam" && lock(&app.state::<AchievementWatcher>().synced).insert(key.clone());
     if first_look {
-        let exes = executables_for(&app.state::<Store>(), &key);
+        let group = group_for(&app.state::<Store>(), &key);
         let (scan_app, id) = (app.clone(), object_id.to_string());
         let (steam_unlocks, other_unlocks) = tauri::async_runtime::spawn_blocking(move || {
             let store = scan_app.state::<Store>();
             let steam = steam_client(&store);
-            parse_all(&achievement_files::game_files(&roots(&scan_app), &id, &exes, steam.as_deref()))
+            parse_all(&achievement_files::game_files(&roots(&scan_app, &group.prefixes), &id, &group.exes, steam.as_deref()))
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -465,8 +489,8 @@ pub async fn reset(app: &AppHandle, shop: &str, object_id: &str) -> Result<(), S
         return Ok(());
     }
     // Every grouped copy: their unlocks merge into this record, so leftovers would come back.
-    let exes = executables_for(&app.state::<Store>(), &key);
-    let files = achievement_files::game_files(&roots(app), object_id, &exes, None);
+    let group = group_for(&app.state::<Store>(), &key);
+    let files = achievement_files::game_files(&roots(app, &group.prefixes), object_id, &group.exes, None);
     let watcher = app.state::<AchievementWatcher>();
     {
         let mut mtimes = lock(&watcher.mtimes);
@@ -566,7 +590,23 @@ mod tests {
         let gog = json!({ "shop": "custom", "objectId": "gog-1", "launcher": "gog", "iconUrl": art, "title": "LN2", "executablePath": r"C:\GOG\ln2.exe" });
         store.put("games", "custom:gog-1", &gog).unwrap();
         // Playing the GOG copy leaves the Steam record's exe alone, so its folder is scanned too.
-        assert_eq!(watched_games(&store), vec![("steam".to_string(), "860510".to_string(), vec![r"C:\Steam\ln2.exe".to_string(), r"C:\GOG\ln2.exe".to_string()])]);
+        let watched = watched_games(&store);
+        assert_eq!(watched.len(), 1);
+        assert_eq!(watched[0].2.exes, [r"C:\Steam\ln2.exe", r"C:\GOG\ln2.exe"]);
+    }
+
+    #[test]
+    fn linux_watches_each_copys_prefix() {
+        if !cfg!(target_os = "linux") {
+            return;
+        }
+        let store = Store::memory().unwrap();
+        store.put("games", "steam:860510", &json!({ "shop": "steam", "objectId": "860510", "title": "LN2", "executablePath": "/lib/steamapps/common/LN2/ln2.exe" })).unwrap();
+        let art = "https://shared.steamstatic.com/store_item_assets/steam/apps/860510/library_600x900_2x.jpg";
+        let gog = json!({ "shop": "custom", "objectId": "gog-1", "launcher": "gog", "iconUrl": art, "title": "LN2", "executablePath": "/games/LN2/ln2.exe", "winePrefixPath": "/pfx/ln2" });
+        store.put("games", "custom:gog-1", &gog).unwrap();
+        let watched = watched_games(&store);
+        assert_eq!(watched[0].2.prefixes, [PathBuf::from("/lib/steamapps/compatdata/860510/pfx"), PathBuf::from("/pfx/ln2")]);
     }
 
     #[test]
