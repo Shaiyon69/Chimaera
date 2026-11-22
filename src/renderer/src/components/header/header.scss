@@ -61,6 +61,12 @@
     &:focus {
       cursor: text;
     }
+
+    // The box's blue ring already shows focus; the global :focus-visible outline
+    // gets clipped by the header into two stray vertical lines.
+    &:focus-visible {
+      outline: none;
+    }
   }
 
   &__action-button {
