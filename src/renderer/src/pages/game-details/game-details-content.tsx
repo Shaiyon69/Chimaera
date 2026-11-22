@@ -9,7 +9,7 @@ import {
 } from "react";
 import { PencilIcon } from "@primer/octicons-react";
 import { useTranslation } from "react-i18next";
-import Color from "color";
+import { pickAccent } from "./hero-accent";
 
 import { HeroPanel } from "./hero";
 import { DescriptionHeader } from "./description-header/description-header";
@@ -34,34 +34,20 @@ import "./game-details.scss";
 
 const accentCache = new Map<string, string | null>();
 
-/** The banner's average colour lifted to a readable accent; null for near-grey art. */
+/** Loads the banner small; the GPU downscale is far cheaper than reading it at full size. */
 function heroAccent(imageUrl: string): Promise<string | null> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "";
+    img.decoding = "async";
     img.onload = () => {
-      // The GPU downscale does the averaging; reading a full banner pixel by pixel lags it.
-      const size = 16;
+      const size = 24;
       const canvas = document.createElement("canvas");
       canvas.width = canvas.height = size;
       const context = canvas.getContext("2d", { willReadFrequently: true });
       if (!context) return reject(new Error("no 2d context"));
       context.drawImage(img, 0, 0, size, size);
-      const data = context.getImageData(0, 0, size, size).data;
-      let [r, g, b] = [0, 0, 0];
-      for (let i = 0; i < data.length; i += 4) {
-        r += data[i];
-        g += data[i + 1];
-        b += data[i + 2];
-      }
-      const pixels = data.length / 4;
-      const avg = Color.rgb(r / pixels, g / pixels, b / pixels);
-      // Grey art has no real hue; the default blue reads better than a forced one.
-      resolve(
-        avg.saturationl() < 8
-          ? null
-          : avg.saturationl(Math.max(avg.saturationl(), 55)).lightness(68).hex()
-      );
+      resolve(pickAccent(context.getImageData(0, 0, size, size).data));
     };
     img.onerror = () => reject(new Error("banner failed to load"));
     img.src = imageUrl;

@@ -25,8 +25,16 @@
     padding: 6px;
     box-sizing: content-box;
     border-radius: 8px;
-    color: #adc6ff;
-    background: rgb(59 130 246 / 0.16);
+    // --hero-accent comes from the banner art (game-details-content.tsx).
+    color: var(--hero-accent, #adc6ff);
+    background: color-mix(
+      in srgb,
+      var(--hero-accent, #3b82f6) 18%,
+      transparent
+    );
+    transition:
+      color 0.2s ease,
+      background 0.2s ease;
   }
 
   &__stat-text {
