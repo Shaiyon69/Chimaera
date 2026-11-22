@@ -29,9 +29,11 @@ exec "$here/usr/bin/chimaera" "$@"
 EOF
 chmod +x "$root/AppRun"
 
-# Every remaining ELF must resolve against the host (here: the build machine) without the bundle.
+# Every library the remaining ELFs link must exist on the host (here: the build machine) without
+# the bundle. Only "=> not found": the prebuilt torrent bridge needs a newer glibc than the
+# Ubuntu 22.04 runner, which ldd also reports but is not a missing library.
 missing=$(find "$root/usr/bin" "$root/usr/lib" -type f -exec sh -c \
-  'file -b "$1" | grep -q "^ELF" && LD_LIBRARY_PATH="$2" ldd "$1" | grep "not found" | sed "s|^|$1: |"' _ {} "$root/usr/lib" \; || true)
+  'file -b "$1" | grep -q "^ELF" && LD_LIBRARY_PATH="$2" ldd "$1" 2>/dev/null | grep "=> not found" | sed "s|^|$1: |"' _ {} "$root/usr/lib" \; || true)
 [ -z "$missing" ] || { echo "thin-appimage: unresolved libraries:" >&2; echo "$missing" >&2; exit 1; }
 
 # --appimage-extract leaves 700 directories, which appimagetool refuses to pack.
