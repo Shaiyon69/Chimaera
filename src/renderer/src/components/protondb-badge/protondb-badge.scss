@@ -13,6 +13,12 @@
   white-space: nowrap;
   color: #121212;
   box-shadow: 0 2px 4px rgb(var(--shade) / 0.28);
+  // Badges fetched after the covers fade in instead of popping.
+  animation: protondb-badge-in 0.25s var(--ease, ease-out) both;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
 
   &__logo {
     width: 12px;
@@ -49,5 +55,12 @@
     background: #121212;
     border-color: #e5676f;
     color: #e5676f;
+  }
+}
+
+@keyframes protondb-badge-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
   }
 }
