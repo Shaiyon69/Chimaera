@@ -105,13 +105,7 @@ pub fn split_args(input: &str) -> Vec<String> {
     if !current.is_empty() {
         tokens.push(current);
     }
-    tokens
-        .into_iter()
-        .map(|t| {
-            let quoted = t.len() >= 2 && (t.starts_with('"') && t.ends_with('"') || t.starts_with('\'') && t.ends_with('\''));
-            if quoted { t[1..t.len() - 1].to_string() } else { t }
-        })
-        .collect()
+    tokens.iter().map(|t| unquote(t)).collect()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -126,6 +120,12 @@ fn is_env_name(name: &str) -> bool {
     chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// `"v"` or `'v'` -> `v`, as a shell does for `NAME="v"`.
+fn unquote(value: &str) -> String {
+    let quoted = value.len() >= 2 && (value.starts_with('"') && value.ends_with('"') || value.starts_with('\'') && value.ends_with('\''));
+    if quoted { value[1..value.len() - 1].to_string() } else { value.to_string() }
+}
+
 /// resolveLaunchCommand without wrappers (gamemode / mangohud are Linux-only).
 pub fn resolve_launch_command(base: &str, launch_options: Option<&str>) -> LaunchCommand {
     let tokens = split_args(launch_options.unwrap_or_default());
@@ -135,7 +135,7 @@ pub fn resolve_launch_command(base: &str, launch_options: Option<&str>) -> Launc
     }
     let expanded: Vec<String> = tokens.into_iter().map(|t| if t == "%command%" { base.to_string() } else { t }).collect();
     let env_count = expanded.iter().take_while(|t| t.find('=').is_some_and(|i| i > 0 && is_env_name(&t[..i]))).count();
-    let env = expanded[..env_count].iter().map(|t| t.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).unwrap()).collect();
+    let env = expanded[..env_count].iter().map(|t| t.split_once('=').map(|(k, v)| (k.to_string(), unquote(v))).unwrap()).collect();
     let rest = &expanded[env_count..];
     match rest.split_first() {
         Some((command, args)) => LaunchCommand { command: command.clone(), args: args.to_vec(), env },
@@ -498,6 +498,8 @@ mod tests {
         assert_eq!(resolve_launch_command("g.exe", Some("A=1 B_2=x %command% -q")), cmd("g.exe", &["-q"], &[("A", "1"), ("B_2", "x")]));
         assert_eq!(resolve_launch_command("g.exe", Some("run.exe %command%")), cmd("run.exe", &["g.exe"], &[]));
         assert_eq!(resolve_launch_command("g.exe", Some("A=1 %command%")), cmd("g.exe", &[], &[("A", "1")]));
+        // Steam's shell drops quotes around an env value; Proton saw `"dwmapi` otherwise.
+        assert_eq!(resolve_launch_command("g.exe", Some(r#"W="dwmapi=n,b" Q='a b' %command%"#)), cmd("g.exe", &[], &[("W", "dwmapi=n,b"), ("Q", "a b")]));
     }
 
     #[test]
