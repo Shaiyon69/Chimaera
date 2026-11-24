@@ -165,6 +165,11 @@ export function AchievementNotification() {
     }
   }, [shadowRootRef]);
 
+  // The window is transparent; app.scss paints body with the app backdrop.
+  useEffect(() => {
+    document.body.style.background = "transparent";
+  }, []);
+
   useEffect(() => {
     if (!shadowRootRef || hostReadyReported.current) return;
 
@@ -274,15 +279,22 @@ export function AchievementNotification() {
 
     let firstFrame = -1;
     let secondFrame = -1;
+    let reported = false;
+    const report = () => {
+      if (reported) return;
+      reported = true;
+      reportContentReady(request.id);
+    };
     firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        reportContentReady(request.id);
-      });
+      secondFrame = requestAnimationFrame(report);
     });
+    // WebKitGTK runs no animation frames in a hidden window, and the host only shows it after this report.
+    const fallback = window.setTimeout(report, 100);
 
     return () => {
       cancelAnimationFrame(firstFrame);
       cancelAnimationFrame(secondFrame);
+      clearTimeout(fallback);
     };
   }, [achievement, phase, request, reportContentReady]);
 

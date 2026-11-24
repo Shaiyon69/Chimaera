@@ -77,8 +77,9 @@ fn move_to(app: &AppHandle, position: &str) {
 }
 
 fn create_window(app: &AppHandle) -> Result<(), String> {
-    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("tauri.html#/achievement-notification".into()))
-        .title("Chimaera")
+    WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("tauri.html#/achievement-notification".into()))
+        // Own title so a Wayland compositor rule can size and place it (they ignore set_position).
+        .title("Chimaera achievement")
         .inner_size(WIDTH, HEIGHT)
         .resizable(false)
         .decorations(false)
@@ -91,8 +92,8 @@ fn create_window(app: &AppHandle) -> Result<(), String> {
         .visible(false)
         .initialization_script(crate::process_script())
         .build()
-        .map_err(|e| e.to_string())?;
-    window.set_ignore_cursor_events(true).map_err(|e| e.to_string())
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn destroy_window(app: &AppHandle) {
@@ -172,15 +173,6 @@ pub fn show_achievements(app: &AppHandle, position: &str, achievements: Vec<Valu
     enqueue(app, requests);
 }
 
-/// "N achievements in M games", after the startup scan (enqueueCombined).
-pub fn show_combined(app: &AppHandle, position: &str, game_count: usize, achievement_count: usize) {
-    if game_count == 0 || achievement_count == 0 {
-        return;
-    }
-    let request = json!({ "id": next_id(app), "type": "combined", "position": position, "gameCount": game_count, "achievementCount": achievement_count });
-    enqueue(app, vec![request]);
-}
-
 /// The page's handshake calls, by channel name.
 pub fn handle(app: &AppHandle, channel: &str, request_id: Option<&str>, reason: Option<&str>) {
     let popup = app.state::<Popup>();
@@ -191,6 +183,9 @@ pub fn handle(app: &AppHandle, channel: &str, request_id: Option<&str>, reason: 
         ("achievementNotificationContentReady", Stage::Preparing) if is_active => {
             if let Some(window) = app.get_webview_window(LABEL) {
                 let _ = window.show();
+                // Click-through only after show: tao (Linux) unwraps the GDK window, which a hidden
+                // window lacks, and that panic inside the GTK loop aborts the whole app.
+                let _ = window.set_ignore_cursor_events(true);
             }
             state.stage = Some(Stage::Visible);
             let _ = app.emit_to(LABEL, "start-achievement-notification", [request_id]);
@@ -264,15 +259,6 @@ pub fn enabled(preferences: &Value) -> bool {
 /// Whether the custom pop-up shows them; otherwise an OS toast does (publishNewAchievementNotification).
 pub fn custom_enabled(preferences: &Value) -> bool {
     preferences["achievementCustomNotificationsEnabled"].as_bool() != Some(false)
-}
-
-/// publishCombinedNewAchievementNotification: the startup summary as an OS toast.
-pub fn show_combined_toast(app: &AppHandle, game_count: usize, achievement_count: usize) {
-    let store = app.state::<crate::store::Store>();
-    let (games, achievements) = (game_count.to_string(), achievement_count.to_string());
-    let title = crate::i18n::t(&store, "achievement", "achievement_unlocked", &[]);
-    let body = crate::i18n::t(&store, "achievement", "new_achievements_unlocked", &[("gameCount", &games), ("achievementCount", &achievements)]);
-    crate::notifications::toast(app, &title, &body);
 }
 
 /// publishNewAchievementNotification: one OS toast for this batch of unlocks.

@@ -203,21 +203,22 @@ pub async fn merge(app: &AppHandle, shop: &str, object_id: &str, found: &[Unlock
     store.put(UNLOCKED, &key, &Value::Array(all.clone()))?;
     store_counts(&store, &key, &all, &catalogue)?;
     eprintln!("[achievements] {key}: {} new", fresh.len());
+    let preferences = preferences(&store);
     if publish {
-        let preferences = preferences(&store);
         let list = user_achievements(&catalogue, &all, &preferences);
         app.emit(&format!("on-update-achievements-{object_id}-{shop}"), [list]).map_err(|e| e.to_string())?;
         if crate::screenshots::enabled(&preferences) {
             capture_souvenir(app, &store.get("games", &key)?, &fresh[0], &catalogue);
         }
-        if popup && achievement_popup::enabled(&preferences) {
-            let infos = achievement_popup::notification_infos(&fresh, previously_unlocked, &catalogue);
-            if achievement_popup::custom_enabled(&preferences) {
-                achievement_popup::show_achievements(app, &achievement_popup::position(&preferences), infos);
-            } else {
-                let game = store.get("games", &key)?;
-                achievement_popup::show_toast(app, game["title"].as_str().unwrap_or_default(), &infos);
-            }
+    }
+    // Every unlock gets its own pop-up (icon, title, description), the startup scan's too.
+    if popup && achievement_popup::enabled(&preferences) {
+        let infos = achievement_popup::notification_infos(&fresh, previously_unlocked, &catalogue);
+        if achievement_popup::custom_enabled(&preferences) {
+            achievement_popup::show_achievements(app, &achievement_popup::position(&preferences), infos);
+        } else {
+            let game = store.get("games", &key)?;
+            achievement_popup::show_toast(app, game["title"].as_str().unwrap_or_default(), &infos);
         }
     }
     Ok(fresh.len())
@@ -424,32 +425,14 @@ pub fn spawn(app: AppHandle) {
             })
             .await
             .unwrap_or_default();
-            let (mut games_with_new, mut total_new) = (0, 0);
             for (shop, id, (steam_unlocks, other_unlocks)) in found {
                 // Steam first: an unlock both report is then stored without a Chimaera pop-up.
                 if let Err(error) = merge(&app, &shop, &id, &steam_unlocks, !first, false).await {
                     eprintln!("[achievements] merge {shop}:{id} failed: {error}");
                 }
-                // Only these count toward the startup summary pop-up.
-                match merge(&app, &shop, &id, &other_unlocks, !first, !first).await {
-                    Ok(0) => {}
-                    Ok(count) => {
-                        games_with_new += 1;
-                        total_new += count;
-                    }
-                    Err(error) => eprintln!("[achievements] merge {shop}:{id} failed: {error}"),
-                }
-            }
-            // Unlocks earned while Chimaera was closed get one summary pop-up after startup.
-            if first && total_new > 0 {
-                let preferences = preferences(&app.state::<Store>());
-                if achievement_popup::enabled(&preferences) {
-                    tokio::time::sleep(Duration::from_secs(4)).await;
-                    if achievement_popup::custom_enabled(&preferences) {
-                        achievement_popup::show_combined(&app, &achievement_popup::position(&preferences), games_with_new, total_new);
-                    } else {
-                        achievement_popup::show_combined_toast(&app, games_with_new, total_new);
-                    }
+                // Unlocks earned while Chimaera was closed pop up one by one too.
+                if let Err(error) = merge(&app, &shop, &id, &other_unlocks, !first, true).await {
+                    eprintln!("[achievements] merge {shop}:{id} failed: {error}");
                 }
             }
             first = false;
