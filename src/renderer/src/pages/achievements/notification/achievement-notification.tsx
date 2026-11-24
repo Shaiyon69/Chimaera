@@ -358,7 +358,14 @@ export function AchievementNotification() {
       <style type="text/css">
         {app} {styles}
       </style>
-      <section ref={setShadowRootRef}>
+      {/* 80 % scale (near Steam's toast size), anchored at the card's corner so it keeps its place. */}
+      <section
+        ref={setShadowRootRef}
+        style={{
+          transform: "scale(0.8)",
+          transformOrigin: request?.position.replace("-", " ") ?? "top left",
+        }}
+      >
         {request && achievement && phase !== "idle" && (
           <AchievementNotificationItem
             achievement={achievement}
