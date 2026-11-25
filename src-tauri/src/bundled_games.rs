@@ -1,6 +1,6 @@
 //! Games Chimaera ships itself (`custom` shop): their store pages and install
 //! checks, installers and launchers, ported from src/main/services/bloodborne/,
-//! horizon/ and github-zip-install.ts. Launching the game itself is not ported yet.
+//! horizon/ and github-zip-install.ts. Lantern Engine has a native Linux package; Horizon is Windows only.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -24,6 +24,8 @@ struct BundledGame {
     publishers: &'static [&'static str],
     genres: &'static [(&'static str, &'static str)],
     requirements: (&'static str, &'static str),
+    /// Minimum on Linux, empty when unknown.
+    linux_requirements: &'static str,
     release_date: &'static str,
     /// Install folder in the app data folder (the same name Electron used).
     install_dir: &'static str,
@@ -79,9 +81,15 @@ const BLOODBORNE: BundledGame = BundledGame {
             "<li><strong>Additional Notes:</strong> Current vendor drivers. Reported: 89-100 FPS at 1080p on an RX 6650 XT; about 90 FPS at 4K with FSR 4 Balanced on an RX 7800 XT.</li></ul>",
         ),
     ),
+    // From Lantern's Linux README.txt.
+    linux_requirements: concat!(
+        "<ul class=\"bb_ul\"><li><strong>OS:</strong> 64-bit Linux with glibc 2.38+ (Arch, Fedora 39, Ubuntu 24.04, SteamOS 3.6), X11 or Wayland</li>",
+        "<li><strong>Graphics:</strong> Vulkan 1.3 driver (Mesa RADV, NVIDIA, Intel ANV)</li>",
+        "<li><strong>Additional Notes:</strong> Python 3. Your own decrypted CUSA03173 v1.09 dump (eboot.bin). FSR 4 and DLSS Frame Generation are Windows only.</li></ul>",
+    ),
     release_date: "24 Mar, 2015",
     install_dir: "lantern-engine",
-    launcher_exe: "Lantern Engine.exe",
+    launcher_exe: LANTERN_LAUNCHER,
     label: "Lantern Engine",
     releases_url: "https://api.github.com/repos/Awakenchan/LanternEngine/releases/latest",
     pick_release: pick_lantern_release,
@@ -113,15 +121,29 @@ const HORIZON: BundledGame = BundledGame {
         ),
         "",
     ),
+    linux_requirements: "",
     release_date: "",
     install_dir: "horizon-launcher",
-    launcher_exe: "horizon-launcher.exe",
+    launcher_exe: HORIZON_LAUNCHER,
     label: "Horizon launcher",
     // releases/latest is the game build; the launcher has launcher@ tags.
     releases_url: "https://api.github.com/repos/horizon-rust/horizon/releases?per_page=30",
     pick_release: pick_horizon_release,
     kept: &[],
 };
+
+#[cfg(windows)]
+const LANTERN_LAUNCHER: &str = "Lantern Engine.exe";
+#[cfg(not(windows))]
+const LANTERN_LAUNCHER: &str = "Lantern Engine";
+#[cfg(windows)]
+const HORIZON_LAUNCHER: &str = "horizon-launcher.exe";
+#[cfg(not(windows))]
+const HORIZON_LAUNCHER: &str = "horizon-launcher";
+/// The launcher package Horizon publishes for this OS (playhorizon.dev/docs/install).
+const HORIZON_ASSET: &str = if cfg!(windows) { "horizon-launcher-windows-x64.zip" } else { "horizon-launcher-linux-x86_64.tar.gz" };
+/// The package Lantern publishes for this OS.
+const LANTERN_ASSET_SUFFIX: &str = if cfg!(windows) { "-win64.zip" } else { "-linux-x64.tar.gz" };
 
 fn find(object_id: &str) -> Option<&'static BundledGame> {
     [&BLOODBORNE, &HORIZON].into_iter().find(|g| g.object_id == object_id)
@@ -170,9 +192,13 @@ fn details(resources: &Path, game: &BundledGame) -> Value {
         "publishers": game.publishers,
         "genres": genres,
         "supported_languages": "English",
-        "pc_requirements": { "minimum": game.requirements.0, "recommended": game.requirements.1 },
+        // The sidebar shows only pc_requirements, so Linux gets its own list there.
+        "pc_requirements": match game.linux_requirements {
+            linux if !cfg!(windows) && !linux.is_empty() => json!({ "minimum": linux, "recommended": "" }),
+            _ => json!({ "minimum": game.requirements.0, "recommended": game.requirements.1 }),
+        },
         "mac_requirements": empty,
-        "linux_requirements": empty,
+        "linux_requirements": { "minimum": game.linux_requirements, "recommended": "" },
         "release_date": { "coming_soon": false, "date": game.release_date },
         "content_descriptors": { "ids": [] },
     })
@@ -191,6 +217,24 @@ pub fn shop_details(app: &AppHandle, object_id: &str) -> Value {
     page
 }
 
+/// On every start: stores each bundled game's art (its resource path moves with each AppImage
+/// mount), so the catalogue and library can show it, and adds each game to the library once.
+/// A game the player later removes stays removed.
+pub fn seed(store: &crate::store::Store, resources: &Path) -> Result<(), String> {
+    let mut seeded: Vec<Value> = store.get("", "bundledGamesSeeded")?.as_array().cloned().unwrap_or_default();
+    for game in [&BLOODBORNE, &HORIZON] {
+        let key = crate::games::game_key("custom", game.object_id);
+        let mut art = assets(resources, game);
+        art["updatedAt"] = json!(crate::library::now_ms());
+        store.put("gameShopAssets", &key, &art)?;
+        if !seeded.contains(&json!(game.object_id)) {
+            crate::games::add_to_library(store, "custom", game.object_id, game.title, None)?;
+            seeded.push(json!(game.object_id));
+        }
+    }
+    store.put("", "bundledGamesSeeded", &json!(seeded))
+}
+
 /// The sha256 GitHub publishes for an asset, as `sha256:<hex>`.
 fn asset_release(asset: &Value) -> Option<Release> {
     let url = asset["browser_download_url"].as_str()?;
@@ -199,26 +243,26 @@ fn asset_release(asset: &Value) -> Option<Release> {
         .then(|| Release { url: url.to_string(), sha256: hex.to_ascii_lowercase() })
 }
 
-/// The Windows package zip of a releases/latest payload (pickPortRelease).
+/// This OS's package of a releases/latest payload (pickPortRelease).
 fn pick_lantern_release(release: &Value) -> Option<Release> {
     release["tag_name"].as_str()?;
     let asset = release["assets"].as_array()?.iter().find(|a| {
         a["name"].as_str().is_some_and(|n| {
             let n = n.to_ascii_lowercase();
-            n.len() > "lanternengine--win64.zip".len() && n.starts_with("lanternengine-") && n.ends_with("-win64.zip")
+            n.len() > "lanternengine-".len() + LANTERN_ASSET_SUFFIX.len() && n.starts_with("lanternengine-") && n.ends_with(LANTERN_ASSET_SUFFIX)
         })
     })?;
     asset_release(asset)
 }
 
-/// The newest stable launcher@ release with a verifiable Windows zip (pickLauncherRelease).
+/// The newest stable launcher@ release with a verifiable package for this OS (pickLauncherRelease).
 fn pick_horizon_release(releases: &Value) -> Option<Release> {
     releases.as_array()?.iter().find_map(|r| {
         if r["prerelease"].as_bool() == Some(true) || r["draft"].as_bool() == Some(true) {
             return None;
         }
         r["tag_name"].as_str().filter(|t| t.starts_with("launcher@"))?;
-        let asset = r["assets"].as_array()?.iter().find(|a| a["name"] == "horizon-launcher-windows-x64.zip")?;
+        let asset = r["assets"].as_array()?.iter().find(|a| a["name"] == HORIZON_ASSET)?;
         asset_release(asset)
     })
 }
@@ -226,7 +270,7 @@ fn pick_horizon_release(releases: &Value) -> Option<Release> {
 /// Whether `dir` holds a usable package: the launcher, plus for Lantern the engine probe
 /// (in engine\ since 0.9.37, the package itself before; engineDirOf).
 fn is_valid_dir(game: &BundledGame, dir: &Path) -> bool {
-    let probe = |base: &Path| base.join("out").join("bb-probe.exe").exists();
+    let probe = |base: &Path| base.join("out").join(format!("bb-probe{}", std::env::consts::EXE_SUFFIX)).exists();
     dir.join(game.launcher_exe).exists() && (game.object_id != "bloodborne" || probe(&dir.join("engine")) || probe(dir))
 }
 
@@ -244,6 +288,10 @@ fn install_dir(app: &AppHandle, game: &BundledGame) -> Result<PathBuf, String> {
     Ok(pick_install_dir(game, &app_data, &electron))
 }
 
+pub fn is_bundled(object_id: &str) -> bool {
+    find(object_id).is_some()
+}
+
 fn known(object_id: &str) -> Result<&'static BundledGame, String> {
     find(object_id).ok_or_else(|| format!("Unknown bundled game: {object_id}"))
 }
@@ -254,14 +302,37 @@ pub fn setup(app: &AppHandle, object_id: &str) -> Result<Value, String> {
     Ok(json!({ "installed": is_valid_dir(game, &install_dir(app, game)?) }))
 }
 
+fn spawn_in(app: &AppHandle, game: &BundledGame, dir: &Path, program: &Path) {
+    let launch = crate::launch::LaunchCommand { command: program.to_string_lossy().into_owned(), args: vec![], env: vec![] };
+    if let Err(error) = crate::launch::spawn_detached(&launch, dir) {
+        let problem = format!("could not start the {}: {error}", game.label);
+        let _ = app.emit("on-bundled-game-launch-error", [json!(game.object_id), json!([problem])]);
+    }
+}
+
 /// `openBundledGameLauncher`: starts Lantern's or Horizon's own launcher, detached.
 pub fn open_launcher(app: &AppHandle, object_id: &str) -> Result<Value, String> {
     let game = known(object_id)?;
     let dir = install_dir(app, game)?;
-    if let Err(error) = std::process::Command::new(dir.join(game.launcher_exe)).current_dir(&dir).spawn() {
-        let problem = format!("could not start the {}: {error}", game.label);
-        let _ = app.emit("on-bundled-game-launch-error", [json!(game.object_id), json!([problem])]);
-    }
+    spawn_in(app, game, &dir, &dir.join(game.launcher_exe));
+    Ok(Value::Null)
+}
+
+/// What Play starts in a Lantern package: the game straight away once a game folder is set,
+/// else the launcher, whose setup guide asks for one. Horizon's Play is its launcher.
+fn play_program(game: &BundledGame, dir: &Path) -> PathBuf {
+    let direct = if cfg!(windows) { dir.join("Bloodborne.exe") } else { dir.join("lantern.sh") };
+    // lantern.sh remembers the last game folder here; Bloodborne.exe reads the launcher's settings.
+    let configured = cfg!(windows) || dir.join("engine").join("out").join("game_dir.txt").exists();
+    if game.object_id == "bloodborne" && configured && direct.exists() { direct } else { dir.join(game.launcher_exe) }
+}
+
+/// `openGame` for a bundled game.
+// shortcut: no playtime or trophy tracking yet (Electron watched Bloodborne.exe and trophies.log); port with achievements.
+pub fn play(app: &AppHandle, object_id: &str) -> Result<Value, String> {
+    let game = known(object_id)?;
+    let dir = install_dir(app, game)?;
+    spawn_in(app, game, &dir, &play_program(game, &dir));
     Ok(Value::Null)
 }
 
@@ -275,7 +346,7 @@ pub async fn download(app: &AppHandle, object_id: &str) -> Result<Value, String>
     let _guard = INSTALLING[usize::from(game.object_id != "bloodborne")].lock().await;
     let target = install_dir(app, game)?;
     let scratch = app.path().chimaera_data_dir().map_err(|e| e.to_string())?;
-    let zip_path = scratch.join(format!("{}.zip.part", game.install_dir));
+    let zip_path = scratch.join(format!("{}.download.part", game.install_dir));
     let extract_dir = scratch.join(format!("{}.tmp", game.install_dir));
     let progress = |phase: &str, percent: u64| {
         let _ = app.emit("on-bundled-game-progress", [json!({ "id": game.object_id, "phase": phase, "percent": percent })]);
@@ -325,12 +396,16 @@ async fn install(game: &BundledGame, target: &Path, zip_path: &Path, extract_dir
 
     progress("extracting", 0);
     let (zip, out) = (zip_path.to_path_buf(), extract_dir.to_path_buf());
+    let is_tar_gz = release.url.ends_with(".tar.gz");
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         let _ = std::fs::remove_dir_all(&out);
-        // extract() refuses entries whose paths escape `out`.
-        zip::ZipArchive::new(std::fs::File::open(&zip).map_err(|e| e.to_string())?)
-            .and_then(|mut archive| archive.extract(&out))
-            .map_err(|e| e.to_string())
+        let file = std::fs::File::open(&zip).map_err(|e| e.to_string())?;
+        // Both refuse entries whose paths escape `out`; tar keeps the exec bits.
+        if is_tar_gz {
+            tar::Archive::new(flate2::read::GzDecoder::new(file)).unpack(&out).map_err(|e| e.to_string())
+        } else {
+            zip::ZipArchive::new(file).and_then(|mut archive| archive.extract(&out)).map_err(|e| e.to_string())
+        }
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -410,8 +485,8 @@ mod tests {
         let dir = user_data.join("lantern-engine");
         std::fs::create_dir_all(dir.join("engine").join("out")).unwrap();
         assert!(!is_valid_dir(&BLOODBORNE, &dir));
-        std::fs::write(dir.join("Lantern Engine.exe"), b"").unwrap();
-        std::fs::write(dir.join("engine").join("out").join("bb-probe.exe"), b"").unwrap();
+        std::fs::write(dir.join(LANTERN_LAUNCHER), b"").unwrap();
+        std::fs::write(dir.join("engine").join("out").join(format!("bb-probe{}", std::env::consts::EXE_SUFFIX)), b"").unwrap();
         assert!(is_valid_dir(&BLOODBORNE, &dir));
         assert!(!is_valid_dir(&HORIZON, &user_data.join("horizon-launcher")));
         // Only the Electron folder holds an install: it is used in place.
@@ -426,12 +501,14 @@ mod tests {
         let digest = format!("sha256:{}", "AB".repeat(32));
         let lantern = json!({ "tag_name": "v1", "assets": [
             { "name": "LanternEngine-1.0-linux.zip", "browser_download_url": "x", "digest": digest },
-            { "name": "LanternEngine-1.0-win64.zip", "browser_download_url": "u", "digest": digest },
+            { "name": "LanternEngine-1.0-win64.zip", "browser_download_url": "w", "digest": digest },
+            { "name": "LanternEngine-v1.0-linux-x64.tar.gz", "browser_download_url": "l", "digest": digest },
         ]});
-        assert_eq!(pick_lantern_release(&lantern), Some(Release { url: "u".into(), sha256: "ab".repeat(32) }));
+        let ours = if cfg!(windows) { "w" } else { "l" };
+        assert_eq!(pick_lantern_release(&lantern), Some(Release { url: ours.into(), sha256: "ab".repeat(32) }));
         let unsigned = json!({ "tag_name": "v1", "assets": [{ "name": "LanternEngine-1-win64.zip", "browser_download_url": "u" }] });
         assert_eq!(pick_lantern_release(&unsigned), None);
-        let asset = |url: &str| json!({ "name": "horizon-launcher-windows-x64.zip", "browser_download_url": url, "digest": digest });
+        let asset = |url: &str| json!({ "name": HORIZON_ASSET, "browser_download_url": url, "digest": digest });
         let horizon = json!([
             { "tag_name": "v26.3", "assets": [asset("game")] },
             { "tag_name": "launcher@2", "prerelease": true, "assets": [asset("pre")] },
@@ -452,19 +529,62 @@ mod tests {
     }
 
     #[test]
+    fn seed_adds_each_game_once_and_refreshes_art() {
+        let store = crate::store::Store::memory().unwrap();
+        let resources = std::env::temp_dir().join(format!("chimaera-bundled-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(resources.join("bloodborne")).unwrap();
+        std::fs::write(resources.join("bloodborne").join("cover.png"), b"").unwrap();
+        seed(&store, &resources).unwrap();
+        assert_eq!(store.get("games", "custom:bloodborne").unwrap()["title"], "Bloodborne");
+        assert_eq!(store.get("games", "custom:horizon").unwrap()["isDeleted"], false);
+        assert!(store.get("gameShopAssets", "custom:bloodborne").unwrap()["coverImageUrl"].as_str().unwrap().starts_with("local:"));
+        // Removed by the player: a later start leaves it removed.
+        crate::games::remove_from_library(&store, "custom", "horizon").unwrap();
+        seed(&store, &resources).unwrap();
+        assert_eq!(store.get("games", "custom:horizon").unwrap()["isDeleted"], true);
+        std::fs::remove_dir_all(&resources).unwrap();
+    }
+
+    #[test]
+    fn play_starts_the_game_once_a_folder_is_set() {
+        let dir = std::env::temp_dir().join(format!("chimaera-bundled-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("engine").join("out")).unwrap();
+        let direct = dir.join(if cfg!(windows) { "Bloodborne.exe" } else { "lantern.sh" });
+        std::fs::write(&direct, b"").unwrap();
+        if !cfg!(windows) {
+            assert_eq!(play_program(&BLOODBORNE, &dir), dir.join(LANTERN_LAUNCHER));
+            std::fs::write(dir.join("engine").join("out").join("game_dir.txt"), b"/g").unwrap();
+        }
+        assert_eq!(play_program(&BLOODBORNE, &dir), direct);
+        assert_eq!(play_program(&HORIZON, &dir), dir.join(HORIZON.launcher_exe));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "downloads Lantern Engine from GitHub"]
+    fn installs_live_lantern_release() {
+        let root = std::env::temp_dir().join(format!("chimaera-bundled-{}", uuid::Uuid::new_v4()));
+        let target = root.join("lantern-engine");
+        let progress = |_: &str, _: u64| {};
+        tauri::async_runtime::block_on(install(&BLOODBORNE, &target, &root.join("l.part"), &root.join("l.tmp"), &progress)).unwrap();
+        assert!(is_valid_dir(&BLOODBORNE, &target));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn update_keeps_player_files_and_unwraps_one_folder() {
         let root = std::env::temp_dir().join(format!("chimaera-bundled-{}", uuid::Uuid::new_v4()));
         let (target, extract) = (root.join("lantern-engine"), root.join("tmp"));
         let package = extract.join("LanternEngine-1.0");
         std::fs::create_dir_all(package.join("out")).unwrap();
-        std::fs::write(package.join("Lantern Engine.exe"), b"new").unwrap();
-        std::fs::write(package.join("out").join("bb-probe.exe"), b"").unwrap();
+        std::fs::write(package.join(LANTERN_LAUNCHER), b"new").unwrap();
+        std::fs::write(package.join("out").join(format!("bb-probe{}", std::env::consts::EXE_SUFFIX)), b"").unwrap();
         std::fs::write(package.join("lantern.ini"), b"default").unwrap();
         std::fs::create_dir_all(target.join("user")).unwrap();
         std::fs::write(target.join("user").join("save.dat"), b"save").unwrap();
         std::fs::write(target.join("lantern.ini"), b"mine").unwrap();
         swap_in(&BLOODBORNE, &extract, &target).unwrap();
-        assert_eq!(std::fs::read(target.join("Lantern Engine.exe")).unwrap(), b"new");
+        assert_eq!(std::fs::read(target.join(LANTERN_LAUNCHER)).unwrap(), b"new");
         assert_eq!(std::fs::read(target.join("user").join("save.dat")).unwrap(), b"save");
         assert_eq!(std::fs::read(target.join("lantern.ini")).unwrap(), b"mine");
         assert!(!root.join("lantern-engine.old").exists());

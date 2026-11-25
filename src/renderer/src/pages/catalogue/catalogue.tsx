@@ -158,7 +158,6 @@ export default function Catalogue() {
 
   // Bundled games are not in the Hydra catalogue, so they are injected locally.
   useEffect(() => {
-    if (window.electron.platform !== "win32") return;
     Promise.all(
       BUNDLED_GAMES.map(async (game) => {
         const assets = await window.electron.getGameAssets(

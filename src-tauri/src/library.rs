@@ -238,8 +238,7 @@ pub fn now_ms() -> u64 {
 }
 
 /// `getGameAssets`: catalogue assets cached for 8 hours, artwork selection applied.
-// shortcut: bundled custom games (Bloodborne, Horizon) get their art from bundledGameService
-// in Electron; here a "custom" game returns its cached assets until milestone F8 ports it.
+// A "custom" game answers from its cached assets; bundled games store theirs at start (bundled_games::seed).
 /// Cached assets past the 8-hour window, ready to show while a refresh runs; None when they are
 /// fresh (the normal path answers from cache anyway) or were never fetched.
 pub fn stale_assets(store: &Store, object_id: &str, shop: &str) -> Result<Option<Value>, String> {

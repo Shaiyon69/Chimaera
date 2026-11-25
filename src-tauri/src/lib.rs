@@ -191,6 +191,9 @@ pub fn run() {
                 Ok(count) => eprintln!("[library] added {count} steam records for launcher games"),
                 Err(error) => eprintln!("[library] steam backfill failed: {error}"),
             }
+            if let Err(error) = bundled_games::seed(&store, &app.path().resource_dir().unwrap_or_default()) {
+                eprintln!("[bundled] seeding bundled games failed: {error}");
+            }
             app.manage(store);
             app.manage(ipc::AppSession(uuid::Uuid::new_v4().to_string()));
             app.manage(launch::LauncherStatuses::default());

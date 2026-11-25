@@ -168,7 +168,7 @@ pub fn batch_command_line(command: &str, args: &[String]) -> String {
     std::iter::once(command).chain(args.iter().map(String::as_str)).map(|v| format!("\"{}\"", v.replace('"', "\"\""))).collect::<Vec<_>>().join(" ")
 }
 
-fn spawn_detached(launch: &LaunchCommand, cwd: &Path) -> std::io::Result<()> {
+pub(crate) fn spawn_detached(launch: &LaunchCommand, cwd: &Path) -> std::io::Result<()> {
     let mut command = if cfg!(windows) && is_batch_file(&launch.command) {
         let mut cmd = std::process::Command::new("cmd.exe");
         #[cfg(windows)]
@@ -222,8 +222,11 @@ pub fn record_launch(game: Value, exe: &str, launch_options: Option<&str>, own_e
 }
 
 /// `openGame`.
-// shortcut: bundled games (Bloodborne, Horizon) are not ported; they land with their milestone.
 pub async fn open_game(app: &AppHandle, shop: &str, object_id: &str, executable_path: &str, launch_options: Option<&str>) -> Result<Value, String> {
+    // Bundled games start through their own package, not a picked exe.
+    if shop == "custom" && crate::bundled_games::is_bundled(object_id) {
+        return crate::bundled_games::play(app, object_id);
+    }
     let store = app.state::<Store>();
     let key = game_key(shop, object_id);
     let parsed = parse_executable_path(executable_path);
