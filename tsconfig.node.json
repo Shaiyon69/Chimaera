@@ -22,7 +22,7 @@
     "strictPropertyInitialization": false,
     "paths": {
       "@renderer/*": [
-        "src/renderer/*"
+        "src/renderer/src/*"
       ],
       "@types": [
         "src/types/index.ts"
@@ -35,6 +35,9 @@
       ],
       "@shared": [
         "src/shared/index.ts"
+      ],
+      "electron": [
+        "src/tauri/electron-shim.ts"
       ]
     }
   }

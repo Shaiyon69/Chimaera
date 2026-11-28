@@ -1,8 +1,8 @@
-const { default: axios } = require("axios");
-const tar = require("tar");
 const util = require("node:util");
 const fs = require("node:fs");
 const path = require("node:path");
+const { Readable } = require("node:stream");
+const { pipeline } = require("node:stream/promises");
 
 const exec = util.promisify(require("node:child_process").exec);
 
@@ -35,39 +35,44 @@ const downloadLudusavi = async () => {
 
   console.log(`Downloading ${file}...`);
 
-  const response = await axios.get(downloadUrl, { responseType: "stream" });
+  const response = await fetch(downloadUrl);
+  if (!response.ok)
+    throw new Error(`Ludusavi download failed: HTTP ${response.status}`);
 
-  const stream = response.data.pipe(fs.createWriteStream(file));
+  const targetPath = path.join(process.cwd(), "ludusavi");
+  const binary = path.join(targetPath, ludusaviBinaryName[process.platform]);
 
-  stream.on("finish", async () => {
+  try {
+    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(file));
+
     console.log(`Downloaded ${file}, extracting...`);
-
-    const pwd = process.cwd();
-    const targetPath = path.join(pwd, "ludusavi");
 
     await fs.promises.mkdir(targetPath, { recursive: true });
 
-    if (process.platform === "win32") {
-      // extract-zip truncated ludusavi.exe (38 KB short, unrunnable); Windows' bsdtar reads zips intact.
-      // Full path: Git Bash puts GNU tar (no zip support) first on PATH.
-      const bsdtar = path.join(process.env.SystemRoot, "System32", "tar.exe");
-      await exec(`"${bsdtar}" -xf ${file} -C "${targetPath}"`);
-    } else {
-      await tar.x({
-        file: file,
-        cwd: targetPath,
-      });
-    }
+    // extract-zip truncated ludusavi.exe (38 KB short, unrunnable); Windows' bsdtar reads zips intact.
+    // Full path: Git Bash puts GNU tar (no zip support) first on PATH.
+    const tar =
+      process.platform === "win32"
+        ? `"${path.join(process.env.SystemRoot, "System32", "tar.exe")}"`
+        : "tar";
+    await exec(`${tar} -xf "${file}" -C "${targetPath}"`);
 
     if (process.platform !== "win32") {
-      fs.chmodSync(path.join(targetPath, "ludusavi"), 0o755);
+      fs.chmodSync(binary, 0o755);
     }
 
-    console.log("Extracted. Renaming folder...");
-
     console.log(`Extracted ${file}, removing compressed downloaded file...`);
-    fs.rmSync(file);
-  });
+  } catch (error) {
+    // A half-extracted binary would pass the "already exists" check forever.
+    fs.rmSync(binary, { force: true });
+    throw error;
+  } finally {
+    // A failed or partial download must not linger as a broken archive.
+    fs.rmSync(file, { force: true });
+  }
 };
 
-downloadLudusavi();
+downloadLudusavi().catch((error) => {
+  console.error(`Ludusavi setup failed: ${error.message}`);
+  process.exitCode = 1;
+});

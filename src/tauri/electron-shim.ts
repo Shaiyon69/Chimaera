@@ -7,7 +7,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { logger } from "@renderer/logger";
 
-type Listener = (event: unknown, ...args: unknown[]) => void;
+// Same shape as Electron's listener: each preload callback types its own payload.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Listener = (event: unknown, ...args: any[]) => void;
 
 // Main pushes with app.emit(channel, [arg1, arg2, ...]), the same argument list
 // webContents.send(channel, ...args) delivered.
@@ -53,7 +55,10 @@ const invokeChannel = async (channel: string, args: unknown[]) => {
 };
 
 export const ipcRenderer = {
-  invoke: (channel: string, ...args: unknown[]) => invokeChannel(channel, args),
+  // Promise<any> like Electron's: each preload method types its own result.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  invoke: (channel: string, ...args: unknown[]): Promise<any> =>
+    invokeChannel(channel, args),
   send: (channel: string, ...args: unknown[]) => {
     invokeChannel(channel, args).catch(() => undefined);
   },
